@@ -11,6 +11,7 @@ trio as one small, typed, async workspace.
 | `sinew-graph` | LangGraph | `StateGraph<S>` with typed state, conditional edges, cycles with a recursion limit, checkpoints, `interrupt_before` + `update_state` for human-in-the-loop, prebuilt `react_agent` |
 | `sinew-trace` | LangSmith SDK | Runs (graph → node → llm/tool) with timings, I/O, token usage; JSONL and in-memory sinks |
 | `sinew-scope` | LangSmith UI (terminal for now) | `sinew-scope traces.jsonl [--io]` prints each trace as a tree |
+| `sinew-mcp` | MCP adapters | Model Context Protocol client (MCP server tools as Sinew `Tool`s) and server (any `ToolBox` or agent over stdio); `sinew-mcp --traces traces.jsonl` lets Claude Code inspect traces |
 | `sinew` | umbrella | re-exports + `prelude` |
 
 ## Quick start
