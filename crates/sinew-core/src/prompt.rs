@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 use crate::{Error, Result};
 
@@ -76,15 +76,39 @@ impl PromptTemplate {
     }
 
     pub fn render(&self, vars: &HashMap<&str, String>) -> Result<String> {
+        self.render_lookup(|v| vars.get(v).map(|s| Cow::Borrowed(s.as_str())))
+    }
+
+    /// Renders with owned keys (the [`Vars`](crate::Vars) map runnables use).
+    pub fn render_vars(&self, vars: &HashMap<String, String>) -> Result<String> {
+        self.render_lookup(|v| vars.get(v).map(|s| Cow::Borrowed(s.as_str())))
+    }
+
+    /// Renders from a JSON object: strings are inserted as-is, other values
+    /// as JSON text, `null` as an empty string.
+    pub fn render_json(&self, vars: &serde_json::Value) -> Result<String> {
+        self.render_lookup(|v| {
+            vars.get(v).map(|x| match x {
+                serde_json::Value::String(s) => Cow::Borrowed(s.as_str()),
+                serde_json::Value::Null => Cow::Borrowed(""),
+                other => Cow::Owned(other.to_string()),
+            })
+        })
+    }
+
+    /// Renders with a custom variable lookup.
+    pub fn render_lookup<'a>(
+        &self,
+        lookup: impl Fn(&str) -> Option<Cow<'a, str>>,
+    ) -> Result<String> {
         let mut out = String::with_capacity(self.template.len());
         for p in self.pieces()? {
             match p {
                 Piece::Text(t) => out.push_str(t),
                 Piece::Brace(c) => out.push(c),
-                Piece::Var(v) => out.push_str(
-                    vars.get(v)
-                        .ok_or_else(|| Error::MissingVariable(v.to_string()))?,
-                ),
+                Piece::Var(v) => {
+                    out.push_str(&lookup(v).ok_or_else(|| Error::MissingVariable(v.to_string()))?)
+                }
             }
         }
         Ok(out)

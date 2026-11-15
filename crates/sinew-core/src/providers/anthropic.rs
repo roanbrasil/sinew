@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 use crate::{
+    message::{ContentPart, MediaSource},
     stream::{parse_arguments, sse_stream, ChatStream, SseDecoder, SseEvent, StreamEvent},
     ChatModel, ChatRequest, ChatResponse, Error, Message, Result, Role, ToolCall, ToolChoice,
     Usage,
@@ -29,8 +30,14 @@ impl Anthropic {
             api_key: api_key.into(),
             model: model.into(),
             default_max_tokens: 4096,
-            client: reqwest::Client::new(),
+            client: super::shared_client(),
         }
+    }
+
+    /// Uses this HTTP client instead of the [shared](super::shared_client) one.
+    pub fn with_http_client(mut self, client: reqwest::Client) -> Self {
+        self.client = client;
+        self
     }
 
     /// Reads `ANTHROPIC_API_KEY`.
@@ -58,20 +65,73 @@ impl Anthropic {
     }
 }
 
+fn encode_source(source: &MediaSource) -> Value {
+    match source {
+        MediaSource::Base64 { media_type, data } => {
+            json!({"type": "base64", "media_type": media_type, "data": data})
+        }
+        // Files API id.
+        MediaSource::Url { url, .. } if url.starts_with("file_") => {
+            json!({"type": "file", "file_id": url})
+        }
+        MediaSource::Url { url, .. } => json!({"type": "url", "url": url}),
+    }
+}
+
+/// One content block. Audio is not accepted by the Messages API; it becomes
+/// a text reference so the request still goes through.
+fn encode_part(p: &ContentPart) -> Value {
+    match p {
+        ContentPart::Text { text } => json!({"type": "text", "text": text}),
+        ContentPart::Image { source, .. } => {
+            json!({"type": "image", "source": encode_source(source)})
+        }
+        ContentPart::Document { source, name } => {
+            let mut b = json!({"type": "document", "source": encode_source(source)});
+            if let Some(n) = name {
+                b["title"] = json!(n);
+            }
+            b
+        }
+        ContentPart::Audio { source } => {
+            let what = match source {
+                MediaSource::Url { url, .. } => url.clone(),
+                MediaSource::Base64 { media_type, .. } => format!("inline {media_type}"),
+            };
+            json!({"type": "text", "text": format!("[audio not supported by this provider: {what}]")})
+        }
+    }
+}
+
+/// Text block (if any) followed by the message's parts.
+fn content_blocks(m: &Message) -> Vec<Value> {
+    let mut blocks = Vec::with_capacity(m.parts.len() + 1);
+    if !m.content.is_empty() || m.parts.is_empty() {
+        blocks.push(json!({"type": "text", "text": m.content}));
+    }
+    blocks.extend(m.parts.iter().map(encode_part));
+    blocks
+}
+
 /// System messages go to the top-level `system` field; consecutive tool
 /// results are merged into a single user turn, as the API requires.
 pub(crate) fn encode_request(model: &str, default_max: u32, req: &ChatRequest) -> Value {
-    let system: Vec<&str> = req
+    let system: Vec<String> = req
         .messages
         .iter()
         .filter(|m| m.role == Role::System)
-        .map(|m| m.content.as_str())
+        .map(Message::text)
         .collect();
     let mut turns: Vec<Value> = Vec::new();
     for m in req.messages.iter().filter(|m| m.role != Role::System) {
         match m.role {
             Role::Tool => {
-                let block = json!({"type": "tool_result", "tool_use_id": m.tool_call_id, "content": m.content});
+                let content = if m.parts.is_empty() {
+                    json!(m.content)
+                } else {
+                    Value::Array(content_blocks(m))
+                };
+                let block = json!({"type": "tool_result", "tool_use_id": m.tool_call_id, "content": content});
                 let merged = turns.last_mut().filter(|t| {
                     t["role"] == "user"
                         && t["content"]
@@ -88,13 +148,13 @@ pub(crate) fn encode_request(model: &str, default_max: u32, req: &ChatRequest) -
                 if !m.content.is_empty() {
                     blocks.push(json!({"type": "text", "text": m.content}));
                 }
+                blocks.extend(m.parts.iter().map(encode_part));
                 for c in &m.tool_calls {
                     blocks.push(json!({"type": "tool_use", "id": c.id, "name": c.name, "input": c.arguments}));
                 }
                 turns.push(json!({"role": "assistant", "content": blocks}));
             }
-            _ => turns
-                .push(json!({"role": "user", "content": [{"type": "text", "text": m.content}]})),
+            _ => turns.push(json!({"role": "user", "content": content_blocks(m)})),
         }
     }
     let mut body = json!({
@@ -139,9 +199,47 @@ struct ToolBlock {
 pub(crate) struct AnthropicStreamDecoder {
     model: String,
     tools: BTreeMap<usize, ToolBlock>,
-    usage: Usage,
+    usage: RawUsage,
     stop_reason: Option<String>,
     done: bool,
+}
+
+/// Anthropic reports uncached input, cache reads and cache writes
+/// separately; [`Usage::input_tokens`] is their sum.
+#[derive(Default, Clone, Copy)]
+struct RawUsage {
+    input: u32,
+    cache_read: u32,
+    cache_write: u32,
+    output: u32,
+}
+
+impl RawUsage {
+    fn update(&mut self, u: &Value) {
+        let get = |k: &str| u[k].as_u64().map(|n| n as u32);
+        if let Some(n) = get("input_tokens") {
+            self.input = n;
+        }
+        if let Some(n) = get("cache_read_input_tokens") {
+            self.cache_read = n;
+        }
+        if let Some(n) = get("cache_creation_input_tokens") {
+            self.cache_write = n;
+        }
+        if let Some(n) = get("output_tokens") {
+            self.output = n;
+        }
+    }
+
+    fn usage(self) -> Usage {
+        Usage {
+            input_tokens: self.input + self.cache_read + self.cache_write,
+            output_tokens: self.output,
+            cached_input_tokens: self.cache_read,
+            cache_creation_input_tokens: self.cache_write,
+            reasoning_tokens: 0,
+        }
+    }
 }
 
 impl AnthropicStreamDecoder {
@@ -149,19 +247,14 @@ impl AnthropicStreamDecoder {
         Self {
             model: model.into(),
             tools: BTreeMap::new(),
-            usage: Usage::default(),
+            usage: RawUsage::default(),
             stop_reason: None,
             done: false,
         }
     }
 
     fn take_usage(&mut self, u: &Value) {
-        if let Some(n) = u["input_tokens"].as_u64() {
-            self.usage.input_tokens = n as u32;
-        }
-        if let Some(n) = u["output_tokens"].as_u64() {
-            self.usage.output_tokens = n as u32;
-        }
+        self.usage.update(u);
     }
 }
 
@@ -264,7 +357,9 @@ impl SseDecoder for AnthropicStreamDecoder {
 
     fn finish(&mut self) -> Vec<StreamEvent> {
         vec![
-            StreamEvent::Usage { usage: self.usage },
+            StreamEvent::Usage {
+                usage: self.usage.usage(),
+            },
             StreamEvent::Done {
                 model: self.model.clone(),
                 stop_reason: self.stop_reason.take(),
@@ -296,15 +391,10 @@ pub(crate) fn decode_response(model: &str, v: &Value) -> Result<ChatResponse> {
     }
     Ok(ChatResponse {
         message: Message::assistant_with_tools(text, calls),
-        usage: Usage {
-            input_tokens: v
-                .pointer("/usage/input_tokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0) as u32,
-            output_tokens: v
-                .pointer("/usage/output_tokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0) as u32,
+        usage: {
+            let mut raw = RawUsage::default();
+            raw.update(&v["usage"]);
+            raw.usage()
         },
         model: v["model"].as_str().unwrap_or(model).to_string(),
     })
@@ -442,13 +532,7 @@ data: {"type":"message_stop"}
             json!({"location": "San Francisco, CA"})
         );
         assert_eq!(r.message.tool_calls[1].arguments, json!({}));
-        assert_eq!(
-            r.usage,
-            Usage {
-                input_tokens: 472,
-                output_tokens: 89
-            }
-        );
+        assert_eq!(r.usage, Usage::new(472, 89));
     }
 
     #[test]
@@ -468,5 +552,64 @@ data: {"type":"message_stop"}
             body["tool_choice"],
             json!({"type": "tool", "name": "respond"})
         );
+    }
+
+    #[test]
+    fn encodes_images_documents_and_tool_result_images() {
+        let req = ChatRequest::new(vec![
+            Message::user_with_parts(
+                "Summarise",
+                [
+                    ContentPart::pdf_bytes(b"%PDF").with_name("report"),
+                    ContentPart::image_url("https://x/a.jpg"),
+                    ContentPart::image_bytes(b"abc", "image/png"),
+                ],
+            ),
+            Message::assistant_with_tools(
+                "",
+                vec![ToolCall {
+                    id: "t1".into(),
+                    name: "screenshot".into(),
+                    arguments: json!({}),
+                }],
+            ),
+            Message::tool_result("t1", "here")
+                .with_part(ContentPart::image_base64("image/jpeg", "Zm9v")),
+        ]);
+        let body = encode_request("claude-sonnet-5-5", 1024, &req);
+        assert_eq!(
+            body["messages"][0]["content"],
+            json!([
+                {"type": "text", "text": "Summarise"},
+                {"type": "document", "title": "report", "source": {"type": "base64", "media_type": "application/pdf", "data": "JVBERg=="}},
+                {"type": "image", "source": {"type": "url", "url": "https://x/a.jpg"}},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "YWJj"}}
+            ])
+        );
+        assert_eq!(
+            body["messages"][2]["content"][0]["content"],
+            json!([
+                {"type": "text", "text": "here"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "Zm9v"}}
+            ])
+        );
+        // Text-only messages are unchanged.
+        let plain = encode_request("m", 1, &ChatRequest::new(vec![Message::user("hi")]));
+        assert_eq!(
+            plain["messages"][0]["content"],
+            json!([{"type": "text", "text": "hi"}])
+        );
+    }
+
+    #[test]
+    fn cache_tokens_are_folded_into_input() {
+        let v = json!({"content": [{"type": "text", "text": "ok"}], "usage": {
+            "input_tokens": 10, "cache_read_input_tokens": 1000,
+            "cache_creation_input_tokens": 200, "output_tokens": 5}});
+        let u = decode_response("m", &v).unwrap().usage;
+        assert_eq!(u.input_tokens, 1210);
+        assert_eq!(u.cached_input_tokens, 1000);
+        assert_eq!(u.cache_creation_input_tokens, 200);
+        assert_eq!(u.output_tokens, 5);
     }
 }

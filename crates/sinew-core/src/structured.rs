@@ -197,7 +197,7 @@ where
 }
 
 /// Finds the JSON in a reply: strips Markdown fences and surrounding prose.
-fn extract_json(raw: &str) -> Option<&str> {
+pub(crate) fn extract_json(raw: &str) -> Option<&str> {
     let mut s = raw.trim();
     if let Some(rest) = s.strip_prefix("```") {
         let rest = rest.trim_start_matches(|c: char| c.is_ascii_alphanumeric());

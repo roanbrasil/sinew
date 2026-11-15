@@ -126,12 +126,24 @@ impl StreamAccumulator {
                 self.complete.insert(*index, call.clone());
             }
             StreamEvent::Usage { usage } => {
-                if usage.input_tokens > 0 {
-                    self.usage.input_tokens = usage.input_tokens;
-                }
-                if usage.output_tokens > 0 {
-                    self.usage.output_tokens = usage.output_tokens;
-                }
+                // Providers may split usage over several events; a non-zero
+                // field always replaces what came before.
+                let set = |dst: &mut u32, src: u32| {
+                    if src > 0 {
+                        *dst = src;
+                    }
+                };
+                set(&mut self.usage.input_tokens, usage.input_tokens);
+                set(&mut self.usage.output_tokens, usage.output_tokens);
+                set(
+                    &mut self.usage.cached_input_tokens,
+                    usage.cached_input_tokens,
+                );
+                set(
+                    &mut self.usage.cache_creation_input_tokens,
+                    usage.cache_creation_input_tokens,
+                );
+                set(&mut self.usage.reasoning_tokens, usage.reasoning_tokens);
             }
             StreamEvent::Done { model, stop_reason } => {
                 self.model.clone_from(model);
@@ -224,9 +236,16 @@ pub struct SseEvent {
 /// chunks the network delivers; it returns each event once its terminating
 /// blank line has arrived. Handles `\n`, `\r\n` and `\r` line endings,
 /// comments, multi-line data and UTF-8 split across chunks.
+///
+/// Work is linear in the input: bytes of an unfinished line are scanned once
+/// (the scan resumes where the previous chunk stopped) and the buffer is
+/// compacted once per chunk, so a long line delivered in many small chunks
+/// does not cause quadratic rescanning.
 #[derive(Default)]
 pub struct SseParser {
     buf: Vec<u8>,
+    /// Bytes of `buf` already known not to contain a line break.
+    scanned: usize,
     event: Option<String>,
     data: Vec<String>,
     /// A `\r` ended the last chunk; a following `\n` belongs to it.
@@ -247,7 +266,7 @@ impl SseParser {
         self.buf.extend_from_slice(chunk);
         let mut out = Vec::new();
         let mut start = 0;
-        let mut i = 0;
+        let mut i = self.scanned;
         while i < self.buf.len() {
             let b = self.buf[i];
             if b == b'\n' || b == b'\r' {
@@ -271,11 +290,13 @@ impl SseParser {
             }
         }
         self.buf.drain(..start);
+        self.scanned = self.buf.len();
         out
     }
 
     /// Flushes a trailing event that was not followed by a blank line.
     pub fn finish(&mut self) -> Option<SseEvent> {
+        self.scanned = 0;
         if !self.buf.is_empty() {
             let line = String::from_utf8_lossy(&std::mem::take(&mut self.buf)).into_owned();
             self.line(&line);
@@ -443,6 +464,24 @@ mod tests {
     }
 
     #[test]
+    fn sse_parser_long_line_in_tiny_chunks() {
+        let payload = "x".repeat(200_000);
+        let body = format!("data: {payload}\n\n");
+        let mut p = SseParser::new();
+        let mut evs = Vec::new();
+        for c in body.as_bytes().chunks(7) {
+            evs.extend(p.push(c));
+        }
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].data.len(), payload.len());
+        // A `\r\n` split across chunks still counts as one line ending.
+        let mut p = SseParser::new();
+        let mut evs = p.push(b"data: a\r");
+        evs.extend(p.push(b"\n\r\n"));
+        assert_eq!(evs.len(), 1);
+    }
+
+    #[test]
     fn accumulator_assembles_deltas_and_prefers_complete_calls() {
         let mut acc = StreamAccumulator::new();
         for ev in [
@@ -475,16 +514,10 @@ mod tests {
                 },
             },
             StreamEvent::Usage {
-                usage: Usage {
-                    input_tokens: 7,
-                    output_tokens: 0,
-                },
+                usage: Usage::new(7, 0),
             },
             StreamEvent::Usage {
-                usage: Usage {
-                    input_tokens: 0,
-                    output_tokens: 3,
-                },
+                usage: Usage::new(0, 3),
             },
             StreamEvent::Done {
                 model: "m".into(),

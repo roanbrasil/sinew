@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 use crate::{
+    message::{ContentPart, MediaSource},
     stream::{parse_arguments, sse_stream, ChatStream, SseDecoder, SseEvent, StreamEvent},
     ChatModel, ChatRequest, ChatResponse, Error, Message, ResponseFormat, Result, Role, ToolCall,
     ToolChoice, Usage,
@@ -16,6 +17,10 @@ use crate::{
 pub struct OpenAiCompat {
     base_url: String,
     api_key: Option<String>,
+    /// Header that carries `api_key`; `None` means `Authorization: Bearer`.
+    key_header: Option<String>,
+    headers: Vec<(String, String)>,
+    query: Vec<(String, String)>,
     model: String,
     stream_usage: bool,
     client: reqwest::Client,
@@ -26,9 +31,12 @@ impl OpenAiCompat {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             api_key: None,
+            key_header: None,
+            headers: Vec::new(),
+            query: Vec::new(),
             model: model.into(),
             stream_usage: true,
-            client: reqwest::Client::new(),
+            client: super::shared_client(),
         }
     }
 
@@ -63,14 +71,123 @@ impl OpenAiCompat {
         self
     }
 
-    fn request(&self) -> reqwest::RequestBuilder {
-        let req = self
+    /// Sends the API key in this header instead of `Authorization: Bearer`
+    /// (Azure OpenAI uses `api-key`).
+    pub fn with_api_key_header(mut self, header: impl Into<String>) -> Self {
+        self.key_header = Some(header.into());
+        self
+    }
+
+    /// Adds a header to every request (e.g. OpenRouter's `HTTP-Referer`).
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+
+    /// Adds a query parameter to every request (e.g. Azure `api-version`).
+    pub fn with_query(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.query.push((key.into(), value.into()));
+        self
+    }
+
+    /// Uses this HTTP client instead of the [shared](super::shared_client) one.
+    pub fn with_http_client(mut self, client: reqwest::Client) -> Self {
+        self.client = client;
+        self
+    }
+
+    /// The endpoint base URL (without `/chat/completions`).
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    pub(crate) fn request(&self) -> reqwest::RequestBuilder {
+        let mut req = self
             .client
             .post(format!("{}/chat/completions", self.base_url));
-        match &self.api_key {
-            Some(k) => req.bearer_auth(k),
-            None => req,
+        if !self.query.is_empty() {
+            req = req.query(&self.query);
         }
+        for (k, v) in &self.headers {
+            req = req.header(k, v);
+        }
+        match (&self.api_key, &self.key_header) {
+            (Some(k), Some(h)) => req.header(h, k),
+            (Some(k), None) => req.bearer_auth(k),
+            (None, _) => req,
+        }
+    }
+}
+
+/// The audio `format` OpenAI expects for a MIME type.
+fn audio_format(media_type: &str) -> &str {
+    match media_type {
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/wav" | "audio/x-wav" | "audio/wave" => "wav",
+        other => other.strip_prefix("audio/").unwrap_or(other),
+    }
+}
+
+/// One `content` array entry. Sources OpenAI cannot take (a document or
+/// audio by URL) become a text reference so nothing is silently dropped.
+fn encode_part(p: &ContentPart) -> Value {
+    match p {
+        ContentPart::Text { text } => json!({"type": "text", "text": text}),
+        ContentPart::Image { source, detail } => {
+            let mut img = json!({ "url": source.to_url() });
+            if let Some(d) = detail {
+                img["detail"] = json!(d);
+            }
+            json!({"type": "image_url", "image_url": img})
+        }
+        ContentPart::Document { source, name } => match source {
+            MediaSource::Base64 { .. } => json!({"type": "file", "file": {
+                "filename": name.as_deref().unwrap_or("document.pdf"),
+                "file_data": source.to_url(),
+            }}),
+            // An uploaded OpenAI file id.
+            MediaSource::Url { url, .. } if url.starts_with("file-") => {
+                json!({"type": "file", "file": {"file_id": url}})
+            }
+            MediaSource::Url { url, .. } => {
+                json!({"type": "text", "text": format!("[document: {url}]")})
+            }
+        },
+        ContentPart::Audio { source } => match source {
+            MediaSource::Base64 { media_type, data } => {
+                json!({"type": "input_audio", "input_audio": {
+                    "data": data, "format": audio_format(media_type),
+                }})
+            }
+            MediaSource::Url { url, .. } => {
+                json!({"type": "text", "text": format!("[audio: {url}]")})
+            }
+        },
+    }
+}
+
+/// `content` as a plain string for text-only messages (the compact form
+/// every server accepts) or as a parts array when the message has parts.
+pub(crate) fn encode_content(m: &Message) -> Value {
+    if m.parts.is_empty() {
+        return json!(m.content);
+    }
+    let mut parts = Vec::with_capacity(m.parts.len() + 1);
+    if !m.content.is_empty() {
+        parts.push(json!({"type": "text", "text": m.content}));
+    }
+    parts.extend(m.parts.iter().map(encode_part));
+    Value::Array(parts)
+}
+
+fn usage_from(u: &Value) -> Usage {
+    let n = |p: &str| u.pointer(p).and_then(Value::as_u64).unwrap_or(0) as u32;
+    Usage {
+        input_tokens: n("/prompt_tokens"),
+        output_tokens: n("/completion_tokens"),
+        cached_input_tokens: n("/prompt_tokens_details/cached_tokens"),
+        cache_creation_input_tokens: 0,
+        reasoning_tokens: n("/completion_tokens_details/reasoning_tokens"),
     }
 }
 
@@ -81,7 +198,7 @@ pub(crate) fn encode_message(m: &Message) -> Value {
         Role::Assistant => "assistant",
         Role::Tool => "tool",
     };
-    let mut v = json!({ "role": role, "content": m.content });
+    let mut v = json!({ "role": role, "content": encode_content(m) });
     if !m.tool_calls.is_empty() {
         v["tool_calls"] = m
             .tool_calls
@@ -183,10 +300,7 @@ impl SseDecoder for OpenAiStreamDecoder {
             self.model = m.to_string();
         }
         if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
-            self.usage = Some(Usage {
-                input_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                output_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
-            });
+            self.usage = Some(usage_from(u));
         }
         let mut out = Vec::new();
         for choice in v["choices"].as_array().into_iter().flatten() {
@@ -280,16 +394,7 @@ pub(crate) fn decode_response(model: &str, v: &Value) -> Result<ChatResponse> {
             arguments,
         });
     }
-    let usage = Usage {
-        input_tokens: v
-            .pointer("/usage/prompt_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as u32,
-        output_tokens: v
-            .pointer("/usage/completion_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as u32,
-    };
+    let usage = usage_from(&v["usage"]);
     Ok(ChatResponse {
         message: Message::assistant_with_tools(content, calls),
         usage,
@@ -358,13 +463,7 @@ mod tests {
         });
         let r = decode_response("m", &v).unwrap();
         assert_eq!(r.message.tool_calls[0].arguments, json!({"a": 2}));
-        assert_eq!(
-            r.usage,
-            Usage {
-                input_tokens: 10,
-                output_tokens: 3
-            }
-        );
+        assert_eq!(r.usage, Usage::new(10, 3));
         assert_eq!(r.model, "llama");
     }
 
@@ -411,13 +510,65 @@ data: [DONE]
         assert_eq!(r.message.tool_calls.len(), 1);
         assert_eq!(r.message.tool_calls[0].id, "call_9");
         assert_eq!(r.message.tool_calls[0].arguments, json!({"a": 37, "b": 3}));
+        assert_eq!(r.usage, Usage::new(52, 18));
+    }
+
+    #[test]
+    fn encodes_multimodal_content_arrays() {
+        use crate::message::ImageDetail;
+        let req = ChatRequest::new(vec![
+            Message::system("sys"),
+            Message::user_with_images(
+                "What is in these?",
+                [
+                    ContentPart::image_url("https://x/cat.png").with_detail(ImageDetail::High),
+                    ContentPart::image_bytes(b"abc", "image/png"),
+                ],
+            )
+            .with_part(ContentPart::pdf_bytes(b"%PDF").with_name("r.pdf"))
+            .with_part(ContentPart::audio_bytes(b"RIFF", "audio/wav")),
+        ]);
+        let body = encode_request("gpt-4o", &req);
+        assert_eq!(body["messages"][0]["content"], "sys");
         assert_eq!(
-            r.usage,
-            Usage {
-                input_tokens: 52,
-                output_tokens: 18
-            }
+            body["messages"][1]["content"],
+            json!([
+                {"type": "text", "text": "What is in these?"},
+                {"type": "image_url", "image_url": {"url": "https://x/cat.png", "detail": "high"}},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,YWJj"}},
+                {"type": "file", "file": {"filename": "r.pdf", "file_data": "data:application/pdf;base64,JVBERg=="}},
+                {"type": "input_audio", "input_audio": {"data": "UklGRg==", "format": "wav"}}
+            ])
         );
+    }
+
+    #[test]
+    fn decodes_cached_and_reasoning_tokens() {
+        let v = json!({
+            "choices": [{"message": {"content": "hi"}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50,
+                "prompt_tokens_details": {"cached_tokens": 64},
+                "completion_tokens_details": {"reasoning_tokens": 30}}
+        });
+        let u = decode_response("o3", &v).unwrap().usage;
+        assert_eq!(u.cached_input_tokens, 64);
+        assert_eq!(u.reasoning_tokens, 30);
+        assert_eq!(u.input_tokens, 100);
+    }
+
+    #[test]
+    fn custom_auth_header_and_query() {
+        let m = OpenAiCompat::new("https://r.openai.azure.com/openai/deployments/d", "d")
+            .with_api_key("k")
+            .with_api_key_header("api-key")
+            .with_query("api-version", "2024-10-21");
+        let req = m.request().build().unwrap();
+        assert_eq!(
+            req.url().as_str(),
+            "https://r.openai.azure.com/openai/deployments/d/chat/completions?api-version=2024-10-21"
+        );
+        assert_eq!(req.headers()["api-key"], "k");
+        assert!(req.headers().get("authorization").is_none());
     }
 
     #[test]

@@ -49,6 +49,32 @@ pub struct ChatRequest {
     pub response_format: Option<ResponseFormat>,
 }
 
+impl From<Vec<Message>> for ChatRequest {
+    fn from(messages: Vec<Message>) -> Self {
+        Self::new(messages)
+    }
+}
+
+impl From<Message> for ChatRequest {
+    fn from(m: Message) -> Self {
+        Self::new(vec![m])
+    }
+}
+
+/// A single user message.
+impl From<String> for ChatRequest {
+    fn from(text: String) -> Self {
+        Self::new(vec![Message::user(text)])
+    }
+}
+
+/// A single user message.
+impl From<&str> for ChatRequest {
+    fn from(text: &str) -> Self {
+        Self::new(vec![Message::user(text)])
+    }
+}
+
 impl ChatRequest {
     pub fn new(messages: Vec<Message>) -> Self {
         Self {
@@ -78,10 +104,87 @@ impl ChatRequest {
     }
 }
 
+/// Token counts for one response (or a sum of several).
+///
+/// `input_tokens` is the whole prompt, including any part served from the
+/// provider's prompt cache (`cached_input_tokens`) or written to it
+/// (`cache_creation_input_tokens`). `output_tokens` includes reasoning /
+/// thinking tokens, which are also reported on their own in
+/// `reasoning_tokens`. The extra fields are zero when the provider does not
+/// report them; build values with `..Default::default()`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
     pub input_tokens: u32,
     pub output_tokens: u32,
+    /// Prompt tokens read from the provider's cache (subset of `input_tokens`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cached_input_tokens: u32,
+    /// Prompt tokens written to the cache (Anthropic; subset of `input_tokens`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cache_creation_input_tokens: u32,
+    /// Reasoning / thinking tokens (subset of `output_tokens`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub reasoning_tokens: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+impl Usage {
+    pub fn new(input_tokens: u32, output_tokens: u32) -> Self {
+        Self {
+            input_tokens,
+            output_tokens,
+            ..Default::default()
+        }
+    }
+
+    pub fn total_tokens(&self) -> u32 {
+        self.input_tokens.saturating_add(self.output_tokens)
+    }
+
+    /// Estimated cost in USD from the built-in [price table](crate::pricing),
+    /// or `None` when the model is unknown (local models, new releases).
+    pub fn cost(&self, model: &str) -> Option<f64> {
+        crate::pricing::price_for(model).map(|p| p.cost(self))
+    }
+}
+
+impl std::ops::Add for Usage {
+    type Output = Usage;
+    fn add(mut self, rhs: Usage) -> Usage {
+        self += rhs;
+        self
+    }
+}
+
+impl std::ops::AddAssign for Usage {
+    fn add_assign(&mut self, rhs: Usage) {
+        self.input_tokens = self.input_tokens.saturating_add(rhs.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(rhs.output_tokens);
+        self.cached_input_tokens = self
+            .cached_input_tokens
+            .saturating_add(rhs.cached_input_tokens);
+        self.cache_creation_input_tokens = self
+            .cache_creation_input_tokens
+            .saturating_add(rhs.cache_creation_input_tokens);
+        self.reasoning_tokens = self.reasoning_tokens.saturating_add(rhs.reasoning_tokens);
+    }
+}
+
+impl std::iter::Sum for Usage {
+    fn sum<I: Iterator<Item = Usage>>(iter: I) -> Usage {
+        iter.fold(Usage::default(), |a, b| a + b)
+    }
+}
+
+impl ChatResponse {
+    /// Estimated cost of this response in USD (see [`Usage::cost`]); uses the
+    /// model name the provider reported.
+    pub fn cost(&self) -> Option<f64> {
+        self.usage.cost(&self.model)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
