@@ -421,9 +421,10 @@ async function tracePage(traceId, params) {
         h("div", { class: "crumbs" }, h("a", { href: "#/traces" }, "Traces"), " / ", s.project),
         h("h1", {}, s.name),
         h("div", { class: "muted toolbar" },
-          h("span", { class: "mono" }, s.trace_id), "·", fmt.time(s.start_ms), "·", fmt.ms(s.latency_ms), "·",
-          `${fmt.num(s.input_tokens)} → ${fmt.num(s.output_tokens)} tokens`, "·", `${s.run_count} runs`,
-          s.error_count ? h("span", { class: "status-err" }, `· ${s.error_count} error(s)`) : null)),
+          h("span", { class: "mono" }, s.trace_id),
+          h("span", {}, [fmt.time(s.start_ms), fmt.ms(s.latency_ms),
+            `${fmt.num(s.input_tokens)} → ${fmt.num(s.output_tokens)} tokens`, `${s.run_count} runs`].join(" · ")),
+          s.error_count ? h("span", { class: "status-err" }, `${s.error_count} error(s)`) : null)),
       h("button", { onclick: route }, "Refresh")),
     h("div", { class: "trace-layout" }, h("div", { class: "card" }, treeBox), detailBox));
 }

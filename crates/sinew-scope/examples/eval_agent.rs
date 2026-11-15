@@ -6,6 +6,8 @@
 //! Against a running server, with local Ollama and an LLM judge:
 //!     cargo run -p sinew-scope --example eval_agent -- --ollama --url http://127.0.0.1:7878
 //!
+//! `--limit N` keeps only the first N examples (useful with slow local models).
+//!
 //! Variant A answers without tools; variant B is the `react_agent` with a
 //! `multiply` tool. Every target call is also traced to project `eval`.
 
@@ -108,6 +110,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .position(|a| a == "--url")
         .and_then(|i| argv.get(i + 1).cloned());
+    let limit = argv
+        .iter()
+        .position(|a| a == "--limit")
+        .and_then(|i| argv.get(i + 1))
+        .and_then(|n| n.parse::<usize>().ok());
     let token = std::env::var("SINEW_SCOPE_TOKEN")
         .ok()
         .filter(|t| !t.is_empty());
@@ -133,6 +140,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let copy = std::env::temp_dir().join("sinew-arithmetic.jsonl");
     dataset.save_jsonl(&copy)?;
     assert_eq!(Dataset::load_jsonl(&copy)?.examples, dataset.examples);
+    if let Some(n) = limit {
+        // A subset is its own dataset, so uploading it does not replace the full one.
+        dataset.examples.truncate(n);
+        dataset.name = format!("{}-first{n}", dataset.name);
+    }
 
     let mut evaluators: Vec<Box<dyn Evaluator>> = vec![
         Box::new(NumericTolerance::absolute(1e-6)),
