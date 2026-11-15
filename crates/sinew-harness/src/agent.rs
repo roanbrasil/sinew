@@ -254,7 +254,7 @@ impl AgentBuilder {
     }
 
     /// A `provider:model` spec resolved with
-    /// [`from_spec`](sinew_core::providers::from_spec) at build time, e.g.
+    /// [`from_spec`] at build time, e.g.
     /// `ollama:qwen3:4b-instruct-2507-q4_K_M` or `anthropic:claude-sonnet-4-5`.
     pub fn model_spec(mut self, spec: impl Into<String>) -> Self {
         self.model_spec = Some(spec.into());

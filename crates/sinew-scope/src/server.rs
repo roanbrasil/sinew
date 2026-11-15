@@ -1,4 +1,5 @@
-//! HTTP server: ingest, query API, datasets/experiments and the embedded UI.
+//! HTTP server: ingest, query API, datasets/experiments, prompt hub,
+//! feedback, annotation queues, monitoring, rules, alerts and the embedded UI.
 
 use std::{collections::HashMap, net::SocketAddr};
 
@@ -8,7 +9,7 @@ use axum::{
     http::{header, HeaderMap, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use serde::Deserialize;
@@ -17,6 +18,8 @@ use sinew_eval::{Dataset, ExperimentReport};
 use sinew_trace::Run;
 
 use crate::{
+    api,
+    engine::{Engine, EngineConfig},
     otlp,
     store::{Store, StoreError, TraceQuery},
 };
@@ -26,23 +29,38 @@ pub const PROJECT_HEADER: &str = "x-sinew-project";
 
 const INDEX_HTML: &str = include_str!("ui/index.html");
 const APP_JS: &str = include_str!("ui/app.js");
+const PAGES_JS: &str = include_str!("ui/pages.js");
 const STYLE_CSS: &str = include_str!("ui/style.css");
+const LOGO_PNG: &[u8] = include_bytes!("../../../docs/assets/logo-128.png");
 
 #[derive(Clone)]
-struct AppState {
-    store: Store,
-    token: Option<String>,
+pub(crate) struct AppState {
+    pub(crate) store: Store,
+    pub(crate) token: Option<String>,
+    pub(crate) engine: Option<Engine>,
+}
+
+/// Options for [`router_with`].
+#[derive(Clone, Default)]
+pub struct ServerConfig {
+    /// Bearer token for `/api/*` and `/v1/*`.
+    pub token: Option<String>,
+    /// Background engine settings (rules, alerts, retention); `None` uses
+    /// the defaults.
+    pub engine: Option<EngineConfig>,
+    /// Do not start the background engine.
+    pub disable_engine: bool,
 }
 
 /// JSON error response: `{"error": "..."}` with a status code.
 #[derive(Debug)]
-pub struct ApiError(StatusCode, String);
+pub struct ApiError(pub(crate) StatusCode, pub(crate) String);
 
 impl ApiError {
-    fn bad_request(msg: impl Into<String>) -> Self {
+    pub(crate) fn bad_request(msg: impl Into<String>) -> Self {
         Self(StatusCode::BAD_REQUEST, msg.into())
     }
-    fn not_found(what: &str) -> Self {
+    pub(crate) fn not_found(what: &str) -> Self {
         Self(StatusCode::NOT_FOUND, format!("{what} not found"))
     }
 }
@@ -62,18 +80,105 @@ impl IntoResponse for ApiError {
     }
 }
 
-type ApiResult<T> = Result<Json<T>, ApiError>;
+pub(crate) type ApiResult<T> = Result<Json<T>, ApiError>;
 
 /// Builds the full router. `token` enables bearer auth on `/api/*` and
-/// `/v1/*` (the UI assets and `/api/health` stay public).
+/// `/v1/*` (the UI assets and `/api/health` stay public). When called inside
+/// a Tokio runtime, the background engine (online rules, alerts, retention)
+/// is started with default settings; use [`router_with`] to configure it.
 pub fn router(store: Store, token: Option<String>) -> Router {
+    router_with(
+        store,
+        ServerConfig {
+            token,
+            ..Default::default()
+        },
+    )
+}
+
+/// Builds the router with explicit [`ServerConfig`].
+pub fn router_with(store: Store, config: ServerConfig) -> Router {
+    let engine = (!config.disable_engine && tokio::runtime::Handle::try_current().is_ok())
+        .then(|| Engine::start(store.clone(), config.engine.unwrap_or_default()));
     let state = AppState {
         store,
-        token: token.filter(|t| !t.is_empty()),
+        token: config.token.filter(|t| !t.is_empty()),
+        engine,
     };
     let protected = Router::new()
-        .route("/api/runs", post(ingest_runs))
+        .route("/api/runs", post(ingest_runs).get(api::search_runs))
         .route("/api/runs/{id}", get(get_run))
+        .route("/api/runs/{id}/feedback", get(api::run_feedback))
+        .route("/api/metrics", get(api::metrics))
+        .route(
+            "/api/feedback",
+            get(api::list_feedback).post(api::create_feedback),
+        )
+        .route("/api/feedback/stats", get(api::feedback_stats))
+        .route("/api/feedback/{id}", delete(api::delete_feedback))
+        .route(
+            "/api/prompts",
+            get(api::list_prompts).post(api::push_prompt),
+        )
+        .route(
+            "/api/prompts/{name}",
+            get(api::get_prompt).delete(api::delete_prompt),
+        )
+        .route("/api/prompts/{name}/diff", get(api::diff_prompt))
+        .route("/api/prompts/{name}/{reference}", get(api::resolve_prompt))
+        .route(
+            "/api/prompts/{name}/tags/{tag}",
+            put(api::set_prompt_tag).delete(api::delete_prompt_tag),
+        )
+        .route("/api/queues", get(api::list_queues).post(api::create_queue))
+        .route(
+            "/api/queues/{id}",
+            get(api::get_queue).delete(api::delete_queue),
+        )
+        .route("/api/queues/{id}/items", post(api::enqueue))
+        .route("/api/queues/{id}/next", get(api::queue_next))
+        .route(
+            "/api/queues/{id}/items/{run_id}",
+            delete(api::remove_queue_item),
+        )
+        .route(
+            "/api/queues/{id}/items/{run_id}/done",
+            post(api::complete_queue_item),
+        )
+        .route("/api/datasets/{name}/examples", post(api::add_example))
+        .route(
+            "/api/pairwise",
+            get(api::list_pairwise).post(api::put_pairwise),
+        )
+        .route("/api/pairwise/{id}", get(api::get_pairwise))
+        .route(
+            "/api/pricing",
+            get(api::get_pricing)
+                .put(api::put_pricing)
+                .delete(api::reset_pricing),
+        )
+        .route("/api/pricing/recompute", post(api::recompute_costs))
+        .route(
+            "/api/settings",
+            get(api::get_settings).put(api::put_settings),
+        )
+        .route("/api/retention/run", post(api::run_retention))
+        .route("/api/rules", get(api::list_rules).post(api::create_rule))
+        .route(
+            "/api/rules/{id}",
+            get(api::get_rule)
+                .put(api::update_rule)
+                .delete(api::delete_rule),
+        )
+        .route("/api/rules/{id}/run", post(api::run_rule))
+        .route("/api/alerts", get(api::list_alerts).post(api::create_alert))
+        .route(
+            "/api/alerts/{id}",
+            get(api::get_alert)
+                .put(api::update_alert)
+                .delete(api::delete_alert),
+        )
+        .route("/api/alerts/{id}/check", post(api::check_alert))
         .route("/api/traces", get(list_traces))
         .route("/api/traces/{trace_id}", get(get_trace))
         .route("/api/projects", get(list_projects))
@@ -90,6 +195,8 @@ pub fn router(store: Store, token: Option<String>) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/app.js", get(app_js))
+        .route("/pages.js", get(pages_js))
+        .route("/logo.png", get(logo_png))
         .route("/style.css", get(style_css))
         .route("/api/health", get(health))
         .merge(protected)
@@ -110,17 +217,34 @@ pub async fn serve_with_shutdown(
 
 /// Binds `addr` and serves until Ctrl-C.
 pub async fn serve(addr: SocketAddr, store: Store, token: Option<String>) -> std::io::Result<()> {
+    serve_with_config(
+        addr,
+        store,
+        ServerConfig {
+            token,
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+/// Binds `addr` and serves with `config` until Ctrl-C.
+pub async fn serve_with_config(
+    addr: SocketAddr,
+    store: Store,
+    config: ServerConfig,
+) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     eprintln!(
         "sinew-scope listening on http://{}{}",
         listener.local_addr()?,
-        if token.is_some() {
+        if config.token.as_deref().is_some_and(|t| !t.is_empty()) {
             "  (bearer auth on)"
         } else {
             ""
         }
     );
-    serve_with_shutdown(listener, router(store, token), async {
+    serve_with_shutdown(listener, router_with(store, config), async {
         let _ = tokio::signal::ctrl_c().await;
     })
     .await
@@ -180,8 +304,23 @@ async fn app_js() -> Response {
     asset("text/javascript; charset=utf-8", APP_JS)
 }
 
+async fn pages_js() -> Response {
+    asset("text/javascript; charset=utf-8", PAGES_JS)
+}
+
 async fn style_css() -> Response {
     asset("text/css; charset=utf-8", STYLE_CSS)
+}
+
+async fn logo_png() -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "max-age=86400"),
+        ],
+        LOGO_PNG,
+    )
+        .into_response()
 }
 
 async fn health(State(state): State<AppState>) -> Json<Value> {
@@ -189,10 +328,13 @@ async fn health(State(state): State<AppState>) -> Json<Value> {
         "ok": true,
         "version": env!("CARGO_PKG_VERSION"),
         "auth": state.token.is_some(),
+        "fts": state.store.has_fts(),
+        "engine": state.engine.is_some(),
+        "otlp_protobuf": cfg!(feature = "otlp-proto"),
     }))
 }
 
-fn header_project(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn header_project(headers: &HeaderMap) -> Option<String> {
     headers
         .get(PROJECT_HEADER)
         .and_then(|v| v.to_str().ok())
@@ -201,7 +343,7 @@ fn header_project(headers: &HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
-fn parse_json(body: &Bytes) -> Result<Value, ApiError> {
+pub(crate) fn parse_json(body: &Bytes) -> Result<Value, ApiError> {
     serde_json::from_slice(body).map_err(|e| ApiError::bad_request(format!("invalid JSON: {e}")))
 }
 
@@ -239,6 +381,9 @@ async fn ingest_runs(
         runs.push((project.clone(), run));
     }
     let result = state.store.ingest(&runs).await?;
+    if let Some(engine) = &state.engine {
+        engine.submit(runs);
+    }
     Ok(Json(json!(result)))
 }
 
@@ -252,18 +397,34 @@ async fn ingest_otlp(
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if ct.contains("protobuf") {
-        return Err(ApiError(
-            StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            "only OTLP/HTTP JSON is supported; set the exporter protocol to http/json".into(),
-        ));
-    }
-    let body = parse_json(&body)?;
+    let body = if ct.contains("protobuf") {
+        decode_protobuf(&body)?
+    } else {
+        parse_json(&body)?
+    };
     let runs = otlp::otlp_to_runs(&body, header_project(&headers).as_deref())
         .map_err(ApiError::bad_request)?;
     state.store.ingest(&runs).await?;
+    if let Some(engine) = &state.engine {
+        engine.submit(runs);
+    }
     // ExportTraceServiceResponse: an empty partialSuccess means all accepted.
     Ok(Json(json!({ "partialSuccess": {} })))
+}
+
+#[cfg(feature = "otlp-proto")]
+fn decode_protobuf(body: &Bytes) -> Result<Value, ApiError> {
+    sinew_trace::otlp::proto::decode_request(body).map_err(|e| ApiError::bad_request(e.to_string()))
+}
+
+#[cfg(not(feature = "otlp-proto"))]
+fn decode_protobuf(_body: &Bytes) -> Result<Value, ApiError> {
+    Err(ApiError(
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "this server was built without OTLP protobuf support (feature `otlp-proto`); \
+         set the exporter protocol to http/json"
+            .into(),
+    ))
 }
 
 async fn get_run(State(state): State<AppState>, Path(id): Path<String>) -> ApiResult<Value> {
@@ -275,10 +436,9 @@ async fn get_run(State(state): State<AppState>, Path(id): Path<String>) -> ApiRe
     Ok(Json(json!(run)))
 }
 
-async fn list_traces(
-    State(state): State<AppState>,
-    Query(q): Query<TraceQuery>,
-) -> ApiResult<Value> {
+async fn list_traces(State(state): State<AppState>, uri: axum::http::Uri) -> ApiResult<Value> {
+    let mut q: TraceQuery = api::query_from(&uri)?;
+    q.metadata = api::meta_filters(&uri);
     Ok(Json(json!(state.store.list_traces(&q).await?)))
 }
 
@@ -376,18 +536,21 @@ async fn compare_experiments(
     Ok(Json(compare(&a, &b)))
 }
 
-/// Aligns two reports by example id and computes score deltas (b - a).
+/// Aligns two reports by example id (and repetition) and computes score
+/// deltas (b - a).
 pub fn compare(a: &ExperimentReport, b: &ExperimentReport) -> Value {
-    let b_by_id: HashMap<&str, usize> = b
+    let b_by_id: HashMap<(&str, usize), usize> = b
         .results
         .iter()
         .enumerate()
-        .map(|(i, r)| (r.example_id.as_str(), i))
+        .map(|(i, r)| ((r.example_id.as_str(), r.repetition), i))
         .collect();
     let mut used = vec![false; b.results.len()];
     let mut rows = Vec::new();
     for ra in &a.results {
-        let ib = b_by_id.get(ra.example_id.as_str()).copied();
+        let ib = b_by_id
+            .get(&(ra.example_id.as_str(), ra.repetition))
+            .copied();
         if let Some(i) = ib {
             used[i] = true;
         }
@@ -402,6 +565,7 @@ pub fn compare(a: &ExperimentReport, b: &ExperimentReport) -> Value {
         }
         rows.push(json!({
             "example_id": ra.example_id,
+            "repetition": ra.repetition,
             "inputs": ra.inputs,
             "reference": ra.reference,
             "a": ra,

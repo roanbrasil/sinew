@@ -6,13 +6,13 @@
 //! |---|---|
 //! | `id`, `trace_id`, `parent_id` | `spanId`, `traceId`, `parentSpanId` (hex) |
 //! | `start_ms`, `end_ms` | `startTimeUnixNano`, `endTimeUnixNano` / 10^6 |
-//! | `kind` | `gen_ai.operation.name`: `chat`, `text_completion`, `generate_content`, `embeddings` → `llm`; `execute_tool` (or a `gen_ai.tool.name`) → `tool`; a model plus token usage → `llm`; anything else → `chain` |
+//! | `kind` | `gen_ai.operation.name`: `chat`, `text_completion`, `generate_content`, `embeddings` → `llm`; `execute_tool` (or a `gen_ai.tool.name`) → `tool`; a model plus token usage → `llm`; `invoke_agent` → `graph`; anything else → `chain`. A `sinew.run.kind` attribute (spans from `OtlpSink`) wins |
 //! | `name` | llm: `gen_ai.response.model` / `gen_ai.request.model`; tool: `gen_ai.tool.name`; else the span name |
 //! | `input_tokens`, `output_tokens` | `gen_ai.usage.input_tokens` / `output_tokens` (legacy `prompt_tokens` / `completion_tokens`) |
 //! | `inputs` | `gen_ai.input.messages`, `gen_ai.prompt`, `gen_ai.tool.call.arguments`, or `input.value` |
 //! | `outputs` | `gen_ai.output.messages`, `gen_ai.completion`, `gen_ai.tool.call.result`, or `output.value` |
 //! | `error` | span status `ERROR` (code 2): its message, else `error.type`, else `"error"` |
-//! | `metadata` | every span attribute, plus `resource`, `scope`, `span_kind`, `model` |
+//! | `metadata` | every span attribute, plus `resource`, `scope`, `span_kind`, `model`; `sinew.metadata.<key>` attributes are restored as top-level keys |
 //!
 //! The project comes from the `X-Sinew-Project` header, else the resource
 //! attribute `sinew.project`, else `service.name`, else `default`.
@@ -172,12 +172,23 @@ pub fn span_to_run(span: &Value, resource: &Map<String, Value>, scope: &Value) -
         {
             RunKind::Llm
         }
+        _ if op == "invoke_agent" || op == "create_agent" => RunKind::Graph,
         _ => RunKind::Chain,
     };
-    let name = match kind {
-        RunKind::Llm => model.map(str::to_string).unwrap_or(span_name.clone()),
-        RunKind::Tool => tool_name.map(str::to_string).unwrap_or(span_name.clone()),
-        _ => span_name.clone(),
+    // Spans exported by sinew-trace's OtlpSink carry the original kind/name.
+    let kind = first_str(&attrs, &["sinew.run.kind"])
+        .and_then(|k| serde_json::from_value(json!(k)).ok())
+        .unwrap_or(kind);
+    let name = match first_str(&attrs, &["sinew.run.name"]) {
+        Some(n) => n.to_string(),
+        None => match kind {
+            RunKind::Llm => model.map(str::to_string).unwrap_or(span_name.clone()),
+            RunKind::Tool => tool_name.map(str::to_string).unwrap_or(span_name.clone()),
+            RunKind::Graph => first_str(&attrs, &["gen_ai.agent.name"])
+                .map(str::to_string)
+                .unwrap_or(span_name.clone()),
+            _ => span_name.clone(),
+        },
     };
 
     let input_tokens = as_u32(
@@ -244,6 +255,19 @@ pub fn span_to_run(span: &Value, resource: &Map<String, Value>, scope: &Value) -
     }
     if let Some(s) = scope["name"].as_str() {
         metadata.insert("scope".into(), json!(s));
+    }
+    // `sinew.metadata.<key>` attributes become top-level metadata again
+    // (JSON-encoded arrays/objects are decoded).
+    for (k, v) in &attrs {
+        if let Some(key) = k.strip_prefix("sinew.metadata.") {
+            let v = match v {
+                Value::String(s) if s.starts_with('[') || s.starts_with('{') => {
+                    serde_json::from_str(s).unwrap_or_else(|_| v.clone())
+                }
+                other => other.clone(),
+            };
+            metadata.insert(key.to_string(), v);
+        }
     }
     metadata.insert("attributes".into(), Value::Object(attrs.clone()));
     metadata.insert("resource".into(), Value::Object(resource.clone()));
@@ -384,8 +408,8 @@ mod tests {
         assert!(runs.iter().all(|(p, _)| p == "support-bot"));
 
         let (_, agent) = &runs[0];
-        assert_eq!(agent.kind, RunKind::Chain);
-        assert_eq!(agent.name, "invoke_agent support");
+        assert_eq!(agent.kind, RunKind::Graph);
+        assert_eq!(agent.name, "support");
         assert_eq!(agent.parent_id, None);
         assert_eq!(agent.start_ms, 1_700_000_000_000);
         assert_eq!(agent.duration_ms(), Some(1500));

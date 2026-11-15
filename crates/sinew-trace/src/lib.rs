@@ -3,16 +3,24 @@
 //! to [`TraceSink`]s when they finish (JSONL file, in-memory, or your own).
 //!
 //! With the `http` feature, [`HttpSink`] ships finished runs to a
-//! `sinew-scope serve` instance in background batches.
+//! `sinew-scope serve` instance in background batches. With the `otlp`
+//! feature, [`OtlpSink`] exports them as OpenTelemetry spans (GenAI semantic
+//! conventions) to any OTLP/HTTP collector; `otlp-proto` adds the protobuf
+//! encoding. See [`otlp`] for the mapping.
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png",
     html_favicon_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png"
 )]
 
+#[cfg(any(feature = "http", feature = "otlp"))]
+mod batch;
 #[cfg(feature = "http")]
 mod http;
+pub mod otlp;
 #[cfg(feature = "http")]
 pub use http::{HttpSink, HttpSinkConfig};
+#[cfg(feature = "otlp")]
+pub use otlp::{OtlpProtocol, OtlpSink, OtlpSinkConfig};
 
 use std::{
     fmt::Display,
@@ -283,8 +291,9 @@ pub async fn traced_chat<M: ChatModel + ?Sized>(
 }
 
 /// Streams a model call, passing every event to `on_event`, and records an
-/// `llm` run (with usage and the number of streamed chunks) when a tracer is
-/// present. Returns the accumulated response.
+/// `llm` run (with usage, the number of streamed chunks and the time to the
+/// first token as `metadata.ttft_ms`) when a tracer is present. Returns the
+/// accumulated response.
 pub async fn traced_chat_stream<M, F>(
     model: &M,
     request: ChatRequest,
@@ -301,9 +310,19 @@ where
     };
     let mut run = tracer.start(model.name(), RunKind::Llm, parent, json!({ "messages": request.messages, "tools": request.tools.iter().map(|t| &t.name).collect::<Vec<_>>() }));
     let mut chunks = 0u64;
+    let started = std::time::Instant::now();
+    let mut ttft_ms: Option<u64> = None;
     let result = chat_streaming(model, request, |ev| {
         if matches!(ev, StreamEvent::TextDelta { .. }) {
             chunks += 1;
+        }
+        if ttft_ms.is_none()
+            && matches!(
+                ev,
+                StreamEvent::TextDelta { .. } | StreamEvent::ToolCallDelta { .. }
+            )
+        {
+            ttft_ms = Some(started.elapsed().as_millis() as u64);
         }
         on_event(ev)
     })
@@ -313,6 +332,9 @@ where
             run.set_usage(resp.usage.input_tokens, resp.usage.output_tokens);
             run.set_metadata("model", json!(resp.model));
             run.set_metadata("streamed_chunks", json!(chunks));
+            if let Some(t) = ttft_ms {
+                run.set_metadata("ttft_ms", json!(t));
+            }
             run.finish(json!(resp.message));
             Ok(resp)
         }

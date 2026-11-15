@@ -5,7 +5,9 @@
 //!   and an embedded web UI at `/`.
 //! - [`store`]: SQLite storage (sqlx).
 //! - [`otlp`]: OpenTelemetry span → [`sinew_trace::Run`] mapping (GenAI
-//!   semantic conventions).
+//!   semantic conventions); protobuf ingest with the `otlp-proto` feature.
+//! - [`pricing`]: model price table, per-run and per-trace cost.
+//! - [`engine`]: background online-evaluation rules, alerts and retention.
 //! - [`view`]: the terminal tree viewer.
 //!
 //! Start a server in-process (tests, examples):
@@ -28,10 +30,15 @@
     html_favicon_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png"
 )]
 
+mod api;
+pub mod engine;
 pub mod otlp;
+pub mod pricing;
 pub mod server;
 pub mod store;
 pub mod view;
 
-pub use server::router;
-pub use store::{Store, StoreError, TraceQuery};
+pub use engine::{Engine, EngineConfig, ModelFactory};
+pub use pricing::{ModelPrice, Pricing};
+pub use server::{router, router_with, ServerConfig};
+pub use store::{MetricsQuery, RunQuery, Store, StoreError, TraceQuery};

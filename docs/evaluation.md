@@ -122,6 +122,68 @@ assert!(report.mean("numeric").unwrap() > 0.9);
 To trace the target too, give your graph a `Tracer` with an `HttpSink` (see
 [scope.md](scope.md)); every example becomes a trace.
 
+## Repetitions, summary evaluators and concurrency: `Experiment`
+
+`evaluate` is the short form. `Experiment` adds every option:
+
+```rust
+use sinew_eval::{ClassificationF1, Contains, Experiment, PassRate};
+
+let report = Experiment::new(&dataset)
+    .evaluator(Contains::reference())
+    .summary_evaluator(PassRate::new("contains", 1.0))   // key `pass_rate:contains`
+    .summary_evaluator(ClassificationF1::new("positive")) // key `f1`
+    .repetitions(3)      // run every example 3 times to see variance
+    .concurrency(4)      // at most 4 target calls in flight, across repetitions
+    .name("baseline")
+    .metadata(json!({"model": "gpt-4.1-mini"}))
+    .run(|inputs: Value| async move { my_target(inputs).await })
+    .await;
+println!("{:?}", report.summary_score("f1"));
+```
+
+- With repetitions, `results` has one entry per example and repetition (`repetition` is 0-based)
+  and aggregates cover all of them. `report.repetitions` records the count.
+- **Summary evaluators** score the experiment as a whole (`SummaryEvaluator::evaluate(&[ExampleResult])
+  -> Score`); results land in `report.summary_scores`. Built-ins: `PassRate::new(key, threshold)`
+  (fraction of examples whose `key` score is at least the threshold; errors count as failures),
+  `ClassificationF1::new(positive_label)` (precision/recall in the reason) and
+  `FnSummary::new(name, |results| Score)`.
+
+Old reports without these fields still deserialize (`repetition` 0, no summary scores).
+
+## Pairwise (A/B) experiments
+
+Absolute scores are noisy for open-ended outputs; asking "which of the two is better?" is often
+more reliable. `evaluate_pairwise` takes two experiments on the same dataset, aligns results by
+example id and repetition, and runs `PairwiseEvaluator`s on each pair:
+
+```rust
+use sinew_eval::{evaluate_pairwise, LlmPairwiseJudge, PairwiseEvaluator};
+
+let judges: Vec<Box<dyn PairwiseEvaluator>> = vec![Box::new(
+    LlmPairwiseJudge::new(judge_model, "Which answer is more helpful and correct?")
+        .named("helpfulness"),
+)];
+let pairwise = evaluate_pairwise(&report_a, &report_b, &judges, 4).await;
+println!("{}", pairwise.summary_text());
+ScopeClient::new(url).upload_pairwise(&pairwise).await?;
+```
+
+- `LlmPairwiseJudge` asks for `{"preference": "A" | "B" | "tie", "reason": "..."}` at temperature 0.
+  By default it asks **twice with the responses swapped** and reports a tie when the verdict
+  follows the position, which cancels position bias; `.swap_positions(false)` asks once.
+  `parse_preference` accepts JSON (`preference`, `winner` or `choice`), code fences and bare
+  `A` / `B` / `tie`.
+- `FnPairwise::new(name, |input| Some(Preference::A))` wraps a closure (heuristics, tests).
+- A `PairwiseScore` has `preference` (`a`, `b`, `tie` or `null` when undecided), `score_a` /
+  `score_b` (1, 0.5 or 0) and a `reason`.
+- `PairwiseReport.summary` has, per key, `wins_a`, `wins_b`, `ties`, `undecided` and
+  `win_rate_a` / `win_rate_b` (ties count half; undecided pairs are excluded).
+- Examples missing on one side or failed on either side keep an `error` and get no verdicts.
+
+In the UI, pairwise reports are listed on the Experiments page and open at `#/pairwise/<id>`.
+
 ## Uploading to sinew-scope
 
 ```rust
@@ -132,12 +194,24 @@ client.upload_experiment(&dataset, &report).await?;       // dataset (replace by
 client.upload_report(&other_report).await?;               // upsert by report id
 ```
 
-`ScopeClient::from_env()` reads `SINEW_SCOPE_URL` and `SINEW_SCOPE_TOKEN`. Then open
+`ScopeClient::from_env()` reads `SINEW_SCOPE_URL` and `SINEW_SCOPE_TOKEN`. The client also covers
+pairwise reports (`upload_pairwise`), feedback (`create_feedback`, `feedback_for_run`), annotation
+queues (`create_queue`, `add_to_queue`), appending examples (`add_example`) and generic
+`get_json` / `post_json` / `put_json` / `delete` for the rest of the API. Prompts are pulled with
+`PromptHub` ([prompt-hub.md](prompt-hub.md)). Then open
 `http://127.0.0.1:7878/#/datasets`, pick the dataset, tick two experiments and compare them.
 Uploading a report whose dataset the server does not know creates that dataset from the report's
 examples.
 
-## Example
+## Online evaluation
+
+The same evaluators can score production traffic: a `sinew-scope` **rule** samples incoming runs
+and stores the scores as feedback. See [monitoring.md](monitoring.md#online-evaluation-rules).
+
+## Examples
+
+`samples/21-prompt-hub-and-feedback` runs a pairwise A/B between two prompt versions with an LLM
+judge (offline by default, `--ollama` or `--model provider:model` for a real judge).
 
 `crates/sinew-scope/examples/eval_agent.rs` evaluates two variants of an arithmetic agent (no tools
 vs. `react_agent` with a `multiply` tool) over `examples/data/arithmetic.jsonl`, traces every call,
