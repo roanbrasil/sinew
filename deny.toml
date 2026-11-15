@@ -5,6 +5,9 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+# Unmaintained transitive crates (e.g. ttf-parser under the optional `pdf` feature) are
+# reviewed when bumping; only direct dependencies fail the check.
+unmaintained = "workspace"
 ignore = [
   # Bundled SQLite < 3.54 (via sqlx 0.8 -> libsqlite3-sys 0.30). Only reachable when
   # opening a database plus `-wal` file written by an untrusted party. Fixed by

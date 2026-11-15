@@ -1,0 +1,46 @@
+[package]
+name = "sinew-rag"
+description = "Retrieval for Sinew: embeddings, loaders, text splitters, vector stores, retrievers and RAG chains"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["rag", "embeddings", "vector-search", "llm", "retrieval"]
+
+[features]
+default = ["sqlite"]
+# `SqliteVectorStore`: vectors as blobs, brute-force search.
+sqlite = ["dep:sqlx", "sqlx/sqlite"]
+# `PgVectorStore`: Postgres with the pgvector extension.
+pgvector = ["dep:sqlx", "sqlx/postgres"]
+# `QdrantVectorStore`: Qdrant over its REST API.
+qdrant = []
+# `PdfLoader`: text extraction with the pure-Rust `pdf-extract` crate.
+pdf = ["dep:pdf-extract"]
+
+[dependencies]
+sinew-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+uuid = { workspace = true, features = ["v5"] }
+globset.workspace = true
+walkdir.workspace = true
+csv.workspace = true
+sqlx = { workspace = true, optional = true }
+pdf-extract = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio.workspace = true
+tempfile.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "search"
+harness = false
