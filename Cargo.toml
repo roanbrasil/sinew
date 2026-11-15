@@ -31,3 +31,7 @@ sinew-eval = { path = "crates/sinew-eval", version = "0.1.0" }
 axum = "0.8"
 futures = "0.3"
 regex = "1"
+tower-http = { version = "0.6", features = ["cors"] }
+tokio-util = "0.7"
+bytes = "1"
+sinew-serve = { path = "crates/sinew-serve", version = "0.1.0" }
