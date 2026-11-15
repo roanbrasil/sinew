@@ -16,12 +16,19 @@ thiserror.workspace = true
 reqwest.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true
+tokio = { version = "1", default-features = false, features = ["time", "sync"] }
 schemars = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true, features = ["sqlite"] }
 
 [features]
-default = []
+default = ["http2"]
 # `StructuredOutput::for_type::<T>()`: derive the JSON Schema from a Rust type.
 schemars = ["dep:schemars"]
+# Negotiate HTTP/2 (ALPN) with providers that support it.
+http2 = ["reqwest/http2"]
+# `cache::SqliteCache`: persistent response cache.
+sqlite-cache = ["dep:sqlx"]
 
 [dev-dependencies]
 tokio.workspace = true
+tempfile.workspace = true

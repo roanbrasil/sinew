@@ -54,10 +54,7 @@ impl ChatModel for ScriptedModel {
         let output_tokens = message.content.split_whitespace().count() as u32;
         Ok(ChatResponse {
             message,
-            usage: Usage {
-                input_tokens,
-                output_tokens,
-            },
+            usage: Usage::new(input_tokens, output_tokens),
             model: "scripted".into(),
         })
     }

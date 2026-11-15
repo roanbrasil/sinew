@@ -194,7 +194,50 @@ fn local(name: &str, model: impl Into<String>) -> OpenAiCompat {
     m
 }
 
+/// Default Azure OpenAI `api-version` (latest GA data-plane version).
+pub const AZURE_DEFAULT_API_VERSION: &str = "2024-10-21";
+
+fn azure_url(endpoint: &str, deployment: &str) -> String {
+    let endpoint = endpoint.trim_end_matches('/');
+    let endpoint = if endpoint.starts_with("http") {
+        endpoint.to_string()
+    } else {
+        // A bare resource name.
+        format!("https://{endpoint}.openai.azure.com")
+    };
+    format!("{endpoint}/openai/deployments/{deployment}")
+}
+
 impl OpenAiCompat {
+    /// Azure OpenAI: `POST {endpoint}/openai/deployments/{deployment}/chat/completions?api-version=...`
+    /// with the key in the `api-key` header. `endpoint` is
+    /// `https://{resource}.openai.azure.com` (or just the resource name).
+    /// The deployment name is also used as the model name.
+    pub fn azure(
+        endpoint: &str,
+        deployment: impl Into<String>,
+        api_version: &str,
+        api_key: impl Into<String>,
+    ) -> Self {
+        let deployment = deployment.into();
+        OpenAiCompat::new(azure_url(endpoint, &deployment), deployment)
+            .with_api_key(api_key)
+            .with_api_key_header("api-key")
+            .with_query("api-version", api_version)
+    }
+
+    /// Azure OpenAI from the environment: `AZURE_OPENAI_ENDPOINT`,
+    /// `AZURE_OPENAI_API_KEY` and optionally `AZURE_OPENAI_API_VERSION`
+    /// (default [`AZURE_DEFAULT_API_VERSION`]).
+    pub fn azure_from_env(deployment: impl Into<String>) -> Result<Self> {
+        let var = |k: &str| std::env::var(k).map_err(|_| Error::Config(format!("{k} not set")));
+        let endpoint = var("AZURE_OPENAI_ENDPOINT")?;
+        let key = var("AZURE_OPENAI_API_KEY")?;
+        let version = std::env::var("AZURE_OPENAI_API_VERSION")
+            .unwrap_or_else(|_| AZURE_DEFAULT_API_VERSION.to_string());
+        Ok(Self::azure(&endpoint, deployment, &version, key))
+    }
+
     /// xAI Grok (`XAI_API_KEY`).
     pub fn xai(model: impl Into<String>) -> Result<Self> {
         hosted("xai", model)
@@ -276,14 +319,16 @@ impl OpenAiCompat {
 
 /// Every provider name [`from_spec`] understands (aliases not included).
 pub fn provider_names() -> Vec<&'static str> {
-    let mut v = vec!["anthropic", "gemini"];
+    let mut v = vec!["anthropic", "gemini", "azure"];
     v.extend(HOSTED.iter().map(|h| h.name));
     v.extend(LOCAL.iter().map(|l| l.name));
     v
 }
 
 /// Builds a model from `"provider:model"`, e.g. `"gemini:gemini-2.5-flash"`,
-/// `"xai:grok-4"`, `"lmstudio:qwen3-8b"`, `"ollama:llama3.2"`.
+/// `"xai:grok-4"`, `"lmstudio:qwen3-8b"`, `"ollama:llama3.2"`,
+/// `"azure:my-gpt4o-deployment"` (Azure OpenAI; see
+/// [`OpenAiCompat::azure_from_env`]).
 ///
 /// Anything after the first `:` is the model id, so Ollama tags such as
 /// `"ollama:qwen3:4b"` work. An `http(s)://` URL as the provider part is
@@ -307,6 +352,9 @@ pub fn from_spec(spec: &str) -> Result<Arc<dyn ChatModel>> {
     match p {
         "anthropic" | "claude" => return Ok(Arc::new(Anthropic::from_env(model)?)),
         "gemini" | "google" => return Ok(Arc::new(Gemini::from_env(model)?)),
+        "azure" | "azure-openai" | "azure_openai" => {
+            return Ok(Arc::new(OpenAiCompat::azure_from_env(model)?))
+        }
         _ => {}
     }
     if let Some(h) = HOSTED.iter().find(|h| matches(p, h.name, h.aliases)) {
@@ -367,6 +415,22 @@ mod tests {
         assert!(e.contains("unknown provider") && e.contains("gemini") && e.contains("xai"));
         assert!(from_spec("no-colon").is_err());
         assert!(from_spec("ollama:").is_err());
+    }
+
+    #[test]
+    fn azure_preset_builds_deployment_url() {
+        let m = OpenAiCompat::azure("https://res.openai.azure.com/", "gpt4o", "2024-10-21", "k");
+        assert_eq!(
+            m.base_url(),
+            "https://res.openai.azure.com/openai/deployments/gpt4o"
+        );
+        assert_eq!(m.name(), "gpt4o");
+        let m = OpenAiCompat::azure("res", "d", AZURE_DEFAULT_API_VERSION, "k");
+        assert_eq!(
+            m.base_url(),
+            "https://res.openai.azure.com/openai/deployments/d"
+        );
+        assert!(provider_names().contains(&"azure"));
     }
 
     #[test]

@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 
 use crate::{
+    message::{ContentPart, MediaSource},
     stream::{sse_stream, ChatStream, SseDecoder, SseEvent, StreamEvent},
     ChatModel, ChatRequest, ChatResponse, Error, Message, ResponseFormat, Result, Role, ToolCall,
     ToolChoice, Usage,
@@ -42,8 +43,14 @@ impl Gemini {
             base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
             auth: Auth::ApiKey(api_key.into()),
             model: model.into(),
-            client: reqwest::Client::new(),
+            client: super::shared_client(),
         }
+    }
+
+    /// Uses this HTTP client instead of the [shared](super::shared_client) one.
+    pub fn with_http_client(mut self, client: reqwest::Client) -> Self {
+        self.client = client;
+        self
     }
 
     /// Reads `GEMINI_API_KEY` (or `GOOGLE_API_KEY`).
@@ -114,12 +121,48 @@ fn clean_schema(v: &Value) -> Value {
     }
 }
 
+/// `inlineData` for inline bytes, `fileData` for URIs (Files API, `gs://`,
+/// public URLs). Gemini needs a MIME type for both; URLs without one get a
+/// guess from the extension.
+fn encode_part(p: &ContentPart) -> Value {
+    let source = match p {
+        ContentPart::Text { text } => return json!({ "text": text }),
+        ContentPart::Image { source, .. }
+        | ContentPart::Document { source, .. }
+        | ContentPart::Audio { source } => source,
+    };
+    match source {
+        MediaSource::Base64 { media_type, data } => {
+            json!({"inlineData": {"mimeType": media_type, "data": data}})
+        }
+        MediaSource::Url { url, .. } => {
+            let fallback = match p {
+                ContentPart::Image { .. } => "image/jpeg",
+                ContentPart::Audio { .. } => "audio/mpeg",
+                _ => "application/pdf",
+            };
+            let mime = source.media_type().unwrap_or_else(|| fallback.into());
+            json!({"fileData": {"mimeType": mime, "fileUri": url}})
+        }
+    }
+}
+
+/// Text part (if any) followed by the message's parts.
+fn user_parts(m: &Message) -> Vec<Value> {
+    let mut parts = Vec::with_capacity(m.parts.len() + 1);
+    if !m.content.is_empty() || m.parts.is_empty() {
+        parts.push(json!({"text": m.content}));
+    }
+    parts.extend(m.parts.iter().map(encode_part));
+    parts
+}
+
 pub(crate) fn encode_request(req: &ChatRequest) -> Value {
-    let system: Vec<&str> = req
+    let system: Vec<String> = req
         .messages
         .iter()
         .filter(|m| m.role == Role::System)
-        .map(|m| m.content.as_str())
+        .map(Message::text)
         .collect();
 
     // functionResponse needs the function name; the tool message only has the
@@ -133,6 +176,7 @@ pub(crate) fn encode_request(req: &ChatRequest) -> Value {
                 if !m.content.is_empty() {
                     parts.push(json!({"text": m.content}));
                 }
+                parts.extend(m.parts.iter().map(encode_part));
                 for c in &m.tool_calls {
                     names.insert(c.id.as_str(), c.name.as_str());
                     let mut part = json!({"functionCall": {"name": c.name, "args": c.arguments}});
@@ -150,19 +194,29 @@ pub(crate) fn encode_request(req: &ChatRequest) -> Value {
                 let id = m.tool_call_id.as_deref().unwrap_or_default();
                 let name = names.get(id).copied().unwrap_or(id);
                 let part = json!({"functionResponse": {"name": name, "response": tool_response(&m.content)}});
-                // Parallel results go back together in one user turn.
+                // Parallel results go back together in one user turn; media
+                // attached to a tool result follows as extra parts.
                 let merged = contents.last_mut().filter(|c| {
                     c["role"] == "user"
                         && c["parts"]
                             .as_array()
                             .is_some_and(|p| p.iter().all(|x| x.get("functionResponse").is_some()))
                 });
+                let extra = m.parts.iter().map(encode_part);
                 match merged {
-                    Some(c) => c["parts"].as_array_mut().unwrap().push(part),
-                    None => contents.push(json!({"role": "user", "parts": [part]})),
+                    Some(c) => {
+                        let arr = c["parts"].as_array_mut().unwrap();
+                        arr.push(part);
+                        arr.extend(extra);
+                    }
+                    None => {
+                        let mut parts = vec![part];
+                        parts.extend(extra);
+                        contents.push(json!({"role": "user", "parts": parts}));
+                    }
                 }
             }
-            _ => contents.push(json!({"role": "user", "parts": [{"text": m.content}]})),
+            _ => contents.push(json!({"role": "user", "parts": user_parts(m)})),
         }
     }
 
@@ -214,9 +268,12 @@ fn usage_of(v: &Value) -> Usage {
     let u = &v["usageMetadata"];
     let n = |k: &str| u[k].as_u64().unwrap_or(0) as u32;
     Usage {
-        input_tokens: n("promptTokenCount"),
+        input_tokens: n("promptTokenCount") + n("toolUsePromptTokenCount"),
         // Thinking tokens are billed as output.
         output_tokens: n("candidatesTokenCount") + n("thoughtsTokenCount"),
+        cached_input_tokens: n("cachedContentTokenCount"),
+        cache_creation_input_tokens: 0,
+        reasoning_tokens: n("thoughtsTokenCount"),
     }
 }
 
@@ -483,7 +540,9 @@ mod tests {
             r.usage,
             Usage {
                 input_tokens: 12,
-                output_tokens: 10
+                output_tokens: 10,
+                reasoning_tokens: 3,
+                ..Default::default()
             }
         );
         assert_eq!(r.model, "gemini-2.5-flash");
@@ -527,13 +586,7 @@ data: {"candidates": [{"content": {"parts": [{"functionCall": {"name": "weather"
         assert_eq!(r.message.content, "The weather in Rio:");
         assert_eq!(r.message.tool_calls[0].name, "weather");
         assert_eq!(r.message.tool_calls[0].id, "call_0#ts=SIG");
-        assert_eq!(
-            r.usage,
-            Usage {
-                input_tokens: 30,
-                output_tokens: 9
-            }
-        );
+        assert_eq!(r.usage, Usage::new(30, 9));
         assert_eq!(r.model, "gemini-2.5-flash");
     }
 
@@ -542,5 +595,42 @@ data: {"candidates": [{"content": {"parts": [{"functionCall": {"name": "weather"
         let body = "data: {\"error\": {\"code\": 429, \"message\": \"quota\"}}\n\n";
         let err = decode_all(GeminiStreamDecoder::new("x"), body).unwrap_err();
         assert!(err.to_string().contains("quota"));
+    }
+
+    #[test]
+    fn encodes_inline_and_file_data() {
+        let req = ChatRequest::new(vec![Message::user_with_parts(
+            "Describe",
+            [
+                ContentPart::image_bytes(b"abc", "image/png"),
+                ContentPart::image_url("https://x/photo.webp"),
+                ContentPart::pdf_url("gs://bucket/doc"),
+                ContentPart::audio_bytes(b"ID3", "audio/mpeg"),
+                ContentPart::file_uri(
+                    "https://generativelanguage.googleapis.com/v1beta/files/abc",
+                    "video/mp4",
+                ),
+            ],
+        )]);
+        let body = encode_request(&req);
+        assert_eq!(
+            body["contents"][0]["parts"],
+            json!([
+                {"text": "Describe"},
+                {"inlineData": {"mimeType": "image/png", "data": "YWJj"}},
+                {"fileData": {"mimeType": "image/webp", "fileUri": "https://x/photo.webp"}},
+                {"fileData": {"mimeType": "application/pdf", "fileUri": "gs://bucket/doc"}},
+                {"inlineData": {"mimeType": "audio/mpeg", "data": "SUQz"}},
+                {"fileData": {"mimeType": "video/mp4", "fileUri": "https://generativelanguage.googleapis.com/v1beta/files/abc"}}
+            ])
+        );
+    }
+
+    #[test]
+    fn decodes_cached_tokens() {
+        let v = json!({"candidates": [{"content": {"parts": [{"text": "x"}]}}],
+            "usageMetadata": {"promptTokenCount": 100, "cachedContentTokenCount": 80, "candidatesTokenCount": 2}});
+        let u = decode_response("x", &v).unwrap().usage;
+        assert_eq!((u.input_tokens, u.cached_input_tokens), (100, 80));
     }
 }
