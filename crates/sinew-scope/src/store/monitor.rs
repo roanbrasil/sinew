@@ -127,7 +127,7 @@ pub struct MetricsReport {
     pub buckets: Vec<TimeBucket>,
     /// Sorted by count, descending.
     pub groups: Vec<GroupStats>,
-    /// True when more than [`METRICS_ROW_CAP`] points matched (the newest
+    /// True when more than `METRICS_ROW_CAP` (200,000) points matched (the newest
     /// are used).
     pub truncated: bool,
 }
