@@ -4,6 +4,10 @@
 //!
 //! With the `http` feature, [`HttpSink`] ships finished runs to a
 //! `sinew-scope serve` instance in background batches.
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png",
+    html_favicon_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png"
+)]
 
 #[cfg(feature = "http")]
 mod http;

@@ -3,11 +3,15 @@
 //!
 //! | Feature | Adds |
 //! |---|---|
-//! | `sqlite` / `postgres` | [`checkpoint`]: durable checkpointers |
-//! | `mcp` | [`mcp`]: Model Context Protocol client and server |
-//! | `eval` | [`eval`]: datasets, evaluators, experiments |
+//! | `sqlite` / `postgres` | `checkpoint`: durable checkpointers |
+//! | `mcp` | `mcp`: Model Context Protocol client and server |
+//! | `eval` | `eval`: datasets, evaluators, experiments |
 //! | `http-trace` | `trace::HttpSink` for `sinew-scope serve` |
 //! | `full` | all of the above except Postgres |
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png",
+    html_favicon_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png"
+)]
 
 pub use sinew_core as core;
 pub use sinew_graph as graph;

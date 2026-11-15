@@ -27,6 +27,10 @@
 //! ScopeClient::new("http://127.0.0.1:7878").upload_experiment(&ds, &report).await?;
 //! # Ok(()) }
 //! ```
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png",
+    html_favicon_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png"
+)]
 
 mod client;
 mod dataset;

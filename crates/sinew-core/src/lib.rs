@@ -2,6 +2,10 @@
 //!
 //! Providers live in [`providers`]: an OpenAI-compatible client (OpenAI, Ollama,
 //! vLLM, llama.cpp server) and a native Anthropic client.
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png",
+    html_favicon_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png"
+)]
 
 pub mod error;
 pub mod message;

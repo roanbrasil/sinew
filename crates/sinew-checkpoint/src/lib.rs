@@ -27,6 +27,10 @@
 //! ```
 //!
 //! [`Checkpoint`]: sinew_graph::Checkpoint
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png",
+    html_favicon_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png"
+)]
 
 use async_trait::async_trait;
 pub use sinew_graph::{Checkpoint, Checkpointer};

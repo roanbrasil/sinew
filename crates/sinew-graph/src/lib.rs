@@ -21,6 +21,10 @@
 //! assert_eq!(out.n, 3);
 //! # Ok(()) }
 //! ```
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png",
+    html_favicon_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png"
+)]
 
 mod checkpoint;
 mod events;

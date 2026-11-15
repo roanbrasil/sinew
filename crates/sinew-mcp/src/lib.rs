@@ -46,6 +46,10 @@
 //! - Tool failures are reported in-band (`isError: true`) so a model can see
 //!   them; unknown tools and malformed params are JSON-RPC `-32602` errors.
 //! - The server is lenient about requests sent before `initialize`.
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png",
+    html_favicon_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png"
+)]
 
 pub mod agent;
 pub mod client;
