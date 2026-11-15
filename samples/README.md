@@ -12,8 +12,11 @@ without an API key. Add a flag to run it against a real model:
 | `--ollama` | local Ollama, default `qwen3:4b-instruct-2507-q4_K_M` | [Ollama](https://ollama.com) running |
 | `--openai` | OpenAI, default `gpt-4.1-mini` | `OPENAI_API_KEY` |
 | `--anthropic` | Anthropic, default `claude-sonnet-5-5` | `ANTHROPIC_API_KEY` |
+| `--gemini` | Google Gemini, default `gemini-2.5-flash` | `GEMINI_API_KEY` |
+| `--xai` | xAI Grok, default `grok-4` | `XAI_API_KEY` |
+| `--model provider:model` | anything `from_spec` accepts: `lmstudio:qwen3-8b`, `vllm:Qwen/Qwen3-8B`, `groq:llama-3.3-70b-versatile`, `openrouter:vendor/model`, `http://host:8000/v1\|model`, ... | depends on the provider |
 
-Set `SINEW_MODEL` to override the model name.
+Set `SINEW_MODEL` to override the default model name of the shortcut flags.
 
 ```bash
 cargo run -p sample-03-tools-agent              # offline
@@ -35,6 +38,14 @@ cargo run -p sample-03-tools-agent -- --ollama  # real model
 | 11 | [mcp](11-mcp/src/main.rs) | Serve a `ToolBox` over MCP and use MCP tools from an agent (feature `mcp`) |
 | 12 | [durable-agent](12-durable-agent/src/main.rs) | `SqliteCheckpointer`: pause, restart the process, resume the thread (feature `sqlite`) |
 | 13 | [scope-and-evals](13-scope-and-evals/src/main.rs) | `HttpSink` traces to the `sinew-scope` UI and an evaluation experiment (features `eval`, `http-trace`) |
+| 14 | [a2a](14-a2a/src/main.rs) | Serve an agent over the Agent2Agent protocol and delegate to it from another agent with `A2aAgentTool`; `message/stream` |
+| 15 | [rag](15-rag/src/main.rs) | Load and split `docs/*.md`, embed, hybrid BM25 + vector retrieval, `RagChain` answers with sources, retriever as an agent tool (`--embed provider:model`) |
+| 16 | [runnables](16-runnables/src/main.rs) | LCEL-style pipelines: `prompt.pipe(model).pipe(parser)`, `parallel`, branches, retry/fallback wrappers and cost per model |
+| 17 | [multi-agent](17-multi-agent/src/main.rs) | `create_supervisor` routing between worker agents with handoff tools |
+| 18 | [time-travel](18-time-travel/src/main.rs) | `interrupt()` inside a node, `Command::resume`, state history, replay and fork from a past checkpoint |
+| 19 | [harness](19-harness/src/main.rs) | `sinew-harness` agent in a temp workspace: file tools, a subagent, approvals, a written summary |
+| 20 | [serve](20-serve/src/main.rs) | Deploy an agent with `sinew-serve`; call it through `ServeClient` and through the OpenAI-compatible endpoint |
+| 21 | [prompt-hub-and-feedback](21-prompt-hub-and-feedback/src/main.rs) | Versioned prompts in the hub, feedback and annotation queues, cost and monitoring in `sinew-scope` |
 
 `common/` holds the helper that picks the model from the command line.
 

@@ -3,117 +3,136 @@
 # Sinew
 
 [![CI](https://github.com/roanbrasil/sinew/actions/workflows/ci.yml/badge.svg)](https://github.com/roanbrasil/sinew/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![MSRV 1.88](https://img.shields.io/badge/MSRV-1.88-orange.svg)](Cargo.toml)
 
-LLM chains, agent graphs and tracing in Rust — the LangChain / LangGraph / LangSmith
-trio as one small, typed, async workspace.
+LLM chains, agent graphs, retrieval, tracing, evaluation and deployment in Rust: the
+LangChain / LangGraph / LangSmith stack, plus an agent harness and the MCP and A2A protocols,
+as one typed, async, low-latency workspace.
 
 | Crate | Plays the role of | What it gives you |
 |---|---|---|
-| `sinew-core` | LangChain | `Message`, `ChatModel` trait, tools (`Tool`, `FnTool`, `ToolBox`), `PromptTemplate`, providers: OpenAI-compatible (OpenAI, Ollama, vLLM, llama.cpp) and Anthropic |
-| `sinew-graph` | LangGraph | `StateGraph<S>` with typed state, conditional edges, cycles with a recursion limit, checkpoints, `interrupt_before` + `update_state` for human-in-the-loop, prebuilt `react_agent` |
-| `sinew-checkpoint` | LangGraph checkpointers (`langgraph-checkpoint-sqlite` / `-postgres`) | Durable `SqliteCheckpointer` (default) and `PostgresCheckpointer` (feature `postgres`): threads survive restarts; list, delete and prune threads. See [docs/checkpointing.md](docs/checkpointing.md) |
-| `sinew-trace` | LangSmith SDK | Runs (graph → node → llm/tool) with timings, I/O, token usage; JSONL and in-memory sinks |
-| `sinew-scope` | LangSmith UI + backend | `sinew-scope serve`: SQLite trace store, run + OTLP/HTTP JSON ingest (GenAI conventions), query API with filters and aggregates, embedded web UI (traces, waterfall, datasets, experiment comparison), optional bearer auth; `sinew-scope view traces.jsonl` terminal tree. See [docs/scope.md](docs/scope.md) |
-| `sinew-eval` | LangSmith evaluation | `Dataset` (JSONL), evaluators (exact, contains, regex, JSON field, numeric tolerance, LLM-as-judge), `evaluate()` with concurrency → `ExperimentReport`, upload to scope. See [docs/evaluation.md](docs/evaluation.md) |
-| `sinew-mcp` | MCP adapters | Model Context Protocol client (MCP server tools as Sinew `Tool`s) and server (any `ToolBox` or agent over stdio); `sinew-mcp --traces traces.jsonl` lets Claude Code inspect traces |
-| `sinew` | umbrella | re-exports + `prelude` |
+| [`sinew-core`](crates/sinew-core) | LangChain core | Messages (text, images, PDF, audio), `ChatModel` with streaming, tools, prompts, structured output, LCEL-style `Runnable` pipelines, output parsers, retry / fallback / rate limit / cache / timeout wrappers, token cost. Providers: Anthropic, Gemini, OpenAI, Azure OpenAI, xAI Grok, Groq, Mistral, DeepSeek, OpenRouter, Together, Fireworks, Perplexity, Cerebras, NVIDIA, Hugging Face, and local Ollama, LM Studio, llama.cpp, vLLM, SGLang, LocalAI, Jan, llamafile, TGI |
+| [`sinew-rag`](crates/sinew-rag) | LangChain retrieval | Embeddings (OpenAI-compatible, Ollama, Gemini), loaders (text, Markdown, HTML, JSON, CSV, PDF, directories), splitters, vector stores (in-memory, SQLite, pgvector, Qdrant), BM25, hybrid / multi-query / rerank / parent-document retrievers, `RagChain` |
+| [`sinew-graph`](crates/sinew-graph) | LangGraph | `StateGraph<S>`, conditional edges, cycles, parallel fan-out, `Command` (update + goto), `interrupt()` inside nodes, subgraphs, time travel (history, replay, fork), node retry / cache / timeout, long-term `Store`, stream modes, prebuilt ReAct, supervisor and swarm agents |
+| [`sinew-checkpoint`](crates/sinew-checkpoint) | LangGraph checkpointers | Durable SQLite and Postgres checkpointers and a SQLite `Store` |
+| [`sinew-harness`](crates/sinew-harness) | Deep agents / Claude-Code-style harness | `Agent` with file, shell, HTTP and todo tools, subagents, hooks, permission policies and approvals, context compaction, budgets, guardrails, skills, MCP tools; the `sinew-agent` CLI |
+| [`sinew-serve`](crates/sinew-serve) | LangGraph Platform / LangServe | HTTP server for graphs and agents: assistants, threads, runs (wait, SSE stream, background, cancel, join), multitask strategies, webhooks, an OpenAI-compatible `/v1/chat/completions`, and a typed client |
+| [`sinew-trace`](crates/sinew-trace) | LangSmith SDK | Run tree with timings, I/O, tokens, cost and time to first token; JSONL, memory, HTTP and OpenTelemetry (OTLP JSON / protobuf, GenAI conventions) sinks |
+| [`sinew-scope`](crates/sinew-scope) | LangSmith app | Self-hosted server and web UI: traces and waterfall, full-text run search, prompt hub, feedback and annotation queues, datasets and experiments, monitoring dashboards (latency percentiles, TTFT, errors, cost), online evaluator rules and alerts, OTLP ingest, retention |
+| [`sinew-eval`](crates/sinew-eval) | LangSmith evaluation | Datasets, evaluators (exact, contains, regex, JSON field, numeric, LLM judge), experiments with repetitions and summary metrics, pairwise A/B, prompt hub client |
+| [`sinew-mcp`](crates/sinew-mcp) | MCP adapters | Model Context Protocol client and server; `sinew-mcp --traces` lets coding assistants inspect traces |
+| [`sinew-a2a`](crates/sinew-a2a) | A2A | Agent2Agent protocol (0.3) server and client; serve any model or graph as an A2A agent, delegate to remote agents as a tool |
+| [`sinew`](crates/sinew) | umbrella | Re-exports and a `prelude`, with a feature per optional crate |
 
 ## Quick start
 
-```bash
-cargo run --example react_agent                     # offline, scripted model
-SINEW_MODEL=qwen3:4b-instruct-2507-q4_K_M \
-  cargo run --example react_agent -- --ollama       # local Ollama
-ANTHROPIC_API_KEY=... cargo run --example react_agent -- --anthropic
-cargo run -p sinew-scope -- traces.jsonl --io       # inspect the trace
+```toml
+[dependencies]
+sinew = { version = "0.1", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
 ```
-
-```text
-trace 145b442e  total tokens 388→38
-graph graph  711ms
-├─ node agent  462ms
-│  └─ llm qwen3:4b-instruct-2507-q4_k_m  461ms  tokens 172→26
-├─ node tools  0ms
-│  └─ tool multiply  0ms
-└─ node agent  249ms
-   └─ llm qwen3:4b-instruct-2507-q4_k_m  249ms  tokens 216→12
-```
-
-## Samples
-
-The [`samples/`](samples/) folder has runnable programs, from a first chat call to tools, custom graphs,
-human-in-the-loop, tracing and custom model wrappers. They run offline by default; add `--ollama`, `--openai`
-or `--anthropic` to use a real model.
-
-## A graph in a few lines
 
 ```rust
 use sinew::prelude::*;
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-struct Review { draft: String, approved: bool }
-
-let mut g = StateGraph::<Review>::new();
-g.add_node("write", |mut s: Review| async move { s.draft.push_str(" v2"); Ok(s) });
-g.add_node("publish", |s: Review| async move { Ok(s) });
-g.add_conditional_edges("write", |s: &Review| if s.approved { "publish".into() } else { "write".into() }, ["write", "publish"]);
-g.add_edge("publish", END);
-g.set_entry_point("write");
-
-let graph = g.compile()?                       // validates edges, reachability, missing exits
-    .with_checkpointer(MemoryCheckpointer::new())
-    .interrupt_before(["publish"]);            // pause for a human
-
-let paused = graph.run("thread-1", Some(state)).await?;   // stops before `publish`
-let (mut s, _next) = graph.get_state("thread-1").await?;
-s.draft = "edited by a human".into();
-graph.update_state("thread-1", s).await?;
-let done = graph.run("thread-1", None).await?;            // resumes
+let model = from_spec("ollama:qwen3:4b")?;   // or "anthropic:claude-sonnet-5-5", "gemini:gemini-2.5-flash", "xai:grok-4", "lmstudio:qwen3-8b"
+let reply = model.chat(ChatRequest::new(vec![Message::user("Why Rust for LLM infra?")])).await?;
+println!("{}", reply.message.content);
 ```
 
-## Design choices
+An agent with tools, a pipeline, and a harness:
 
-- **Whole-state nodes (`S -> S`)** instead of partial updates plus reducers. The compiler checks every
-  update; reducers can come later for parallel fan-out.
-- **`compile()` reports every problem at once**: unknown targets, nodes without an exit, unreachable nodes,
-  duplicate names.
-- **`invoke` never silently skips an interrupt**; it returns `GraphError::Interrupted`. Use `run` with a
-  checkpointer to pause and resume.
-- **Tracing never breaks the app**: sink I/O errors are swallowed; a run handle dropped without finishing
-  is recorded as failed instead of disappearing.
+```rust
+// ReAct agent over any tools
+let agent = react_agent(model.clone(), ToolBox::new().with(my_tool))?;
+let out = agent.invoke(AgentState::new(vec![Message::user("What is 6 x 7?")])).await?;
+
+// LCEL-style pipeline: prompt -> model -> parser, streamed
+let chain = PromptTemplate::new("Summarize: {text}")?.pipe(model.clone()).pipe(StrOutputParser);
+
+// Claude-Code-style harness rooted in a workspace
+let agent = sinew::harness::Agent::builder()
+    .model_spec("ollama:qwen3:4b")
+    .workspace("./project")
+    .filesystem()
+    .todos()
+    .build()?;
+```
+
+Try it without writing code:
+
+```bash
+cargo run -p sample-03-tools-agent                       # offline, scripted model
+cargo run -p sample-03-tools-agent -- --ollama           # local Ollama
+cargo run -p sample-15-rag -- --model lmstudio:qwen3-8b  # any provider:model
+cargo run -p sinew-harness --bin sinew-agent -- -p "summarize README.md" --workspace .
+cargo run -p sinew-scope -- serve                        # trace UI at http://127.0.0.1:7878/
+```
+
+## Samples
+
+[`samples/`](samples/README.md) has 21 runnable programs, from a first chat call to tools, custom graphs,
+human-in-the-loop, tracing, MCP, A2A, RAG, runnables, multi-agent supervisors, time travel, the harness,
+deployment with `sinew-serve`, and the prompt hub. They run offline by default; add `--ollama`, `--openai`,
+`--anthropic`, `--gemini`, `--xai` or `--model provider:model` to use a real model.
+
+## Performance
+
+Sinew is built for low latency and high throughput:
+
+- One pooled, tuned HTTP client (keep-alive, `TCP_NODELAY`, HTTP/2) shared by every provider; request
+  bodies serialized once; incremental SSE decoding without rescanning.
+- Tokens stream end to end: provider → graph → `sinew-serve` SSE / A2A / OpenAI façade, with no buffering
+  of whole responses.
+- Graph supersteps run branches concurrently and move state instead of cloning it when no checkpointer is
+  attached; measured overhead is a few microseconds per superstep (`cargo bench -p sinew-graph`).
+- In-memory vector search scans one contiguous, normalized `f32` matrix with a heap for top-k and splits
+  large scans across threads (`cargo bench -p sinew-rag`).
+- Server time-to-first-token overhead is in the hundreds of microseconds (`cargo bench -p sinew-serve`).
+- No `unsafe` code (`unsafe_code = "forbid"` across the workspace).
 
 ## Cargo features (umbrella crate)
 
-```toml
-sinew = { version = "0.1", features = ["full"] }   # or pick: sqlite, postgres, mcp, eval, http-trace
-```
-
 | Feature | Adds |
 |---|---|
-| `sqlite` / `postgres` | `sinew::checkpoint` — durable checkpointers |
-| `mcp` | `sinew::mcp` — Model Context Protocol client and server |
-| `eval` | `sinew::eval` — datasets, evaluators, experiments |
-| `http-trace` | `sinew::trace::HttpSink` — ship traces to `sinew-scope serve` |
-| `full` | all of the above except Postgres |
+| `sqlite` / `postgres` | `sinew::checkpoint`: durable checkpointers |
+| `rag` (+ `pgvector`, `qdrant`, `pdf`) | `sinew::rag`: retrieval stack |
+| `harness` | `sinew::harness`: agent harness |
+| `serve` | `sinew::serve`: deployment server and client |
+| `a2a` | `sinew::a2a`: Agent2Agent protocol |
+| `mcp` | `sinew::mcp`: Model Context Protocol |
+| `eval` | `sinew::eval`: datasets, evaluators, experiments, prompt hub client |
+| `http-trace` | `trace::HttpSink` for `sinew-scope serve` |
+| `otlp` / `otlp-proto` | `trace::OtlpSink` for any OpenTelemetry collector |
+| `sqlite-cache`, `schemars` | persistent response cache; structured-output schemas from Rust types |
+| `full` | all of the above except Postgres-backed features |
 
 ## Documentation
 
-[Streaming](docs/streaming.md) · [Fan-out](docs/fan-out.md) · [Checkpointing](docs/checkpointing.md) ·
-[MCP](docs/mcp.md) · [Scope server](docs/scope.md) · [Evaluation](docs/evaluation.md) · [Samples](samples/README.md)
+- **Models:** [Runnables](docs/runnables.md) · [Multimodal](docs/multimodal.md) · [Resilience and cost](docs/resilience.md) · [Streaming](docs/streaming.md)
+- **Graphs:** [Fan-out](docs/fan-out.md) · [Commands and interrupts](docs/commands-and-interrupts.md) · [Subgraphs](docs/subgraphs.md) · [Time travel](docs/time-travel.md) · [Checkpointing](docs/checkpointing.md) · [Store](docs/store.md) · [Multi-agent](docs/multi-agent.md)
+- **Agents and retrieval:** [Harness](docs/harness.md) · [RAG](docs/rag.md)
+- **Deployment and protocols:** [Serve](docs/serve.md) · [MCP](docs/mcp.md) · [A2A](docs/a2a.md)
+- **Observability:** [Scope](docs/scope.md) · [Monitoring](docs/monitoring.md) · [Prompt hub](docs/prompt-hub.md) · [Evaluation](docs/evaluation.md) · [OpenTelemetry](docs/otel.md)
+
+## Design choices
+
+- **Typed state, whole-state nodes (`S -> S`)** with optional reducers for parallel branches; `compile()`
+  reports every graph problem at once.
+- **Offline first:** every provider mapping is tested against recorded payloads, and every sample runs
+  with a scripted model; live tests against a local model are opt-in (`cargo test -- --ignored`).
+- **Tracing never breaks the app:** sink errors are swallowed, unfinished runs are recorded as failed.
+- **Heavy dependencies are opt-in** behind cargo features.
 
 ## Status and roadmap
 
-Done: providers (OpenAI-compatible, Anthropic) with streaming and structured output; typed state graphs with
-cycles, parallel fan-out/fan-in, streaming events, human-in-the-loop; durable SQLite/Postgres checkpointers;
-MCP client and server; tracing with a self-hosted dashboard (OTLP ingest, waterfall UI), datasets and evaluations.
+Next: AWS Bedrock and Cohere native providers, A2A 1.0, MCP sampling and an HTTP server transport,
+`sqlx` 0.9 (bundled SQLite 3.54), publishing to crates.io.
 
-Next:
+## Contributing and security
 
-1. More providers (Gemini, Bedrock) and embeddings + vector-store traits for RAG.
-2. Per-field reducers and a join that waits for all branches.
-3. MCP: sampling, roots and an HTTP server transport.
-4. Scope: OTLP protobuf, live updates of in-progress traces, retention policies.
-5. Publish to crates.io.
+See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and the [changelog](CHANGELOG.md).
 
 ## License
 
