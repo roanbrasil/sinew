@@ -7,7 +7,7 @@ use sqlx::{
 };
 
 use crate::{
-    util::{decode, encode, keep_to_db, now_millis, step_to_db},
+    util::{decode_row, encode, id_to_db, keep_to_db, legacy_row_id, now_millis, step_to_db},
     Checkpoint, CheckpointError, CheckpointStore, Checkpointer,
 };
 
@@ -17,12 +17,35 @@ const SCHEMA: &[&str] = &[
         thread_id  TEXT    NOT NULL,
         step       INTEGER NOT NULL,
         created_at INTEGER NOT NULL,
-        checkpoint TEXT    NOT NULL
+        checkpoint TEXT    NOT NULL,
+        checkpoint_id TEXT,
+        checkpoint_ns TEXT NOT NULL DEFAULT ''
     )",
     "CREATE INDEX IF NOT EXISTS sinew_checkpoints_thread_id
         ON sinew_checkpoints (thread_id, id)",
     "CREATE INDEX IF NOT EXISTS sinew_checkpoints_thread_step
         ON sinew_checkpoints (thread_id, step, id)",
+];
+
+/// Columns added after the first release. Tables created by older versions
+/// get them through `ALTER TABLE` (existing rows: no id, root namespace).
+const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "checkpoint_id",
+        "ALTER TABLE sinew_checkpoints ADD COLUMN checkpoint_id TEXT",
+    ),
+    (
+        "checkpoint_ns",
+        "ALTER TABLE sinew_checkpoints ADD COLUMN checkpoint_ns TEXT NOT NULL DEFAULT ''",
+    ),
+];
+
+/// Indexes over the migrated columns (created after the migrations ran).
+const LATE_INDEXES: &[&str] = &[
+    "CREATE INDEX IF NOT EXISTS sinew_checkpoints_thread_ns
+        ON sinew_checkpoints (thread_id, checkpoint_ns, id)",
+    "CREATE INDEX IF NOT EXISTS sinew_checkpoints_checkpoint_id
+        ON sinew_checkpoints (thread_id, checkpoint_id)",
 ];
 
 /// [`Checkpointer`] backed by SQLite (a file, or memory for tests).
@@ -31,8 +54,9 @@ const SCHEMA: &[&str] = &[
 /// tasks (or processes) can write concurrently. Each `put` (plus its optional
 /// retention pruning) runs in one transaction.
 ///
-/// `latest` returns the most recently written checkpoint of a thread;
-/// `history` returns all of them ordered by step, then insertion order.
+/// `latest` returns the most recently written root checkpoint of a thread;
+/// `history` returns all of them (every namespace) ordered by step, then
+/// insertion order; `history_in` returns one namespace in write order.
 #[derive(Clone, Debug)]
 pub struct SqliteCheckpointer {
     pool: SqlitePool,
@@ -46,28 +70,7 @@ impl SqliteCheckpointer {
     /// In-memory URLs use a single pooled connection that is never recycled,
     /// so the database lives as long as this checkpointer (and its clones).
     pub async fn connect(url: &str) -> Result<Self, CheckpointError> {
-        let in_memory = url.contains(":memory:") || url.contains("mode=memory");
-        let options = SqliteConnectOptions::from_str(url)?
-            .create_if_missing(true)
-            .busy_timeout(Duration::from_secs(10));
-        let (options, pool) = if in_memory {
-            (
-                options,
-                SqlitePoolOptions::new()
-                    .max_connections(1)
-                    .min_connections(1)
-                    .idle_timeout(None)
-                    .max_lifetime(None),
-            )
-        } else {
-            (
-                options
-                    .journal_mode(SqliteJournalMode::Wal)
-                    .synchronous(SqliteSynchronous::Normal),
-                SqlitePoolOptions::new().max_connections(8),
-            )
-        };
-        Self::from_pool(pool.connect_with(options).await?).await
+        Self::from_pool(open_pool(url).await?).await
     }
 
     /// A fresh private in-memory database (handy for tests).
@@ -98,13 +101,36 @@ impl SqliteCheckpointer {
         &self.pool
     }
 
-    /// Creates the table and indexes if they do not exist. Idempotent.
+    /// Creates the table and indexes if they do not exist, and adds the
+    /// columns newer versions need (`checkpoint_id`, `checkpoint_ns`) to
+    /// tables created by older ones. Idempotent.
     pub async fn ensure_schema(&self) -> Result<(), CheckpointError> {
         let mut tx = self.pool.begin().await?;
         for ddl in SCHEMA {
             sqlx::query(ddl).execute(&mut *tx).await?;
         }
         tx.commit().await?;
+        let columns: Vec<String> =
+            sqlx::query("SELECT name FROM pragma_table_info('sinew_checkpoints')")
+                .fetch_all(&self.pool)
+                .await?
+                .iter()
+                .map(|r| r.try_get::<String, _>(0))
+                .collect::<Result<_, _>>()?;
+        for (column, ddl) in MIGRATIONS {
+            if columns.iter().any(|c| c == column) {
+                continue;
+            }
+            match sqlx::query(ddl).execute(&self.pool).await {
+                Ok(_) => {}
+                // Another process migrated first.
+                Err(e) if e.to_string().contains("duplicate column") => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        for ddl in LATE_INDEXES {
+            sqlx::query(ddl).execute(&self.pool).await?;
+        }
         Ok(())
     }
 
@@ -116,13 +142,16 @@ impl SqliteCheckpointer {
         // with SQLITE_BUSY under concurrent writers).
         let mut tx = self.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO sinew_checkpoints (thread_id, step, created_at, checkpoint)
-             VALUES (?, ?, ?, ?)",
+            "INSERT INTO sinew_checkpoints
+                 (thread_id, step, created_at, checkpoint, checkpoint_id, checkpoint_ns)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&checkpoint.thread_id)
         .bind(step)
         .bind(now_millis())
         .bind(blob)
+        .bind(id_to_db(checkpoint))
+        .bind(&checkpoint.checkpoint_ns)
         .execute(&mut *tx)
         .await?;
         if let Some(keep) = self.retention {
@@ -135,29 +164,108 @@ impl SqliteCheckpointer {
     async fn latest_checkpoint(
         &self,
         thread_id: &str,
+        ns: &str,
     ) -> Result<Option<Checkpoint>, CheckpointError> {
         let row = sqlx::query(
-            "SELECT checkpoint FROM sinew_checkpoints
-             WHERE thread_id = ? ORDER BY id DESC LIMIT 1",
+            "SELECT id, checkpoint FROM sinew_checkpoints
+             WHERE thread_id = ? AND checkpoint_ns = ? ORDER BY id DESC LIMIT 1",
         )
         .bind(thread_id)
+        .bind(ns)
         .fetch_optional(&self.pool)
         .await?;
-        row.map(|r| decode(r.try_get::<&str, _>(0)?)).transpose()
+        row.map(|r| decode_row(r.try_get(0)?, r.try_get::<&str, _>(1)?))
+            .transpose()
     }
 
     async fn thread_history(&self, thread_id: &str) -> Result<Vec<Checkpoint>, CheckpointError> {
         let rows = sqlx::query(
-            "SELECT checkpoint FROM sinew_checkpoints
+            "SELECT id, checkpoint FROM sinew_checkpoints
              WHERE thread_id = ? ORDER BY step, id",
         )
         .bind(thread_id)
         .fetch_all(&self.pool)
         .await?;
         rows.iter()
-            .map(|r| decode(r.try_get::<&str, _>(0)?))
+            .map(|r| decode_row(r.try_get(0)?, r.try_get::<&str, _>(1)?))
             .collect()
     }
+
+    async fn ns_history(
+        &self,
+        thread_id: &str,
+        ns: &str,
+    ) -> Result<Vec<Checkpoint>, CheckpointError> {
+        let rows = sqlx::query(
+            "SELECT id, checkpoint FROM sinew_checkpoints
+             WHERE thread_id = ? AND checkpoint_ns = ? ORDER BY id",
+        )
+        .bind(thread_id)
+        .bind(ns)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|r| decode_row(r.try_get(0)?, r.try_get::<&str, _>(1)?))
+            .collect()
+    }
+
+    async fn by_id(
+        &self,
+        thread_id: &str,
+        checkpoint_id: &str,
+    ) -> Result<Option<Checkpoint>, CheckpointError> {
+        let row = match legacy_row_id(checkpoint_id) {
+            Some(row_id) => {
+                sqlx::query(
+                    "SELECT id, checkpoint FROM sinew_checkpoints
+                     WHERE thread_id = ? AND id = ?",
+                )
+                .bind(thread_id)
+                .bind(row_id)
+                .fetch_optional(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query(
+                    "SELECT id, checkpoint FROM sinew_checkpoints
+                     WHERE thread_id = ? AND checkpoint_id = ? ORDER BY id DESC LIMIT 1",
+                )
+                .bind(thread_id)
+                .bind(checkpoint_id)
+                .fetch_optional(&self.pool)
+                .await?
+            }
+        };
+        row.map(|r| decode_row(r.try_get(0)?, r.try_get::<&str, _>(1)?))
+            .transpose()
+    }
+}
+
+/// Opens a pool for `url`: WAL + busy timeout for files, one long-lived
+/// connection for in-memory databases.
+pub(crate) async fn open_pool(url: &str) -> Result<SqlitePool, CheckpointError> {
+    let in_memory = url.contains(":memory:") || url.contains("mode=memory");
+    let options = SqliteConnectOptions::from_str(url)?
+        .create_if_missing(true)
+        .busy_timeout(Duration::from_secs(10));
+    let (options, pool) = if in_memory {
+        (
+            options,
+            SqlitePoolOptions::new()
+                .max_connections(1)
+                .min_connections(1)
+                .idle_timeout(None)
+                .max_lifetime(None),
+        )
+    } else {
+        (
+            options
+                .journal_mode(SqliteJournalMode::Wal)
+                .synchronous(SqliteSynchronous::Normal),
+            SqlitePoolOptions::new().max_connections(8),
+        )
+    };
+    Ok(pool.connect_with(options).await?)
 }
 
 async fn prune_thread(
@@ -188,13 +296,35 @@ impl Checkpointer for SqliteCheckpointer {
     }
 
     async fn latest(&self, thread_id: &str) -> Result<Option<Checkpoint>, String> {
-        self.latest_checkpoint(thread_id)
+        self.latest_checkpoint(thread_id, "")
             .await
             .map_err(|e| e.to_string())
     }
 
     async fn history(&self, thread_id: &str) -> Result<Vec<Checkpoint>, String> {
         self.thread_history(thread_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn latest_in(&self, thread_id: &str, ns: &str) -> Result<Option<Checkpoint>, String> {
+        self.latest_checkpoint(thread_id, ns)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn history_in(&self, thread_id: &str, ns: &str) -> Result<Vec<Checkpoint>, String> {
+        self.ns_history(thread_id, ns)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn get(
+        &self,
+        thread_id: &str,
+        checkpoint_id: &str,
+    ) -> Result<Option<Checkpoint>, String> {
+        self.by_id(thread_id, checkpoint_id)
             .await
             .map_err(|e| e.to_string())
     }

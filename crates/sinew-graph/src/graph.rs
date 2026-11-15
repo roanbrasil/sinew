@@ -529,7 +529,11 @@ impl<S: State> StateGraph<S> {
     /// Declares nodes this node may route to at run time (through a
     /// [`Command`] `goto`, e.g. one a subgraph sends with
     /// [`Command::to_parent`]); used for the reachability check.
-    pub fn set_node_destinations<I, T>(&mut self, node: impl Into<String>, destinations: I) -> &mut Self
+    pub fn set_node_destinations<I, T>(
+        &mut self,
+        node: impl Into<String>,
+        destinations: I,
+    ) -> &mut Self
     where
         I: IntoIterator<Item = T>,
         T: Into<String>,

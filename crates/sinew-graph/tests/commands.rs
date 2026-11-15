@@ -169,7 +169,10 @@ async fn resume_by_interrupt_id() {
 async fn interrupt_without_checkpointer_fails_clearly() {
     let graph = approval_graph(Arc::default()).compile().unwrap();
     let err = graph.invoke(S::default()).await.unwrap_err();
-    assert!(matches!(&err, GraphError::Interrupted(n) if n == "review"), "{err}");
+    assert!(
+        matches!(&err, GraphError::Interrupted(n) if n == "review"),
+        "{err}"
+    );
     let err = graph.run("t", Some(S::default())).await.unwrap_err();
     assert!(matches!(err, GraphError::Interrupted(_)));
 }
@@ -273,7 +276,13 @@ async fn conditional_entry_point() {
     g.add_edge("big", END);
     g.add_conditional_edges(
         START,
-        |s: &S| if s.n > 10 { "big".into() } else { "small".into() },
+        |s: &S| {
+            if s.n > 10 {
+                "big".into()
+            } else {
+                "small".into()
+            }
+        },
         ["small", "big"],
     );
     let graph = g.compile().unwrap();

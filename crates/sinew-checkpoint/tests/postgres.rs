@@ -112,3 +112,38 @@ pg_test!(checkpoints_are_queryable_jsonb, |f| {
     .unwrap();
     assert_eq!(n, 41);
 });
+
+pg_test!(namespaces_and_ids, |f| common::namespaces_and_ids(&f.store)
+    .await);
+
+pg_test!(migrates_tables_from_older_versions, |f| {
+    // Recreate the table as the first release did and add an old row.
+    let pool = f.store.pool().clone();
+    pool.execute("DROP TABLE sinew_checkpoints").await.unwrap();
+    pool.execute(
+        "CREATE TABLE sinew_checkpoints (
+            id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            thread_id  TEXT        NOT NULL,
+            step       BIGINT      NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            checkpoint JSONB       NOT NULL
+        )",
+    )
+    .await
+    .unwrap();
+    pool.execute(
+        r#"INSERT INTO sinew_checkpoints (thread_id, step, checkpoint)
+           VALUES ('old', 2, '{"thread_id":"old","step":2,"next":"b","state":{"n":7}}')"#,
+    )
+    .await
+    .unwrap();
+    let store = PostgresCheckpointer::from_pool(pool).await.unwrap();
+    let old = store.latest("old").await.unwrap().unwrap();
+    assert!(old.checkpoint_id.starts_with("legacy-"));
+    assert_eq!(
+        store.get("old", &old.checkpoint_id).await.unwrap(),
+        Some(old.clone())
+    );
+    assert_eq!(store.history_in("old", "").await.unwrap(), vec![old]);
+    common::namespaces_and_ids(&store).await;
+});

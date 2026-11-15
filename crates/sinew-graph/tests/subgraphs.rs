@@ -133,7 +133,9 @@ async fn interrupt_inside_subgraph_resumes_inside_it() {
     assert_eq!(out.state().log, vec!["before", "c1", "ask:blue", "after"]);
     // Root history only shows root checkpoints.
     let hist = graph.get_state_history("t").await.unwrap();
-    assert!(hist.iter().all(|h| h.state.log.first().map(String::as_str) != Some("c1")));
+    assert!(hist
+        .iter()
+        .all(|h| h.state.log.first().map(String::as_str) != Some("c1")));
 }
 
 #[tokio::test]

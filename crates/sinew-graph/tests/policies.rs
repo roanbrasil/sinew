@@ -162,10 +162,7 @@ async fn recursion_limit_per_run_config() {
     let graph = g.compile().unwrap();
     assert!(graph.invoke(S::default()).await.is_ok());
     let err = graph
-        .run_with(
-            RunConfig::new("t").with_recursion_limit(3),
-            S::default(),
-        )
+        .run_with(RunConfig::new("t").with_recursion_limit(3), S::default())
         .await
         .unwrap_err();
     assert!(matches!(err, GraphError::RecursionLimit(3)));
@@ -214,7 +211,10 @@ async fn stream_modes_select_events() {
         .stream_with("t", S::default(), StreamMode::Values)
         .collect()
         .await;
-    assert_eq!(kinds(&values), vec!["values", "values", "values", "completed"]);
+    assert_eq!(
+        kinds(&values),
+        vec!["values", "values", "values", "completed"]
+    );
     let ns: Vec<i64> = values
         .iter()
         .filter_map(|e| match e {
@@ -225,7 +225,11 @@ async fn stream_modes_select_events() {
     assert_eq!(ns, vec![0, 1, 11]);
 
     let msgs: Vec<_> = graph
-        .stream_with("t", S::default(), [StreamMode::Messages, StreamMode::Custom])
+        .stream_with(
+            "t",
+            S::default(),
+            [StreamMode::Messages, StreamMode::Custom],
+        )
         .collect()
         .await;
     assert_eq!(kinds(&msgs), vec!["token", "custom", "completed"]);
@@ -250,7 +254,15 @@ async fn stream_modes_select_events() {
     let default: Vec<_> = graph.stream("t", Some(S::default())).collect().await;
     assert_eq!(
         kinds(&default),
-        vec!["start", "token", "custom", "end", "start", "end", "completed"]
+        vec![
+            "start",
+            "token",
+            "custom",
+            "end",
+            "start",
+            "end",
+            "completed"
+        ]
     );
 }
 
@@ -260,7 +272,10 @@ async fn nodes_use_the_store() {
     g.add_node_with_context("remember", |mut s: S, ctx| async move {
         let store = ctx.store().expect("store attached");
         let ns = ["memories", "ana"];
-        let seen = store.get(&ns, "visits").await?.map_or(0, |i| i.value.as_i64().unwrap_or(0));
+        let seen = store
+            .get(&ns, "visits")
+            .await?
+            .map_or(0, |i| i.value.as_i64().unwrap_or(0));
         store.put(&ns, "visits", json!(seen + 1)).await?;
         s.n = seen + 1;
         Ok(s)

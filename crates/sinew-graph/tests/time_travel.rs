@@ -41,8 +41,14 @@ async fn history_is_newest_first_and_linked() {
         next,
         vec![vec![], vec!["inc".to_string()], vec!["double".to_string()]]
     );
-    assert_eq!(hist[0].parent_id.as_deref(), Some(hist[1].checkpoint_id.as_str()));
-    assert_eq!(hist[1].parent_id.as_deref(), Some(hist[2].checkpoint_id.as_str()));
+    assert_eq!(
+        hist[0].parent_id.as_deref(),
+        Some(hist[1].checkpoint_id.as_str())
+    );
+    assert_eq!(
+        hist[1].parent_id.as_deref(),
+        Some(hist[2].checkpoint_id.as_str())
+    );
     assert_eq!(hist[2].parent_id, None);
     assert_eq!(hist[2].metadata["source"], "input");
     assert_eq!(hist[1].metadata["writes"], serde_json::json!(["double"]));
@@ -110,16 +116,9 @@ async fn update_as_node_moves_the_thread() {
     let g = graph();
     g.run("t", Some(S { n: 1, log: vec![] })).await.unwrap();
     // Pretend `double` produced n = 50: next is `inc`.
-    g.update_state_with(
-        "t",
-        S {
-            n: 50,
-            log: vec![],
-        },
-        Some("double"),
-    )
-    .await
-    .unwrap();
+    g.update_state_with("t", S { n: 50, log: vec![] }, Some("double"))
+        .await
+        .unwrap();
     let snap = g.get_state_snapshot("t").await.unwrap();
     assert_eq!(snap.next, vec!["inc"]);
     assert_eq!(g.run("t", None).await.unwrap().state().n, 51);
@@ -134,7 +133,10 @@ async fn unknown_checkpoint_id_is_reported() {
     let g = graph();
     g.run("t", Some(S::default())).await.unwrap();
     let err = g
-        .run_with(RunConfig::new("t").at_checkpoint("nope"), RunInput::Continue)
+        .run_with(
+            RunConfig::new("t").at_checkpoint("nope"),
+            RunInput::Continue,
+        )
         .await
         .unwrap_err();
     assert!(matches!(err, GraphError::CheckpointNotFound { .. }));
