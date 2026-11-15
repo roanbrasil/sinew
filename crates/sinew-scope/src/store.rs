@@ -1114,7 +1114,7 @@ impl Store {
     }
 
     pub async fn experiments(&self, dataset: Option<&str>) -> Result<Vec<ExperimentSummary>> {
-        let mut qb: QueryBuilder<Sqlite> =
+        let mut qb: QueryBuilder<'_, Sqlite> =
             QueryBuilder::new("SELECT id, name, dataset, created_ms, aggregates FROM experiments");
         if let Some(d) = dataset.filter(|d| !d.is_empty()) {
             qb.push(" WHERE dataset = ").push_bind(d.to_string());

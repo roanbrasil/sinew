@@ -41,3 +41,6 @@ uuid.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["net", "io-util"] }
+
+[lints]
+workspace = true

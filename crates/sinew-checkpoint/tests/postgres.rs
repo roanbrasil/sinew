@@ -18,7 +18,7 @@ use sinew_checkpoint::{
 /// A store in a fresh schema, plus a guard that drops the schema.
 struct Fixture {
     store: PostgresCheckpointer,
-    admin: sinew_checkpoint::sqlx::PgPool,
+    admin: sqlx::PgPool,
     schema: String,
 }
 
@@ -104,7 +104,7 @@ pg_test!(ensure_schema_is_idempotent_and_race_free, |f| {
 
 pg_test!(checkpoints_are_queryable_jsonb, |f| {
     f.store.put(common::cp("t", 3, "review", 41)).await.unwrap();
-    let (n,): (i64,) = sinew_checkpoint::sqlx::query_as(
+    let (n,): (i64,) = sqlx::query_as(
         "SELECT (checkpoint->'state'->>'n')::bigint FROM sinew_checkpoints WHERE step = 3",
     )
     .fetch_one(f.store.pool())

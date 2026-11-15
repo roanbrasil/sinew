@@ -20,8 +20,26 @@ mcp = ["dep:sinew-mcp"]
 eval = ["dep:sinew-eval"]
 # `HttpSink`: ship traces to a `sinew-scope serve` instance.
 http-trace = ["sinew-trace/http"]
-# Everything above except Postgres.
-full = ["sqlite", "mcp", "eval", "http-trace"]
+# `OtlpSink`: export traces to any OpenTelemetry collector (`otlp-proto` adds protobuf).
+otlp = ["sinew-trace/otlp"]
+otlp-proto = ["otlp", "sinew-trace/otlp-proto"]
+# Retrieval: embeddings, loaders, splitters, vector stores, retrievers (`sinew::rag`).
+rag = ["dep:sinew-rag", "sinew-rag/sqlite"]
+pgvector = ["rag", "sinew-rag/pgvector"]
+qdrant = ["rag", "sinew-rag/qdrant"]
+pdf = ["rag", "sinew-rag/pdf"]
+# Agent2Agent protocol client and server (`sinew::a2a`).
+a2a = ["dep:sinew-a2a"]
+# Agent harness: built-in tools, subagents, permissions, compaction (`sinew::harness`).
+harness = ["dep:sinew-harness"]
+# Deployment server and client with an OpenAI-compatible endpoint (`sinew::serve`).
+serve = ["dep:sinew-serve", "sinew-serve/sqlite"]
+# Persistent response cache for chat models.
+sqlite-cache = ["sinew-core/sqlite-cache"]
+# Derive structured-output schemas from Rust types.
+schemars = ["sinew-core/schemars"]
+# Everything above except Postgres-backed features.
+full = ["sqlite", "mcp", "eval", "http-trace", "otlp", "rag", "qdrant", "pdf", "a2a", "harness", "serve", "sqlite-cache", "schemars"]
 
 [dependencies]
 sinew-core.workspace = true
@@ -30,9 +48,16 @@ sinew-trace.workspace = true
 sinew-checkpoint = { workspace = true, optional = true, default-features = false }
 sinew-mcp = { path = "../sinew-mcp", version = "0.1.0", optional = true }
 sinew-eval = { workspace = true, optional = true }
+sinew-rag = { workspace = true, optional = true }
+sinew-a2a = { path = "../sinew-a2a", version = "0.1.0", optional = true }
+sinew-harness = { workspace = true, optional = true, default-features = false }
+sinew-serve = { workspace = true, optional = true, default-features = false }
 
 [dev-dependencies]
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 futures-util.workspace = true
+
+[lints]
+workspace = true

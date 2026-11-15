@@ -7,8 +7,11 @@ publish = false
 
 [dependencies]
 sinew = { path = "../../crates/sinew" }
-sinew-serve.workspace = true
+sinew-serve = { workspace = true, features = ["sqlite"] }
 sample-common = { path = "../common" }
 tokio.workspace = true
 serde_json.workspace = true
 futures-util.workspace = true
+
+[lints]
+workspace = true

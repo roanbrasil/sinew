@@ -30,3 +30,6 @@ uuid.workspace = true
 [[example]]
 name = "durable_agent"
 required-features = ["sqlite"]
+
+[lints]
+workspace = true

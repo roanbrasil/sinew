@@ -44,3 +44,6 @@ tempfile.workspace = true
 [[bench]]
 name = "ttft"
 harness = false
+
+[lints]
+workspace = true

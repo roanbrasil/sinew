@@ -142,7 +142,7 @@ async fn migrates_tables_from_older_versions() {
     let url = format!("sqlite://{}", dir.path().join("old.db").display());
     {
         // The table as the first release created it, with one row.
-        let pool = sinew_checkpoint::sqlx::SqlitePool::connect(&format!("{url}?mode=rwc"))
+        let pool = sqlx::SqlitePool::connect(&format!("{url}?mode=rwc"))
             .await
             .unwrap();
         for sql in [
@@ -156,10 +156,7 @@ async fn migrates_tables_from_older_versions() {
             r#"INSERT INTO sinew_checkpoints (thread_id, step, created_at, checkpoint)
                VALUES ('old', 2, 0, '{"thread_id":"old","step":2,"next":"b","state":{"n":7}}')"#,
         ] {
-            sinew_checkpoint::sqlx::query(sql)
-                .execute(&pool)
-                .await
-                .unwrap();
+            sqlx::query(sql).execute(&pool).await.unwrap();
         }
         pool.close().await;
     }

@@ -11,3 +11,6 @@ sinew-rag = { path = "../../crates/sinew-rag" }
 sample-common = { path = "../common" }
 tokio.workspace = true
 serde_json.workspace = true
+
+[lints]
+workspace = true

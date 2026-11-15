@@ -134,7 +134,7 @@ static NUM_ENTITY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"&#(x[0-9a-fA-F]+|[0-9]+);").unwrap());
 
 fn decode_entities(s: &str) -> String {
-    let s = NUM_ENTITY.replace_all(s, |c: &regex::Captures| {
+    let s = NUM_ENTITY.replace_all(s, |c: &regex::Captures<'_>| {
         let v = &c[1];
         let code = if let Some(hex) = v.strip_prefix('x') {
             u32::from_str_radix(hex, 16).ok()

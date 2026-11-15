@@ -132,7 +132,7 @@ impl PiiRedactor {
         }
         if self.cards {
             out = CARD
-                .replace_all(&out, |c: &regex::Captures| {
+                .replace_all(&out, |c: &regex::Captures<'_>| {
                     let digits: String = c[0].chars().filter(char::is_ascii_digit).collect();
                     if (13..=19).contains(&digits.len()) && luhn(&digits) {
                         "[REDACTED_CARD]".to_string()
@@ -144,7 +144,7 @@ impl PiiRedactor {
         }
         if self.phones {
             out = PHONE
-                .replace_all(&out, |c: &regex::Captures| {
+                .replace_all(&out, |c: &regex::Captures<'_>| {
                     let n = c[0].chars().filter(char::is_ascii_digit).count();
                     if (10..=15).contains(&n) {
                         "[REDACTED_PHONE]".to_string()

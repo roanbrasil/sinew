@@ -7,3 +7,6 @@ publish = false
 
 [dependencies]
 sinew = { path = "../../crates/sinew" }
+
+[lints]
+workspace = true

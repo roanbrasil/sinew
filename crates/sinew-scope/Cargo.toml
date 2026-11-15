@@ -39,3 +39,6 @@ thiserror.workspace = true
 sinew-graph.workspace = true
 sinew-trace = { workspace = true, features = ["http", "otlp"] }
 tempfile.workspace = true
+
+[lints]
+workspace = true

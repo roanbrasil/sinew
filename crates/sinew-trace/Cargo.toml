@@ -27,3 +27,6 @@ otlp-proto = []
 
 [dev-dependencies]
 tokio.workspace = true
+
+[lints]
+workspace = true

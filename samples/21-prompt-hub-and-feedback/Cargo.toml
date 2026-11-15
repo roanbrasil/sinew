@@ -11,3 +11,6 @@ sinew-scope = { path = "../../crates/sinew-scope" }
 sample-common = { path = "../common" }
 tokio.workspace = true
 serde_json.workspace = true
+
+[lints]
+workspace = true
