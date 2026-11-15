@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/assets/banner.png" alt="Sinew — chains, agent graphs and tracing in Rust" width="100%"></p>
+<p align="center"><img src="docs/assets/banner.png" alt="Sinew — agents, graphs and tracing in Rust" width="100%"></p>
 
 # Sinew
 
