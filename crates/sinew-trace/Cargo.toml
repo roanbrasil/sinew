@@ -19,6 +19,10 @@ reqwest = { workspace = true, features = ["blocking"], optional = true }
 default = []
 # Background batching sink that POSTs runs to a `sinew-scope serve` instance.
 http = ["dep:reqwest"]
+# `OtlpSink`: export runs as OpenTelemetry spans (OTLP/HTTP JSON).
+otlp = ["dep:reqwest"]
+# OTLP protobuf codec (no extra dependencies); enables `OtlpProtocol::HttpProtobuf`.
+otlp-proto = []
 
 [dev-dependencies]
 tokio.workspace = true

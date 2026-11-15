@@ -5,19 +5,14 @@
 //! when the flush interval elapses. When the channel is full, runs are dropped
 //! and counted. Network errors are counted, never raised.
 
-use std::{
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TrySendError},
-        Arc, Mutex,
-    },
-    thread::JoinHandle,
-    time::{Duration, Instant},
-};
+use std::time::Duration;
 
 use serde_json::json;
 
-use crate::{Run, TraceSink};
+use crate::{
+    batch::{BatchSettings, Batcher},
+    Run, TraceSink,
+};
 
 /// Settings for [`HttpSink`].
 #[derive(Debug, Clone)]
@@ -105,18 +100,6 @@ impl HttpSinkConfig {
     }
 }
 
-enum Msg {
-    Run(Box<Run>),
-    Flush(SyncSender<()>),
-    Shutdown(SyncSender<()>),
-}
-
-#[derive(Default)]
-struct Counters {
-    sent: AtomicU64,
-    dropped: AtomicU64,
-}
-
 /// Background batching sink for a `sinew-scope` server.
 ///
 /// ```no_run
@@ -128,28 +111,37 @@ struct Counters {
 /// tracer.flush(); // deliver the last batch before exiting
 /// ```
 pub struct HttpSink {
-    tx: SyncSender<Msg>,
-    counters: Arc<Counters>,
-    worker: Mutex<Option<JoinHandle<()>>>,
-    flush_timeout: Duration,
+    batcher: Batcher,
 }
 
 impl HttpSink {
     pub fn new(config: HttpSinkConfig) -> Self {
-        let (tx, rx) = sync_channel(config.capacity);
-        let counters = Arc::new(Counters::default());
-        let flush_timeout = config.flush_timeout;
-        let c = counters.clone();
-        let worker = std::thread::Builder::new()
-            .name("sinew-http-sink".into())
-            .spawn(move || worker(config, rx, c))
-            .ok();
-        Self {
-            tx,
-            counters,
-            worker: Mutex::new(worker),
-            flush_timeout,
-        }
+        let settings = BatchSettings {
+            batch_size: config.batch_size,
+            flush_interval: config.flush_interval,
+            capacity: config.capacity,
+            flush_timeout: config.flush_timeout,
+        };
+        let batcher = Batcher::spawn("sinew-http-sink", settings, move || {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(config.request_timeout)
+                .build()
+                .ok();
+            let url = format!("{}/api/runs", config.base_url);
+            move |batch: &[Run]| {
+                client.as_ref().is_some_and(|client| {
+                    let mut req = client.post(&url).json(&json!({
+                        "project": config.project,
+                        "runs": batch,
+                    }));
+                    if let Some(t) = &config.token {
+                        req = req.bearer_auth(t);
+                    }
+                    req.send().is_ok_and(|r| r.status().is_success())
+                })
+            }
+        });
+        Self { batcher }
     }
 
     /// Shortcut for `HttpSink::new(HttpSinkConfig::from_env())`.
@@ -159,125 +151,24 @@ impl HttpSink {
 
     /// Runs accepted by the server so far.
     pub fn sent(&self) -> u64 {
-        self.counters.sent.load(Ordering::Relaxed)
+        self.batcher.sent()
     }
 
     /// Runs lost to a full queue or a failed request.
     pub fn dropped(&self) -> u64 {
-        self.counters.dropped.load(Ordering::Relaxed)
-    }
-
-    /// Enqueues a control message and waits for the worker to acknowledge it,
-    /// both within `flush_timeout`. Returns whether it was acknowledged.
-    fn control(&self, make: fn(SyncSender<()>) -> Msg) -> bool {
-        let deadline = Instant::now() + self.flush_timeout;
-        let (ack_tx, ack_rx) = sync_channel(1);
-        let mut msg = make(ack_tx);
-        loop {
-            match self.tx.try_send(msg) {
-                Ok(()) => break,
-                Err(TrySendError::Disconnected(_)) => return false,
-                Err(TrySendError::Full(m)) => {
-                    if Instant::now() >= deadline {
-                        return false;
-                    }
-                    msg = m;
-                    std::thread::sleep(Duration::from_millis(5));
-                }
-            }
-        }
-        let left = deadline.saturating_duration_since(Instant::now());
-        ack_rx.recv_timeout(left).is_ok()
+        self.batcher.dropped()
     }
 }
 
 impl TraceSink for HttpSink {
     fn record(&self, run: &Run) {
-        if self.tx.try_send(Msg::Run(Box::new(run.clone()))).is_err() {
-            self.counters.dropped.fetch_add(1, Ordering::Relaxed);
-        }
+        self.batcher.record(run);
     }
 
     /// Blocks the calling thread (up to `flush_timeout`) until every queued
     /// run has been POSTed.
     fn flush(&self) {
-        self.control(Msg::Flush);
-    }
-}
-
-impl Drop for HttpSink {
-    fn drop(&mut self) {
-        let acked = self.control(Msg::Shutdown);
-        if let Some(handle) = self.worker.lock().ok().and_then(|mut w| w.take()) {
-            // Only join a worker that confirmed it is exiting, so drop never hangs.
-            if acked {
-                let _ = handle.join();
-            }
-        }
-    }
-}
-
-fn worker(config: HttpSinkConfig, rx: Receiver<Msg>, counters: Arc<Counters>) {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(config.request_timeout)
-        .build()
-        .ok();
-    let url = format!("{}/api/runs", config.base_url);
-    let mut batch: Vec<Run> = Vec::new();
-    let mut next_flush = Instant::now() + config.flush_interval;
-
-    let send = |batch: &mut Vec<Run>| {
-        if batch.is_empty() {
-            return;
-        }
-        let n = batch.len() as u64;
-        let ok = client.as_ref().is_some_and(|client| {
-            let mut req = client.post(&url).json(&json!({
-                "project": config.project,
-                "runs": batch,
-            }));
-            if let Some(t) = &config.token {
-                req = req.bearer_auth(t);
-            }
-            req.send().is_ok_and(|r| r.status().is_success())
-        });
-        let counter = if ok {
-            &counters.sent
-        } else {
-            &counters.dropped
-        };
-        counter.fetch_add(n, Ordering::Relaxed);
-        batch.clear();
-    };
-
-    loop {
-        let wait = next_flush.saturating_duration_since(Instant::now());
-        match rx.recv_timeout(wait) {
-            Ok(Msg::Run(run)) => {
-                batch.push(*run);
-                if batch.len() >= config.batch_size {
-                    send(&mut batch);
-                    next_flush = Instant::now() + config.flush_interval;
-                }
-            }
-            Ok(Msg::Flush(ack)) => {
-                send(&mut batch);
-                let _ = ack.try_send(());
-            }
-            Ok(Msg::Shutdown(ack)) => {
-                send(&mut batch);
-                let _ = ack.try_send(());
-                return;
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                send(&mut batch);
-                next_flush = Instant::now() + config.flush_interval;
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                send(&mut batch);
-                return;
-            }
-        }
+        self.batcher.flush();
     }
 }
 
@@ -288,6 +179,10 @@ mod tests {
     use std::{
         io::{Read, Write},
         net::TcpListener,
+        sync::{
+            mpsc::{sync_channel, Receiver},
+            Arc,
+        },
     };
 
     /// Minimal HTTP server that answers 200 and returns each request body.
