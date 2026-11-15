@@ -6,6 +6,8 @@ Sinew streams at two levels:
    tool-call deltas, complete tool calls, usage and a final `Done`.
 2. **Graph level** (`sinew-graph`): `CompiledGraph::stream` yields per-node
    events, tokens and custom events emitted by nodes, and one terminal event.
+   `stream_with` selects stream modes and subgraph events (see
+   [Graph stream modes](#graph-stream-modes)).
 
 Run `cargo run --example streaming` (offline) or
 `cargo run --example streaming -- --ollama` to see both.
@@ -149,3 +151,42 @@ When the agent graph is streamed, the `agent` node calls `chat_stream` and
 forwards every text delta as `GraphEvent::Token`. It then accumulates the
 stream, tool calls included, into the assistant message stored in the state.
 With `invoke` or `run`, the node makes a plain `chat` call as before.
+
+## Graph stream modes
+
+`CompiledGraph::stream(thread, input)` yields node starts, node outputs,
+tokens and custom events. `stream_with(config, input, options)` picks what
+to yield, like LangGraph's `stream_mode`:
+
+| `StreamMode` | Events |
+|---|---|
+| `Values` | `GraphEvent::Values { step, state }`: the full state when the run starts and after every superstep |
+| `Updates` | `GraphEvent::NodeEnd`: each node's own output as it finishes |
+| `Messages` | `GraphEvent::Token { node, step, task, delta }`: LLM tokens tagged with the node that produced them |
+| `Custom` | `GraphEvent::Custom`: values sent with `NodeContext::emit` |
+| `Tasks` | `GraphEvent::NodeStart` |
+| `Debug` | all of the above except `Values`, plus `GraphEvent::Checkpoint { checkpoint_id, step, next }` after every write |
+
+```rust
+use sinew_graph::{StreamMode, StreamOptions};
+
+let events = graph.stream_with("t", input, [StreamMode::Values, StreamMode::Messages]);
+let events = graph.stream_with(
+    "t",
+    input,
+    StreamOptions::new(StreamMode::Updates).with_subgraphs(true),
+);
+```
+
+`stream()` uses `StreamModes::DEFAULT` (tasks, updates, messages, custom), so
+existing code sees exactly the same events as before. The terminal event
+(`Completed`, `Interrupted` or `Error`) is always sent. Events a mode does not
+want are never built: for example the state is not cloned for `NodeEnd`
+unless `Updates` is on. `NodeContext::is_streaming()` is true only when
+`Messages` is on, so agents stream from the model only when tokens are
+wanted.
+
+With `with_subgraphs(true)`, events of [subgraphs](subgraphs.md) arrive as
+`GraphEvent::Subgraph { namespace, event }`, where `event` is the subgraph's
+event with its state serialized to JSON. Dynamic interrupts end the stream
+with `GraphEvent::Interrupted { interrupts, .. }`.

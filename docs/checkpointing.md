@@ -1,9 +1,12 @@
 # Checkpointing
 
-A compiled `StateGraph` writes a `Checkpoint` after every step when it has a
-checkpointer. A checkpoint holds the thread id, the step, the node that runs
-next and the serialized state. That is what makes `run(thread, None)`,
-`get_state`, `update_state` and `interrupt_before` work.
+A compiled `StateGraph` writes a `Checkpoint` when a run starts and after
+every step when it has a checkpointer. A checkpoint holds the thread id, the
+step, the tasks that run next, the serialized state, its own id and its
+parent's id, the subgraph namespace and some metadata. That is what makes
+`run(thread, None)`, `get_state`, `update_state`, interrupts (static and
+dynamic, see [commands and interrupts](commands-and-interrupts.md)) and
+[time travel](time-travel.md) work.
 
 `sinew-graph` ships `MemoryCheckpointer`, which loses everything when the
 process exits. The `sinew-checkpoint` crate adds durable backends:
@@ -70,12 +73,17 @@ clone: clones share the pool.
 
 ## Read semantics
 
-- `latest(thread)` returns the **most recently written** checkpoint. This
-  matches `MemoryCheckpointer`, and it stays correct when a thread is
-  restarted with `run(thread, Some(input))` (the step counter goes back to 0).
-- `history(thread)` returns every checkpoint ordered by step, then by
-  insertion order. `update_state` writes a second checkpoint with the same
-  step, so both appear, in the order they were written.
+- `latest(thread)` returns the **most recently written** checkpoint of the
+  thread's root graph. This matches `MemoryCheckpointer`, and it stays correct
+  when a thread is restarted with `run(thread, Some(input))` (the step counter
+  goes back to 0) and after a fork (the fork is the newest write).
+- `latest_in(thread, ns)` does the same for a subgraph namespace.
+- `history(thread)` returns every checkpoint (all namespaces) ordered by
+  step, then by insertion order. `update_state` writes a second checkpoint
+  with the same step, so both appear, in the order they were written.
+- `history_in(thread, ns)` returns one namespace in write order; this is what
+  `get_state_history` uses.
+- `get(thread, checkpoint_id)` returns one checkpoint by id.
 
 ## Housekeeping: `CheckpointStore`
 
@@ -104,13 +112,18 @@ One table, `sinew_checkpoints`:
 | `step` | `INTEGER` | `BIGINT` |
 | `created_at` | `INTEGER` (Unix milliseconds) | `TIMESTAMPTZ DEFAULT now()` |
 | `checkpoint` | `TEXT` (JSON) | `JSONB` |
+| `checkpoint_id` | `TEXT` (NULL for old rows) | `TEXT` (NULL for old rows) |
+| `checkpoint_ns` | `TEXT NOT NULL DEFAULT ''` | `TEXT NOT NULL DEFAULT ''` |
 
-Indexes are on `(thread_id, id)` for `latest`, pruning and `list_threads`, and
-on `(thread_id, step, id)` for `history`.
+Indexes are on `(thread_id, id)` for pruning and `list_threads`, on
+`(thread_id, step, id)` for `history`, on `(thread_id, checkpoint_ns, id)`
+for `latest`/`latest_in`/`history_in`, and on `(thread_id, checkpoint_id)`
+for `get`.
 
 The whole `Checkpoint` struct is stored as one JSON blob. Only `thread_id`,
-`step` and `created_at` are copied into their own columns. When fields are
-added to `Checkpoint`, they are persisted without a migration. Because the
+`step`, `created_at`, `checkpoint_id` and `checkpoint_ns` are copied into
+their own columns. Other fields added to `Checkpoint` are persisted without a
+migration. Because the
 Postgres column is `JSONB`, you can query it directly:
 
 ```sql
@@ -125,6 +138,29 @@ keys. This does not change the deserialized `Checkpoint`.
 On Postgres the table is created unqualified, so it lands in the first schema
 of the connection's `search_path`. To isolate tenants or tests, give each one a
 schema and set `search_path` on the pool (see `tests/postgres.rs`).
+
+## Migrations
+
+Tables created by the first release lack `checkpoint_id` and
+`checkpoint_ns`. `ensure_schema` (called by `connect` and `from_pool`) adds
+them in place:
+
+- **SQLite** reads `pragma_table_info` and runs `ALTER TABLE ... ADD COLUMN`
+  for each missing column (a concurrent process that migrated first is
+  tolerated), then creates the new indexes.
+- **Postgres** runs `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` under the
+  schema advisory lock.
+
+Existing rows keep working: they belong to the root namespace and are read
+with a synthetic id, `legacy-<row id>`, which `get` (and therefore replay and
+forks) accepts. Nothing is rewritten.
+
+## Long-term store
+
+`SqliteStore` (feature `sqlite`) implements the graph's long-term `Store`
+(namespaced items, filters, optional semantic search, TTLs) in a
+`sinew_store` table, possibly in the same file as the checkpoints. See
+[store](store.md).
 
 ## Concurrency
 
