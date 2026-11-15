@@ -34,6 +34,12 @@ graph graph  711ms
    └─ llm qwen3:4b-instruct-2507-q4_k_m  249ms  tokens 216→12
 ```
 
+## Samples
+
+The [`samples/`](samples/) folder has runnable programs, from a first chat call to tools, custom graphs,
+human-in-the-loop, tracing and custom model wrappers. They run offline by default; add `--ollama`, `--openai`
+or `--anthropic` to use a real model.
+
 ## A graph in a few lines
 
 ```rust

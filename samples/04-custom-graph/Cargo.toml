@@ -1,0 +1,14 @@
+[package]
+name = "sample-04-custom-graph"
+description = "A write → review → revise loop built with StateGraph"
+version = "0.0.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+sinew = { path = "../../crates/sinew" }
+sample-common = { path = "../common" }
+tokio.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+async-trait.workspace = true
