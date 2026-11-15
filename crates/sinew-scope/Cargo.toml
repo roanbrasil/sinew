@@ -1,6 +1,6 @@
 [package]
 name = "sinew-scope"
-description = "Terminal viewer for Sinew traces"
+description = "Trace server, web UI and terminal viewer for Sinew (LangSmith-style)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,10 +8,25 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "sinew-scope"
 path = "src/main.rs"
 
 [dependencies]
 sinew-trace.workspace = true
+sinew-eval.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+axum.workspace = true
+sqlx.workspace = true
+tokio = { workspace = true, features = ["net", "signal", "fs"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+sinew-core.workspace = true
+sinew-graph.workspace = true
+sinew-trace = { workspace = true, features = ["http"] }
+reqwest.workspace = true

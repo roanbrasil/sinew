@@ -13,6 +13,12 @@ sinew-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
+reqwest = { workspace = true, features = ["blocking"], optional = true }
+
+[features]
+default = []
+# Background batching sink that POSTs runs to a `sinew-scope serve` instance.
+http = ["dep:reqwest"]
 
 [dev-dependencies]
 tokio.workspace = true

@@ -21,3 +21,8 @@ uuid = { version = "1", features = ["v4"] }
 sinew-core = { path = "crates/sinew-core", version = "0.1.0" }
 sinew-graph = { path = "crates/sinew-graph", version = "0.1.0" }
 sinew-trace = { path = "crates/sinew-trace", version = "0.1.0" }
+sinew-eval = { path = "crates/sinew-eval", version = "0.1.0" }
+axum = "0.8"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+futures = "0.3"
+regex = "1"
