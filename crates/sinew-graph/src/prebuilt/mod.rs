@@ -130,7 +130,8 @@ impl ReactAgent {
         self
     }
 
-    /// Stops after `n` model calls since the last user message, answering
+    /// Stops after `n` model calls in one run (one invocation of the agent,
+    /// e.g. one turn, or one handoff to it inside a supervisor), answering
     /// [`MAX_ITERATIONS_REPLY`] instead of calling the model again.
     pub fn max_iterations(mut self, n: usize) -> Self {
         self.max_iterations = Some(n);
@@ -153,6 +154,8 @@ impl ReactAgent {
         let system = self.system_prompt.clone();
         let hook = self.pre_model_hook.clone();
         let max = self.max_iterations;
+        // Supersteps per loop round: agent, [post_model_hook], tools.
+        let cycle = if self.post_model_hook.is_some() { 3 } else { 2 };
         let mut g = StateGraph::<AgentState>::new();
 
         g.add_node_with_context("agent", move |mut s: AgentState, ctx| {
@@ -167,7 +170,9 @@ impl ReactAgent {
                 }
             }
             let req = ChatRequest::new(messages).with_tools(specs.clone());
-            let exhausted = max.is_some_and(|max| iterations(&s.messages) >= max);
+            // `ctx.step` restarts at 0 for every run (and every subgraph
+            // invocation), so this counts this run's model calls.
+            let exhausted = max.is_some_and(|max| ctx.step / cycle >= max);
             async move {
                 if exhausted {
                     s.messages.push(Message::assistant(MAX_ITERATIONS_REPLY));
@@ -283,18 +288,6 @@ impl ReactAgent {
     pub fn compile(self) -> Result<CompiledGraph<AgentState>, GraphError> {
         self.graph().compile()
     }
-}
-
-/// Model calls (assistant messages) since the last user message.
-fn iterations(messages: &[Message]) -> usize {
-    let start = messages
-        .iter()
-        .rposition(|m| m.role == Role::User)
-        .map_or(0, |i| i + 1);
-    messages[start..]
-        .iter()
-        .filter(|m| m.role == Role::Assistant)
-        .count()
 }
 
 /// A tool spec with no parameters (used by handoff tools).

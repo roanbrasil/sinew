@@ -1627,6 +1627,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-17-multi-agent"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "sample-common",
+ "serde_json",
+ "sinew",
+ "tokio",
+]
+
+[[package]]
+name = "sample-18-time-travel"
+version = "0.0.0"
+dependencies = [
+ "sample-common",
+ "serde",
+ "serde_json",
+ "sinew",
+ "tokio",
+]
+
+[[package]]
 name = "sample-common"
 version = "0.0.0"
 dependencies = [

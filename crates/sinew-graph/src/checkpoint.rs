@@ -153,7 +153,7 @@ pub fn new_checkpoint_id() -> String {
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let ms = now_millis() & 0xFFFF_FFFF_FFFF;
     let rand_a = (n & 0x0FFF) as u16;
-    let rand_b = (seed ^ n.rotate_left(32)) & 0x3FFF_FFFF_FFFF_FFFF;
+    let rand_b = seed.wrapping_add(n.wrapping_mul(0x9E37_79B9_7F4A_7C15)) & 0x3FFF_FFFF_FFFF_FFFF;
     format!(
         "{:08x}-{:04x}-7{:03x}-{:04x}-{:012x}",
         ms >> 16,
