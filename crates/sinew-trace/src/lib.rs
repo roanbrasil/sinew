@@ -1,6 +1,14 @@
 //! Tracing: every graph, node, model call and tool call becomes a [`Run`]
 //! with a parent, timings, inputs/outputs and token usage. Runs are pushed
 //! to [`TraceSink`]s when they finish (JSONL file, in-memory, or your own).
+//!
+//! With the `http` feature, [`HttpSink`] ships finished runs to a
+//! `sinew-scope serve` instance in background batches.
+
+#[cfg(feature = "http")]
+mod http;
+#[cfg(feature = "http")]
+pub use http::{HttpSink, HttpSinkConfig};
 
 use std::{
     fmt::Display,
@@ -60,6 +68,10 @@ pub struct RunRef {
 
 pub trait TraceSink: Send + Sync {
     fn record(&self, run: &Run);
+
+    /// Pushes out anything buffered. Called by [`Tracer::flush`]; the default
+    /// does nothing, which suits synchronous sinks.
+    fn flush(&self) {}
 }
 
 /// Keeps finished runs in memory (tests, dashboards).
@@ -103,6 +115,10 @@ impl TraceSink for JsonlSink {
             // Tracing must never break the application; drop the line on I/O error.
             let _ = writeln!(f, "{line}");
         }
+    }
+
+    fn flush(&self) {
+        let _ = self.file.lock().unwrap().flush();
     }
 }
 
@@ -161,6 +177,14 @@ impl Tracer {
                 output_tokens: None,
                 metadata: json!({}),
             }),
+        }
+    }
+
+    /// Flushes every sink. Call it before the process exits so buffered
+    /// sinks such as `HttpSink` deliver their last batch.
+    pub fn flush(&self) {
+        for s in &self.sinks {
+            s.flush();
         }
     }
 

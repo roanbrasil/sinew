@@ -11,7 +11,8 @@ trio as one small, typed, async workspace.
 | `sinew-graph` | LangGraph | `StateGraph<S>` with typed state, conditional edges, cycles with a recursion limit, checkpoints, `interrupt_before` + `update_state` for human-in-the-loop, prebuilt `react_agent` |
 | `sinew-checkpoint` | LangGraph checkpointers (`langgraph-checkpoint-sqlite` / `-postgres`) | Durable `SqliteCheckpointer` (default) and `PostgresCheckpointer` (feature `postgres`): threads survive restarts; list, delete and prune threads. See [docs/checkpointing.md](docs/checkpointing.md) |
 | `sinew-trace` | LangSmith SDK | Runs (graph → node → llm/tool) with timings, I/O, token usage; JSONL and in-memory sinks |
-| `sinew-scope` | LangSmith UI (terminal for now) | `sinew-scope traces.jsonl [--io]` prints each trace as a tree |
+| `sinew-scope` | LangSmith UI + backend | `sinew-scope serve`: SQLite trace store, run + OTLP/HTTP JSON ingest (GenAI conventions), query API with filters and aggregates, embedded web UI (traces, waterfall, datasets, experiment comparison), optional bearer auth; `sinew-scope view traces.jsonl` terminal tree. See [docs/scope.md](docs/scope.md) |
+| `sinew-eval` | LangSmith evaluation | `Dataset` (JSONL), evaluators (exact, contains, regex, JSON field, numeric tolerance, LLM-as-judge), `evaluate()` with concurrency → `ExperimentReport`, upload to scope. See [docs/evaluation.md](docs/evaluation.md) |
 | `sinew-mcp` | MCP adapters | Model Context Protocol client (MCP server tools as Sinew `Tool`s) and server (any `ToolBox` or agent over stdio); `sinew-mcp --traces traces.jsonl` lets Claude Code inspect traces |
 | `sinew` | umbrella | re-exports + `prelude` |
 
