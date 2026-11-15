@@ -1,7 +1,10 @@
 //! Core abstractions: messages, chat models, tools and prompt templates.
 //!
-//! Providers live in [`providers`]: an OpenAI-compatible client (OpenAI, Ollama,
-//! vLLM, llama.cpp server) and a native Anthropic client.
+//! Providers live in [`providers`]: native Anthropic and Gemini clients, and an
+//! OpenAI-compatible client with presets for OpenAI, xAI Grok, Groq, Mistral,
+//! DeepSeek, OpenRouter and other hosted APIs, plus local servers (Ollama,
+//! LM Studio, llama.cpp, vLLM, SGLang, LocalAI, Jan, llamafile, TGI).
+//! [`providers::from_spec`] builds any of them from `"provider:model"`.
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png",
     html_favicon_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png"

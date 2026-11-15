@@ -26,7 +26,7 @@ pub use sinew_mcp as mcp;
 
 pub mod prelude {
     pub use sinew_core::{
-        providers::{Anthropic, OpenAiCompat},
+        providers::{from_spec, Anthropic, Gemini, OpenAiCompat},
         ChatModel, ChatRequest, FnTool, Message, PromptTemplate, Role, StreamEvent, StructuredMode,
         StructuredOutput, Tool, ToolBox, ToolCall, ToolSpec,
     };
