@@ -86,6 +86,8 @@ let done = graph.run("thread-1", None).await?;            // resumes
 3. `sinew-scope` server: OTLP/HTTP ingest, storage, web UI, datasets and evaluations.
 4. More providers (Gemini, Bedrock) and structured output (JSON Schema → typed structs).
 
+Done: item 1 (see [docs/streaming.md](docs/streaming.md), [docs/fan-out.md](docs/fan-out.md)) and structured output from item 4 (`StructuredOutput`).
+
 ## License
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.

@@ -24,6 +24,10 @@ pub enum Error {
     Template(String),
     #[error("missing configuration: {0}")]
     Config(String),
+    #[error("structured output failed: {message}")]
+    Structured { message: String, raw: String },
+    #[error("stream error: {0}")]
+    Stream(String),
     #[error("scripted model has no responses left")]
     ScriptExhausted,
 }

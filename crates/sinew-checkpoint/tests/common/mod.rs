@@ -11,6 +11,7 @@ pub fn cp(thread: &str, step: usize, next: &str, n: i64) -> Checkpoint {
         thread_id: thread.into(),
         step,
         next: next.into(),
+        tasks: Vec::new(),
         state: json!({ "n": n }),
     }
 }
@@ -30,6 +31,7 @@ pub async fn round_trip<S: CheckpointStore>(store: &S) {
         thread_id: "t".into(),
         step: 7,
         next: "review".into(),
+        tasks: Vec::new(),
         state: json!({
             "text": "olá, \"world\" \u{1F680}\n",
             "nested": { "list": [1, 2.5, -3, null, true], "empty": {} },

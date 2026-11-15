@@ -13,7 +13,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sinew_core::{ChatModel, ChatRequest, ChatResponse, Message, ToolBox, ToolCall};
+use sinew_core::{
+    chat_streaming, ChatModel, ChatRequest, ChatResponse, Message, StreamEvent, ToolBox, ToolCall,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -242,6 +244,47 @@ pub async fn traced_chat<M: ChatModel + ?Sized>(
         Ok(resp) => {
             run.set_usage(resp.usage.input_tokens, resp.usage.output_tokens);
             run.set_metadata("model", json!(resp.model));
+            run.finish(json!(resp.message));
+            Ok(resp)
+        }
+        Err(e) => {
+            run.fail(&e);
+            Err(e)
+        }
+    }
+}
+
+/// Streams a model call, passing every event to `on_event`, and records an
+/// `llm` run (with usage and the number of streamed chunks) when a tracer is
+/// present. Returns the accumulated response.
+pub async fn traced_chat_stream<M, F>(
+    model: &M,
+    request: ChatRequest,
+    tracer: Option<&Tracer>,
+    parent: Option<&RunRef>,
+    mut on_event: F,
+) -> sinew_core::Result<ChatResponse>
+where
+    M: ChatModel + ?Sized,
+    F: FnMut(&StreamEvent),
+{
+    let Some(tracer) = tracer else {
+        return chat_streaming(model, request, on_event).await;
+    };
+    let mut run = tracer.start(model.name(), RunKind::Llm, parent, json!({ "messages": request.messages, "tools": request.tools.iter().map(|t| &t.name).collect::<Vec<_>>() }));
+    let mut chunks = 0u64;
+    let result = chat_streaming(model, request, |ev| {
+        if matches!(ev, StreamEvent::TextDelta { .. }) {
+            chunks += 1;
+        }
+        on_event(ev)
+    })
+    .await;
+    match result {
+        Ok(resp) => {
+            run.set_usage(resp.usage.input_tokens, resp.usage.output_tokens);
+            run.set_metadata("model", json!(resp.model));
+            run.set_metadata("streamed_chunks", json!(chunks));
             run.finish(json!(resp.message));
             Ok(resp)
         }

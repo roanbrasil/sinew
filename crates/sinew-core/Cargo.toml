@@ -14,6 +14,14 @@ serde_json.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
 reqwest.workspace = true
+futures-core.workspace = true
+futures-util.workspace = true
+schemars = { workspace = true, optional = true }
+
+[features]
+default = []
+# `StructuredOutput::for_type::<T>()`: derive the JSON Schema from a Rust type.
+schemars = ["dep:schemars"]
 
 [dev-dependencies]
 tokio.workspace = true

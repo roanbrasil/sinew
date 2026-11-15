@@ -65,7 +65,7 @@ async fn main() -> Result<(), BoxError> {
             }),
         )
         .await?;
-    let RunOutcome::Interrupted { state, next } = first else {
+    let RunOutcome::Interrupted { state, next, .. } = first else {
         unreachable!("graph pauses before send")
     };
     println!("⏸  paused before `{next}`. Draft:\n{}\n", state.body);

@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use sinew_core::{ChatModel, ChatRequest, Message, ToolBox};
-use sinew_trace::{traced_chat, traced_tool};
+use sinew_core::{ChatModel, ChatRequest, Message, StreamEvent, ToolBox};
+use sinew_trace::{traced_chat, traced_chat_stream, traced_tool};
 
 use crate::{CompiledGraph, GraphError, StateGraph, END};
 
@@ -24,6 +24,11 @@ impl AgentState {
 
 /// Classic tool-calling loop: `agent` calls the model; if it asked for tools,
 /// `tools` runs them and control returns to `agent`; otherwise the run ends.
+///
+/// When the graph is consumed with [`CompiledGraph::stream`], the `agent`
+/// node calls [`ChatModel::chat_stream`] and forwards every text delta as a
+/// [`GraphEvent::Token`](crate::GraphEvent::Token); with `invoke`/`run` it
+/// makes a plain `chat` call.
 pub fn react_agent(
     model: Arc<dyn ChatModel>,
     tools: ToolBox,
@@ -35,8 +40,22 @@ pub fn react_agent(
         let model = model.clone();
         let req = ChatRequest::new(s.messages.clone()).with_tools(specs.clone());
         async move {
-            let resp =
-                traced_chat(model.as_ref(), req, ctx.tracer.as_ref(), ctx.run.as_ref()).await?;
+            let resp = if ctx.is_streaming() {
+                traced_chat_stream(
+                    model.as_ref(),
+                    req,
+                    ctx.tracer.as_ref(),
+                    ctx.run.as_ref(),
+                    |ev| {
+                        if let StreamEvent::TextDelta { text } = ev {
+                            ctx.emit_token(text.clone());
+                        }
+                    },
+                )
+                .await?
+            } else {
+                traced_chat(model.as_ref(), req, ctx.tracer.as_ref(), ctx.run.as_ref()).await?
+            };
             s.messages.push(resp.message);
             Ok(s)
         }
@@ -115,5 +134,60 @@ mod tests {
         // The second model call saw the tool result.
         assert_eq!(model.requests()[1].messages.len(), 3);
         assert_eq!(model.requests()[0].tools[0].name, "add");
+    }
+
+    #[tokio::test]
+    async fn streams_model_tokens_through_the_graph() {
+        use crate::GraphEvent;
+        use futures_util::StreamExt;
+
+        let model = Arc::new(ScriptedModel::new([
+            Message::assistant_with_tools(
+                "",
+                vec![ToolCall {
+                    id: "c1".into(),
+                    name: "add".into(),
+                    arguments: json!({"a": 2, "b": 40}),
+                }],
+            ),
+            Message::assistant("The answer is 42."),
+        ]));
+        let tools = ToolBox::new().with(FnTool::new(
+            "add",
+            "add numbers",
+            json!({"type": "object"}),
+            |a: Value| Ok(json!(a["a"].as_i64().unwrap() + a["b"].as_i64().unwrap())),
+        ));
+        let graph = react_agent(model, tools).unwrap();
+        let events: Vec<_> = graph
+            .stream("t", Some(AgentState::new(vec![Message::user("2 + 40?")])))
+            .collect()
+            .await;
+        let tokens: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                GraphEvent::Token { delta, node, .. } if node == "agent" => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tokens, vec!["The", " answer", " is", " 42."]);
+        let starts: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                GraphEvent::NodeStart { node, .. } => Some(node.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(starts, vec!["agent", "tools", "agent"]);
+        let Some(GraphEvent::Completed { state }) = events.last() else {
+            panic!("expected Completed, got {:?}", events.last())
+        };
+        // The streamed reply was accumulated back into a proper message,
+        // including the tool call that arrived as deltas.
+        assert_eq!(
+            state.messages[1].tool_calls[0].arguments,
+            json!({"a": 2, "b": 40})
+        );
+        assert_eq!(state.last().unwrap().content, "The answer is 42.");
     }
 }

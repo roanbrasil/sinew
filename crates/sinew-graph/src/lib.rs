@@ -5,6 +5,10 @@
 //! recursion limit), checkpoints after every step, and interrupts before
 //! chosen nodes so a human can inspect or edit the state and resume.
 //!
+//! Routers may fan out to several nodes (or `SendTo` one branch per item);
+//! branches run concurrently in a superstep and are merged with a reducer.
+//! [`CompiledGraph::stream`] yields per-node events and token deltas.
+//!
 //! ```no_run
 //! # use sinew_graph::*;
 //! # #[derive(Clone, serde::Serialize, serde::Deserialize)] struct S { n: u32 }
@@ -19,11 +23,13 @@
 //! ```
 
 mod checkpoint;
+mod events;
 mod graph;
 pub mod prebuilt;
 
-pub use checkpoint::{Checkpoint, Checkpointer, MemoryCheckpointer};
+pub use checkpoint::{Checkpoint, Checkpointer, MemoryCheckpointer, PendingTask};
+pub use events::{GraphEvent, GraphStream};
 pub use graph::{
-    BoxError, CompiledGraph, GraphError, NodeContext, NodeResult, RunOutcome, State, StateGraph,
-    END,
+    BoxError, CompiledGraph, GraphError, NodeContext, NodeResult, RunOutcome, SendTo, State,
+    StateGraph, StateSnapshot, END,
 };
