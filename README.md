@@ -1,5 +1,7 @@
 # Sinew
 
+[![CI](https://github.com/roanbrasil/sinew/actions/workflows/ci.yml/badge.svg)](https://github.com/roanbrasil/sinew/actions/workflows/ci.yml)
+
 LLM chains, agent graphs and tracing in Rust — the LangChain / LangGraph / LangSmith
 trio as one small, typed, async workspace.
 
@@ -75,3 +77,7 @@ let done = graph.run("thread-1", None).await?;            // resumes
 2. Persistent checkpointers (SQLite, Postgres).
 3. `sinew-scope` server: OTLP/HTTP ingest, storage, web UI, datasets and evaluations.
 4. More providers (Gemini, Bedrock) and structured output (JSON Schema → typed structs).
+
+## License
+
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
