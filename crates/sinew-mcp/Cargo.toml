@@ -1,0 +1,32 @@
+[package]
+name = "sinew-mcp"
+description = "Model Context Protocol client and server for Sinew tools and agents"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# Streamable HTTP client transport (uses reqwest, already a dependency of sinew-core).
+http = ["dep:reqwest"]
+
+[[bin]]
+name = "sinew-mcp"
+path = "src/bin/sinew-mcp.rs"
+
+[dependencies]
+sinew-core.workspace = true
+sinew-graph.workspace = true
+sinew-trace.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "io-std"] }
+reqwest = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net"] }

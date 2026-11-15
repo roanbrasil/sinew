@@ -12,6 +12,7 @@ trio as one small, typed, async workspace.
 | `sinew-checkpoint` | LangGraph checkpointers (`langgraph-checkpoint-sqlite` / `-postgres`) | Durable `SqliteCheckpointer` (default) and `PostgresCheckpointer` (feature `postgres`): threads survive restarts; list, delete and prune threads. See [docs/checkpointing.md](docs/checkpointing.md) |
 | `sinew-trace` | LangSmith SDK | Runs (graph → node → llm/tool) with timings, I/O, token usage; JSONL and in-memory sinks |
 | `sinew-scope` | LangSmith UI (terminal for now) | `sinew-scope traces.jsonl [--io]` prints each trace as a tree |
+| `sinew-mcp` | MCP adapters | Model Context Protocol client (MCP server tools as Sinew `Tool`s) and server (any `ToolBox` or agent over stdio); `sinew-mcp --traces traces.jsonl` lets Claude Code inspect traces |
 | `sinew` | umbrella | re-exports + `prelude` |
 
 ## Quick start
