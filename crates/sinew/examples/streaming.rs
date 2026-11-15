@@ -60,15 +60,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let tools = ToolBox::new().with(calculator());
     let question = vec![
-        Message::system(
-            "Use the tools for arithmetic. After the tool result, answer in two sentences.",
-        ),
+        Message::system("Use the tools for arithmetic. Answer briefly."),
         Message::user("What is 37 times 3?"),
     ];
 
     // 1. Raw model stream: watch the tool call arrive in pieces.
     println!("== raw chat_stream ==");
-    let req = ChatRequest::new(question.clone()).with_tools(tools.specs());
+    // Capped: small local models occasionally loop on tool calls.
+    let req = ChatRequest::new(question.clone())
+        .with_tools(tools.specs())
+        .with_max_tokens(256);
     let mut stream = model.chat_stream(req).await?;
     while let Some(ev) = stream.next().await {
         match ev? {

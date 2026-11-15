@@ -57,7 +57,10 @@ the response as one `TextDelta` plus complete `ToolCall`s. Every existing
   `choices[].delta.tool_calls[]`: the deltas are keyed by `index`, and a chunk
   without `index` falls back to its position in the array. It also reads the
   trailing usage chunk and the `[DONE]` sentinel. If a server rejects
-  `stream_options`, call `.with_stream_usage(false)`.
+  `stream_options`, call `.with_stream_usage(false)`. Ollama (checked with
+  0.31) streams text token by token but sends each tool call as one
+  complete chunk, so you get a single `ToolCallDelta` per call, followed by
+  the `ToolCall`.
 - **`Anthropic`** decodes the Messages streaming events: `message_start`
   (model, input tokens), `content_block_start/delta/stop` (`text_delta`,
   `input_json_delta`), `message_delta` (stop reason, output tokens),
