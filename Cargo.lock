@@ -1464,6 +1464,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-19-harness"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "sample-common",
+ "serde_json",
+ "sinew",
+ "sinew-harness",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "sample-common"
 version = "0.0.0"
 dependencies = [
