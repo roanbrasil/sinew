@@ -241,6 +241,7 @@ pub enum GraphError {
     ParentCommand(Box<ParentCommand>),
 }
 
+#[derive(Debug, Clone)]
 pub enum RunOutcome<S> {
     Completed(S),
     /// Paused; resume with `run(thread_id, None)` or, for dynamic
@@ -525,6 +526,25 @@ impl<S: State> StateGraph<S> {
         self
     }
 
+    /// Declares nodes this node may route to at run time (through a
+    /// [`Command`] `goto`, e.g. one a subgraph sends with
+    /// [`Command::to_parent`]); used for the reachability check.
+    pub fn set_node_destinations<I, T>(&mut self, node: impl Into<String>, destinations: I) -> &mut Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<String>,
+    {
+        let node = node.into();
+        let dest: Vec<String> = destinations.into_iter().map(Into::into).collect();
+        match self.nodes.get_mut(&node) {
+            Some(spec) => spec.destinations.extend(dest),
+            None => self
+                .errors
+                .push(format!("destinations set for unknown node `{node}`")),
+        }
+        self
+    }
+
     /// Retries the node on failure (see [`RetryPolicy`]).
     pub fn set_node_retry(&mut self, node: impl Into<String>, policy: RetryPolicy) -> &mut Self {
         self.retry.insert(node.into(), policy);
@@ -734,15 +754,13 @@ impl<S: State> StateGraph<S> {
         let mut open_commands = false;
         for n in &self.order {
             let spec = &nodes[n];
+            for d in &spec.destinations {
+                if !known(d) {
+                    errors.push(format!("node `{n}` lists unknown destination `{d}`"));
+                }
+            }
             if spec.command {
                 open_commands |= spec.destinations.is_empty();
-                for d in &spec.destinations {
-                    if !known(d) {
-                        errors.push(format!(
-                            "command node `{n}` lists unknown destination `{d}`"
-                        ));
-                    }
-                }
             } else if !self.edges.contains_key(n) {
                 errors.push(format!(
                     "node `{n}` has no outgoing edge (add one to END to finish)"

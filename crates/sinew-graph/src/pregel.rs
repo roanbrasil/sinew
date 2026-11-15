@@ -91,6 +91,10 @@ struct LoopState<S> {
     step: usize,
     parent: Option<String>,
     skip_before: bool,
+    /// Resumed from an `interrupt_after` pause: a pause before the next
+    /// superstep must be checkpointed again, or resuming would stop there
+    /// forever.
+    resave_on_pause: bool,
 }
 
 fn to_value<T: Serialize>(v: &T) -> Result<Value, GraphError> {
@@ -117,6 +121,7 @@ impl<S: State> CompiledGraph<S> {
                 step: 0,
                 parent,
                 skip_before: false,
+                resave_on_pause: false,
             },
         )
         .await
@@ -225,6 +230,7 @@ impl<S: State> CompiledGraph<S> {
                 step: cp.step,
                 parent,
                 skip_before: !paused_after,
+                resave_on_pause: paused_after,
             },
         )
         .await
@@ -349,6 +355,7 @@ impl<S: State> CompiledGraph<S> {
             mut step,
             mut parent,
             mut skip_before,
+            resave_on_pause,
         } = ls;
         if let Some(sink) = &run.sink {
             if sink.wants(StreamMode::Values) {
@@ -369,6 +376,10 @@ impl<S: State> CompiledGraph<S> {
                     .any(|t| self.interrupt_before.contains(&t.node))
             {
                 // The current state and tasks were checkpointed already.
+                if resave_on_pause && steps_run == 0 {
+                    self.save(run, step, &tasks, &state, parent, "interrupt", None, false)
+                        .await?;
+                }
                 return Ok(interrupted(state, &tasks, Vec::new()));
             }
             skip_before = false;
