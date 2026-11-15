@@ -15,9 +15,18 @@ path = "src/lib.rs"
 name = "sinew-scope"
 path = "src/main.rs"
 
+[features]
+default = []
+# Accept OTLP/HTTP protobuf (`application/x-protobuf`) on `/v1/traces`.
+otlp-proto = ["sinew-trace/otlp-proto"]
+
 [dependencies]
+sinew-core.workspace = true
 sinew-trace.workspace = true
 sinew-eval.workspace = true
+reqwest.workspace = true
+uuid.workspace = true
+async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 axum.workspace = true
@@ -26,7 +35,6 @@ tokio = { workspace = true, features = ["net", "signal", "fs"] }
 thiserror.workspace = true
 
 [dev-dependencies]
-sinew-core.workspace = true
 sinew-graph.workspace = true
-sinew-trace = { workspace = true, features = ["http"] }
-reqwest.workspace = true
+sinew-trace = { workspace = true, features = ["http", "otlp"] }
+tempfile.workspace = true

@@ -328,11 +328,17 @@ async fn otlp_ingest_is_queryable() {
     let r = c
         .post(format!("{}/v1/traces", s.url))
         .header("content-type", "application/x-protobuf")
-        .body(vec![0u8, 1, 2])
+        .body(vec![0x0a, 0xff])
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status(), 415);
+    // Malformed protobuf is a 400 with `otlp-proto`; without it protobuf is 415.
+    let expected = if cfg!(feature = "otlp-proto") {
+        400
+    } else {
+        415
+    };
+    assert_eq!(r.status(), expected);
 }
 
 #[tokio::test]

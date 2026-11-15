@@ -35,6 +35,9 @@
 mod client;
 mod dataset;
 mod evaluators;
+pub mod hub;
+pub mod pairwise;
+pub mod summary;
 
 use std::{
     collections::BTreeMap,
@@ -47,12 +50,18 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub use client::ScopeClient;
+pub use client::{Feedback, ScopeClient};
 pub use dataset::{Dataset, Example};
 pub use evaluators::{
     as_text, extract_number, get_path, parse_judge_reply, Contains, EvalInput, Evaluator,
     ExactMatch, JsonFieldEquals, LlmJudge, NumericTolerance, RegexMatch, Score,
 };
+pub use hub::{PromptHub, PromptPush, PromptVersion, PushResult};
+pub use pairwise::{
+    evaluate_pairwise, parse_preference, FnPairwise, LlmPairwiseJudge, PairwiseEvaluator,
+    PairwiseInput, PairwiseReport, PairwiseResult, PairwiseScore, PairwiseStats, Preference,
+};
+pub use summary::{ClassificationF1, FnSummary, PassRate, SummaryEvaluator};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EvalError {
@@ -62,6 +71,10 @@ pub enum EvalError {
     Parse { line: usize, message: String },
     #[error("HTTP error: {0}")]
     Http(String),
+    #[error("not found: {0}")]
+    NotFound(String),
+    #[error("invalid prompt: {0}")]
+    Prompt(String),
 }
 
 /// Outcome of the target and every evaluator on one example.
@@ -69,6 +82,9 @@ pub enum EvalError {
 pub struct ExampleResult {
     pub example_id: String,
     pub index: usize,
+    /// Which repetition this is (0-based); see [`Experiment::repetitions`].
+    #[serde(default)]
+    pub repetition: usize,
     pub inputs: Value,
     #[serde(default)]
     pub reference: Option<Value>,
@@ -160,6 +176,12 @@ pub struct ExperimentReport {
     pub metadata: Value,
     pub results: Vec<ExampleResult>,
     pub aggregates: Aggregates,
+    /// Scores of the summary evaluators (one per evaluator, whole experiment).
+    #[serde(default)]
+    pub summary_scores: Vec<Score>,
+    /// How many times each example was run (1 unless set; 0 in old reports).
+    #[serde(default)]
+    pub repetitions: usize,
 }
 
 impl ExperimentReport {
@@ -197,11 +219,22 @@ impl ExperimentReport {
                 s.mean, s.min, s.max
             ));
         }
+        for s in &self.summary_scores {
+            out.push_str(&format!("\n  {:<24} {:.3} (summary)", s.key, s.score));
+        }
         out
+    }
+
+    /// Summary score by key.
+    pub fn summary_score(&self, key: &str) -> Option<f64> {
+        self.summary_scores
+            .iter()
+            .find(|s| s.key == key)
+            .map(|s| s.score)
     }
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -211,6 +244,9 @@ fn now_ms() -> u64 {
 /// Runs `target` on every example (at most `concurrency` at once), scores each
 /// output with every evaluator and aggregates. Target errors are recorded on
 /// the example (evaluators are skipped for it) and never abort the run.
+///
+/// For repetitions, summary evaluators, a name or metadata, use
+/// [`Experiment`].
 pub async fn evaluate<F, Fut, E>(
     target: F,
     dataset: &Dataset,
@@ -222,47 +258,76 @@ where
     Fut: Future<Output = Result<Value, E>>,
     E: Display,
 {
+    run_experiment(target, dataset, evaluators, &[], 1, concurrency).await
+}
+
+async fn run_experiment<F, Fut, E>(
+    target: F,
+    dataset: &Dataset,
+    evaluators: &[Box<dyn Evaluator>],
+    summary_evaluators: &[Box<dyn SummaryEvaluator>],
+    repetitions: usize,
+    concurrency: usize,
+) -> ExperimentReport
+where
+    F: Fn(Value) -> Fut,
+    Fut: Future<Output = Result<Value, E>>,
+    E: Display,
+{
     let created_ms = now_ms();
     let target = &target;
-    let mut results: Vec<ExampleResult> =
-        futures::stream::iter(dataset.examples.iter().enumerate())
-            .map(|(index, ex)| async move {
-                let started = Instant::now();
-                let outcome = target(ex.inputs.clone()).await;
-                let latency_ms = started.elapsed().as_millis() as u64;
-                let (output, error, scores) = match outcome {
-                    Ok(output) => {
-                        let mut scores = Vec::with_capacity(evaluators.len());
-                        for e in evaluators {
-                            scores.push(
-                                e.evaluate(EvalInput {
-                                    inputs: &ex.inputs,
-                                    output: &output,
-                                    reference: ex.reference.as_ref(),
-                                })
-                                .await,
-                            );
-                        }
-                        (Some(output), None, scores)
+    let repetitions = repetitions.max(1);
+    let n = dataset.examples.len();
+    let jobs = (0..repetitions).flat_map(|rep| {
+        dataset
+            .examples
+            .iter()
+            .enumerate()
+            .map(move |(index, ex)| (rep, index, ex))
+    });
+    let mut results: Vec<ExampleResult> = futures::stream::iter(jobs)
+        .map(|(repetition, index, ex)| async move {
+            let started = Instant::now();
+            let outcome = target(ex.inputs.clone()).await;
+            let latency_ms = started.elapsed().as_millis() as u64;
+            let (output, error, scores) = match outcome {
+                Ok(output) => {
+                    let mut scores = Vec::with_capacity(evaluators.len());
+                    for e in evaluators {
+                        scores.push(
+                            e.evaluate(EvalInput {
+                                inputs: &ex.inputs,
+                                output: &output,
+                                reference: ex.reference.as_ref(),
+                            })
+                            .await,
+                        );
                     }
-                    Err(e) => (None, Some(e.to_string()), Vec::new()),
-                };
-                ExampleResult {
-                    example_id: ex.id.clone(),
-                    index,
-                    inputs: ex.inputs.clone(),
-                    reference: ex.reference.clone(),
-                    output,
-                    error,
-                    latency_ms,
-                    scores,
+                    (Some(output), None, scores)
                 }
-            })
-            .buffer_unordered(concurrency.max(1))
-            .collect()
-            .await;
-    results.sort_by_key(|r| r.index);
+                Err(e) => (None, Some(e.to_string()), Vec::new()),
+            };
+            ExampleResult {
+                example_id: ex.id.clone(),
+                index,
+                repetition,
+                inputs: ex.inputs.clone(),
+                reference: ex.reference.clone(),
+                output,
+                error,
+                latency_ms,
+                scores,
+            }
+        })
+        .buffer_unordered(concurrency.max(1))
+        .collect()
+        .await;
+    results.sort_by_key(|r| r.repetition * n + r.index);
     let aggregates = Aggregates::from_results(&results);
+    let summary_scores = summary_evaluators
+        .iter()
+        .map(|s| s.evaluate(&results))
+        .collect();
     ExperimentReport {
         id: uuid::Uuid::new_v4().to_string(),
         name: format!("{}-{}", dataset.name, created_ms),
@@ -271,6 +336,110 @@ where
         metadata: Value::Null,
         results,
         aggregates,
+        summary_scores,
+        repetitions,
+    }
+}
+
+/// Builder for an experiment with every option: evaluators, summary
+/// evaluators, repetitions, a concurrency limit, a name and metadata.
+///
+/// ```no_run
+/// # async fn demo(ds: sinew_eval::Dataset) {
+/// use serde_json::{json, Value};
+/// use sinew_eval::{Contains, Experiment, PassRate};
+///
+/// let report = Experiment::new(&ds)
+///     .evaluator(Contains::reference())
+///     .summary_evaluator(PassRate::new("contains", 1.0))
+///     .repetitions(3)          // run every example 3 times (variance)
+///     .concurrency(4)          // at most 4 target calls in flight
+///     .name("baseline")
+///     .run(|inputs: Value| async move { Ok::<_, String>(json!("...")) })
+///     .await;
+/// # }
+/// ```
+pub struct Experiment<'a> {
+    dataset: &'a Dataset,
+    evaluators: Vec<Box<dyn Evaluator>>,
+    summary: Vec<Box<dyn SummaryEvaluator>>,
+    repetitions: usize,
+    concurrency: usize,
+    name: Option<String>,
+    metadata: Value,
+}
+
+impl<'a> Experiment<'a> {
+    pub fn new(dataset: &'a Dataset) -> Self {
+        Self {
+            dataset,
+            evaluators: Vec::new(),
+            summary: Vec::new(),
+            repetitions: 1,
+            concurrency: 4,
+            name: None,
+            metadata: Value::Null,
+        }
+    }
+
+    pub fn evaluator(mut self, e: impl Evaluator + 'static) -> Self {
+        self.evaluators.push(Box::new(e));
+        self
+    }
+
+    pub fn evaluators(mut self, list: Vec<Box<dyn Evaluator>>) -> Self {
+        self.evaluators.extend(list);
+        self
+    }
+
+    pub fn summary_evaluator(mut self, s: impl SummaryEvaluator + 'static) -> Self {
+        self.summary.push(Box::new(s));
+        self
+    }
+
+    /// Runs every example `n` times (at least 1). Results carry their
+    /// `repetition`; aggregates cover all of them.
+    pub fn repetitions(mut self, n: usize) -> Self {
+        self.repetitions = n.max(1);
+        self
+    }
+
+    /// Maximum target calls in flight (default 4).
+    pub fn concurrency(mut self, n: usize) -> Self {
+        self.concurrency = n.max(1);
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    pub fn metadata(mut self, metadata: Value) -> Self {
+        self.metadata = metadata;
+        self
+    }
+
+    pub async fn run<F, Fut, E>(self, target: F) -> ExperimentReport
+    where
+        F: Fn(Value) -> Fut,
+        Fut: Future<Output = Result<Value, E>>,
+        E: Display,
+    {
+        let mut report = run_experiment(
+            target,
+            self.dataset,
+            &self.evaluators,
+            &self.summary,
+            self.repetitions,
+            self.concurrency,
+        )
+        .await;
+        if let Some(n) = self.name {
+            report.name = n;
+        }
+        report.metadata = self.metadata;
+        report
     }
 }
 
@@ -332,5 +501,77 @@ mod tests {
         let back: ExperimentReport =
             serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert_eq!(back, report);
+    }
+
+    #[tokio::test]
+    async fn repetitions_and_summary_evaluators() {
+        let mut ds = Dataset::new("labels");
+        ds.push(json!("good movie"), Some(json!("pos")));
+        ds.push(json!("bad movie"), Some(json!("neg")));
+        ds.push(json!("great"), Some(json!("pos")));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let report = Experiment::new(&ds)
+            .evaluator(ExactMatch::new())
+            .summary_evaluator(PassRate::new("exact_match", 1.0))
+            .summary_evaluator(ClassificationF1::new("pos"))
+            .summary_evaluator(FnSummary::new("count", |r: &[ExampleResult]| {
+                Score::new("ignored", r.len() as f64 / 10.0)
+            }))
+            .repetitions(2)
+            .concurrency(2)
+            .name("rule-based")
+            .metadata(json!({"v": 1}))
+            .run(|inputs: Value| {
+                let calls = calls.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    let t = inputs.as_str().unwrap_or_default();
+                    // "great" is misclassified.
+                    Ok::<_, String>(json!(if t.contains("good") { "pos" } else { "neg" }))
+                }
+            })
+            .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 6);
+        assert_eq!(report.repetitions, 2);
+        assert_eq!(report.results.len(), 6);
+        assert_eq!(report.results[3].repetition, 1);
+        assert_eq!(report.results[3].index, 0);
+        assert_eq!(report.name, "rule-based");
+        assert!((report.summary_score("pass_rate:exact_match").unwrap() - 4.0 / 6.0).abs() < 1e-9);
+        // tp 2, fp 0, fn 2 → precision 1, recall 0.5, F1 2/3.
+        assert!((report.summary_score("f1").unwrap() - 2.0 / 3.0).abs() < 1e-9);
+        assert!((report.summary_score("count").unwrap() - 0.6).abs() < 1e-9);
+        assert!(report.summary().contains("(summary)"));
+
+        // Pairwise against a perfect variant.
+        let perfect = Experiment::new(&ds)
+            .repetitions(2)
+            .name("perfect")
+            .run(|inputs: Value| async move {
+                let t = inputs.as_str().unwrap_or_default();
+                Ok::<_, String>(json!(if t.contains("bad") { "neg" } else { "pos" }))
+            })
+            .await;
+        let evaluators: Vec<Box<dyn PairwiseEvaluator>> = vec![Box::new(FnPairwise::new(
+            "correct",
+            |i: PairwiseInput<'_>| {
+                let r = i.reference.cloned();
+                match (Some(i.a.clone()) == r, Some(i.b.clone()) == r) {
+                    (true, false) => Some(Preference::A),
+                    (false, true) => Some(Preference::B),
+                    _ => Some(Preference::Tie),
+                }
+            },
+        ))];
+        let pw = evaluate_pairwise(&report, &perfect, &evaluators, 3).await;
+        assert_eq!(pw.results.len(), 6);
+        let s = &pw.summary["correct"];
+        assert_eq!((s.wins_a, s.wins_b, s.ties), (0, 2, 4));
+        assert!((s.win_rate_b - 4.0 / 6.0).abs() < 1e-9);
+        assert_eq!(pw.experiment_b.name, "perfect");
+        let back: PairwiseReport =
+            serde_json::from_str(&serde_json::to_string(&pw).unwrap()).unwrap();
+        assert_eq!(back, pw);
+        assert!(pw.summary_text().contains("B wins 2"));
     }
 }
