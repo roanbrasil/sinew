@@ -9,6 +9,7 @@ trio as one small, typed, async workspace.
 |---|---|---|
 | `sinew-core` | LangChain | `Message`, `ChatModel` trait, tools (`Tool`, `FnTool`, `ToolBox`), `PromptTemplate`, providers: OpenAI-compatible (OpenAI, Ollama, vLLM, llama.cpp) and Anthropic |
 | `sinew-graph` | LangGraph | `StateGraph<S>` with typed state, conditional edges, cycles with a recursion limit, checkpoints, `interrupt_before` + `update_state` for human-in-the-loop, prebuilt `react_agent` |
+| `sinew-checkpoint` | LangGraph checkpointers (`langgraph-checkpoint-sqlite` / `-postgres`) | Durable `SqliteCheckpointer` (default) and `PostgresCheckpointer` (feature `postgres`): threads survive restarts; list, delete and prune threads. See [docs/checkpointing.md](docs/checkpointing.md) |
 | `sinew-trace` | LangSmith SDK | Runs (graph → node → llm/tool) with timings, I/O, token usage; JSONL and in-memory sinks |
 | `sinew-scope` | LangSmith UI (terminal for now) | `sinew-scope traces.jsonl [--io]` prints each trace as a tree |
 | `sinew` | umbrella | re-exports + `prelude` |

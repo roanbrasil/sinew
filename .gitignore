@@ -1,3 +1,6 @@
 /target
 *.jsonl
 .env
+*.db
+*.db-shm
+*.db-wal

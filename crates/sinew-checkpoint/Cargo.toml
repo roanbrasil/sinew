@@ -1,0 +1,31 @@
+[package]
+name = "sinew-checkpoint"
+description = "Persistent checkpointers (SQLite, Postgres) for sinew-graph"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["sqlite"]
+sqlite = ["sqlx/sqlite"]
+postgres = ["sqlx/postgres"]
+
+[dependencies]
+sinew-graph.workspace = true
+sqlx.workspace = true
+async-trait.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+serde.workspace = true
+tempfile.workspace = true
+uuid.workspace = true
+
+[[example]]
+name = "durable_agent"
+required-features = ["sqlite"]
