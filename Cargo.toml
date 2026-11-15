@@ -31,3 +31,5 @@ sinew-eval = { path = "crates/sinew-eval", version = "0.1.0" }
 axum = "0.8"
 futures = "0.3"
 regex = "1"
+sinew-mcp = { path = "crates/sinew-mcp", version = "0.1.0" }
+sinew-harness = { path = "crates/sinew-harness", version = "0.1.0" }

@@ -1516,6 +1516,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-19-harness"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "sample-common",
+ "serde_json",
+ "sinew",
+ "sinew-harness",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "sample-common"
 version = "0.0.0"
 dependencies = [
@@ -1749,6 +1762,26 @@ dependencies = [
  "serde_json",
  "sinew-core",
  "sinew-trace",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "sinew-harness"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sinew-core",
+ "sinew-graph",
+ "sinew-mcp",
+ "sinew-trace",
+ "tempfile",
  "thiserror",
  "tokio",
  "uuid",

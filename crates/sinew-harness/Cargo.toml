@@ -1,0 +1,43 @@
+[package]
+name = "sinew-harness"
+description = "Agent harness for Sinew: built-in tools, subagents, permissions, context compaction, budgets, guardrails and the sinew-agent CLI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["llm", "agent", "harness", "ai", "tools"]
+categories = ["command-line-utilities", "development-tools"]
+
+[features]
+default = ["cli"]
+# The `sinew-agent` terminal binary (REPL and one-shot mode).
+cli = ["tokio/signal"]
+# Attach Model Context Protocol servers' tools (sinew-mcp client).
+mcp = ["dep:sinew-mcp"]
+
+[[bin]]
+name = "sinew-agent"
+path = "src/bin/sinew-agent.rs"
+required-features = ["cli"]
+
+[dependencies]
+sinew-core.workspace = true
+sinew-graph.workspace = true
+sinew-trace.workspace = true
+sinew-mcp = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
+futures-util.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["net", "io-util"] }
