@@ -3,7 +3,13 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::{ChatModel, ChatRequest, ChatResponse, Error, Message, Result, Role, ToolCall, Usage};
+use std::collections::BTreeMap;
+
+use crate::{
+    stream::{parse_arguments, sse_stream, ChatStream, SseDecoder, SseEvent, StreamEvent},
+    ChatModel, ChatRequest, ChatResponse, Error, Message, Result, Role, ToolCall, ToolChoice,
+    Usage,
+};
 
 const API_VERSION: &str = "2023-06-01";
 
@@ -42,6 +48,13 @@ impl Anthropic {
     pub fn with_default_max_tokens(mut self, n: u32) -> Self {
         self.default_max_tokens = n;
         self
+    }
+
+    fn request(&self) -> reqwest::RequestBuilder {
+        self.client
+            .post(format!("{}/messages", self.base_url))
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", API_VERSION)
     }
 }
 
@@ -102,7 +115,166 @@ pub(crate) fn encode_request(model: &str, default_max: u32, req: &ChatRequest) -
     if let Some(t) = req.temperature {
         body["temperature"] = json!(t);
     }
+    if let Some(choice) = &req.tool_choice {
+        body["tool_choice"] = match choice {
+            ToolChoice::Auto => json!({"type": "auto"}),
+            ToolChoice::Required => json!({"type": "any"}),
+            ToolChoice::Tool(name) => json!({"type": "tool", "name": name}),
+        };
+    }
+    // `response_format` has no direct equivalent here; StructuredOutput puts
+    // the schema in the system prompt (JSON mode) or uses a forced tool.
     body
+}
+
+struct ToolBlock {
+    id: String,
+    name: String,
+    input: Value,
+    json: String,
+}
+
+/// Decodes Messages API streaming events (`message_start`,
+/// `content_block_*`, `message_delta`, `message_stop`, `ping`, `error`).
+pub(crate) struct AnthropicStreamDecoder {
+    model: String,
+    tools: BTreeMap<usize, ToolBlock>,
+    usage: Usage,
+    stop_reason: Option<String>,
+    done: bool,
+}
+
+impl AnthropicStreamDecoder {
+    pub(crate) fn new(model: &str) -> Self {
+        Self {
+            model: model.into(),
+            tools: BTreeMap::new(),
+            usage: Usage::default(),
+            stop_reason: None,
+            done: false,
+        }
+    }
+
+    fn take_usage(&mut self, u: &Value) {
+        if let Some(n) = u["input_tokens"].as_u64() {
+            self.usage.input_tokens = n as u32;
+        }
+        if let Some(n) = u["output_tokens"].as_u64() {
+            self.usage.output_tokens = n as u32;
+        }
+    }
+}
+
+impl SseDecoder for AnthropicStreamDecoder {
+    fn on_event(&mut self, ev: &SseEvent) -> Result<Vec<StreamEvent>> {
+        let v: Value = serde_json::from_str(&ev.data)?;
+        let kind = v["type"].as_str().or(ev.event.as_deref()).unwrap_or("");
+        let index = v["index"].as_u64().unwrap_or(0) as usize;
+        let mut out = Vec::new();
+        match kind {
+            "message_start" => {
+                let m = &v["message"];
+                if let Some(model) = m["model"].as_str() {
+                    self.model = model.to_string();
+                }
+                self.take_usage(&m["usage"]);
+            }
+            "content_block_start" => {
+                let b = &v["content_block"];
+                match b["type"].as_str() {
+                    Some("tool_use") => {
+                        let id = b["id"].as_str().unwrap_or_default().to_string();
+                        let name = b["name"].as_str().unwrap_or_default().to_string();
+                        out.push(StreamEvent::ToolCallDelta {
+                            index,
+                            id: Some(id.clone()),
+                            name: Some(name.clone()),
+                            arguments: String::new(),
+                        });
+                        self.tools.insert(
+                            index,
+                            ToolBlock {
+                                id,
+                                name,
+                                input: b["input"].clone(),
+                                json: String::new(),
+                            },
+                        );
+                    }
+                    Some("text") => {
+                        if let Some(t) = b["text"].as_str().filter(|t| !t.is_empty()) {
+                            out.push(StreamEvent::text(t));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            "content_block_delta" => {
+                let d = &v["delta"];
+                match d["type"].as_str() {
+                    Some("text_delta") => {
+                        if let Some(t) = d["text"].as_str().filter(|t| !t.is_empty()) {
+                            out.push(StreamEvent::text(t));
+                        }
+                    }
+                    Some("input_json_delta") => {
+                        let part = d["partial_json"].as_str().unwrap_or_default();
+                        if let Some(t) = self.tools.get_mut(&index) {
+                            t.json.push_str(part);
+                        }
+                        out.push(StreamEvent::ToolCallDelta {
+                            index,
+                            id: None,
+                            name: None,
+                            arguments: part.to_string(),
+                        });
+                    }
+                    _ => {} // thinking / signature deltas are not surfaced
+                }
+            }
+            "content_block_stop" => {
+                if let Some(t) = self.tools.remove(&index) {
+                    let arguments = if t.json.trim().is_empty() && t.input.is_object() {
+                        t.input
+                    } else {
+                        parse_arguments(&t.json)
+                    };
+                    out.push(StreamEvent::ToolCall {
+                        index,
+                        call: ToolCall {
+                            id: t.id,
+                            name: t.name,
+                            arguments,
+                        },
+                    });
+                }
+            }
+            "message_delta" => {
+                if let Some(r) = v["delta"]["stop_reason"].as_str() {
+                    self.stop_reason = Some(r.to_string());
+                }
+                self.take_usage(&v["usage"]);
+            }
+            "message_stop" => self.done = true,
+            "error" => return Err(Error::Stream(v["error"].to_string())),
+            _ => {} // ping and future event types
+        }
+        Ok(out)
+    }
+
+    fn finish(&mut self) -> Vec<StreamEvent> {
+        vec![
+            StreamEvent::Usage { usage: self.usage },
+            StreamEvent::Done {
+                model: self.model.clone(),
+                stop_reason: self.stop_reason.take(),
+            },
+        ]
+    }
+
+    fn is_done(&self) -> bool {
+        self.done
+    }
 }
 
 pub(crate) fn decode_response(model: &str, v: &Value) -> Result<ChatResponse> {
@@ -145,18 +317,16 @@ impl ChatModel for Anthropic {
     }
 
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
-        let req = self
-            .client
-            .post(format!("{}/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", API_VERSION);
-        let v = super::post_json(
-            "anthropic",
-            req,
-            &encode_request(&self.model, self.default_max_tokens, &request),
-        )
-        .await?;
+        let body = encode_request(&self.model, self.default_max_tokens, &request);
+        let v = super::post_json("anthropic", self.request(), &body).await?;
         decode_response(&self.model, &v)
+    }
+
+    async fn chat_stream(&self, request: ChatRequest) -> Result<ChatStream> {
+        let mut body = encode_request(&self.model, self.default_max_tokens, &request);
+        body["stream"] = json!(true);
+        let resp = super::post_sse("anthropic", self.request(), &body).await?;
+        Ok(sse_stream(resp, AnthropicStreamDecoder::new(&self.model)))
     }
 }
 
@@ -203,5 +373,100 @@ mod tests {
         assert_eq!(r.message.content, "Let me add.");
         assert_eq!(r.message.tool_calls[0].name, "add");
         assert_eq!(r.usage.output_tokens, 5);
+    }
+
+    // Recorded Messages API stream: text block, ping, tool_use block with
+    // input_json_delta fragments, message_delta with stop_reason and usage.
+    const TOOL_STREAM: &str = r#"event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5-5","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":472,"output_tokens":2}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Okay, "}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"checking."}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01","name":"get_weather","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"location\": \"San Fra"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ncisco, CA\"}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_02","name":"now","input":{}}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":89}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+"#;
+
+    #[test]
+    fn stream_decoder_handles_text_tool_use_and_usage() {
+        use crate::stream::{decode_all, StreamAccumulator};
+        let events = decode_all(AnthropicStreamDecoder::new("x"), TOOL_STREAM).unwrap();
+        assert_eq!(events[0], StreamEvent::text("Okay, "));
+        let mut acc = StreamAccumulator::new();
+        events.iter().for_each(|e| acc.push(e));
+        assert_eq!(acc.stop_reason(), Some("tool_use"));
+        let r = acc.finish();
+        assert_eq!(r.message.content, "Okay, checking.");
+        assert_eq!(r.model, "claude-sonnet-5-5");
+        assert_eq!(r.message.tool_calls.len(), 2);
+        assert_eq!(r.message.tool_calls[0].id, "toolu_01");
+        assert_eq!(
+            r.message.tool_calls[0].arguments,
+            json!({"location": "San Francisco, CA"})
+        );
+        assert_eq!(r.message.tool_calls[1].arguments, json!({}));
+        assert_eq!(
+            r.usage,
+            Usage {
+                input_tokens: 472,
+                output_tokens: 89
+            }
+        );
+    }
+
+    #[test]
+    fn stream_decoder_surfaces_error_events() {
+        use crate::stream::decode_all;
+        let body = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n";
+        let err = decode_all(AnthropicStreamDecoder::new("x"), body).unwrap_err();
+        assert!(err.to_string().contains("Overloaded"));
+    }
+
+    #[test]
+    fn encodes_tool_choice() {
+        let req = ChatRequest::new(vec![Message::user("go")])
+            .with_tool_choice(ToolChoice::Tool("respond".into()));
+        let body = encode_request("m", 10, &req);
+        assert_eq!(
+            body["tool_choice"],
+            json!({"type": "tool", "name": "respond"})
+        );
     }
 }
