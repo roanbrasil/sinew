@@ -1,0 +1,28 @@
+[package]
+name = "sinew-a2a"
+description = "Agent2Agent (A2A) protocol client and server for Sinew models and agent graphs"
+readme = "README.md"
+keywords = ["a2a", "agents", "llm", "json-rpc", "agent2agent"]
+categories = ["network-programming", "web-programming::http-server"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sinew-core.workspace = true
+sinew-graph.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+axum.workspace = true
+tokio = { workspace = true, features = ["net"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "time"] }

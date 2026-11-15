@@ -1464,6 +1464,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-14-a2a"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "sample-common",
+ "serde_json",
+ "sinew",
+ "sinew-a2a",
+ "tokio",
+]
+
+[[package]]
 name = "sample-common"
 version = "0.0.0"
 dependencies = [
@@ -1619,6 +1631,23 @@ dependencies = [
  "sinew-mcp",
  "sinew-trace",
  "tokio",
+]
+
+[[package]]
+name = "sinew-a2a"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sinew-core",
+ "sinew-graph",
+ "thiserror",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
