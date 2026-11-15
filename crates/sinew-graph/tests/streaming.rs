@@ -33,6 +33,7 @@ fn label(e: &GraphEvent<S>) -> String {
         GraphEvent::Interrupted { next, .. } => format!("interrupted {next:?}"),
         GraphEvent::Completed { .. } => "completed".into(),
         GraphEvent::Error(e) => format!("error {e}"),
+        other => format!("other {other:?}"),
     }
 }
 

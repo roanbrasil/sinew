@@ -311,6 +311,7 @@ async fn interrupt_and_resume_across_a_fan_out() {
         next,
         next_nodes,
         state,
+        ..
     } = out
     else {
         panic!("expected an interrupt")
@@ -331,10 +332,11 @@ async fn interrupt_and_resume_across_a_fan_out() {
     assert!(!done.is_interrupted());
     assert_eq!(done.state().log, vec!["START", "a", "b", "join"]);
 
-    // One checkpoint per superstep (+ the interrupt and the human edit).
+    // The input checkpoint, one per superstep, and the human edit. The
+    // pause itself writes nothing: its state was checkpointed already.
     let history = cp.history("t").await.unwrap();
     let steps: Vec<usize> = history.iter().map(|c| c.step).collect();
-    assert_eq!(steps, vec![1, 1, 1, 2, 3]);
+    assert_eq!(steps, vec![0, 1, 1, 2, 3]);
     assert_eq!(history[3].next_nodes(), vec!["join"]);
     assert!(history[4].next_nodes().is_empty());
 }

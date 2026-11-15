@@ -43,6 +43,7 @@ both! {
     ordering => ordering,
     multiple_threads => multiple_threads,
     pruning => pruning,
+    namespaces_and_ids => namespaces_and_ids,
 }
 
 #[tokio::test]
@@ -133,4 +134,41 @@ async fn in_memory_databases_are_private() {
     // Clones share the same database.
     let a2 = a.clone();
     assert!(a2.latest("t").await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn migrates_tables_from_older_versions() {
+    let dir = tempfile::tempdir().unwrap();
+    let url = format!("sqlite://{}", dir.path().join("old.db").display());
+    {
+        // The table as the first release created it, with one row.
+        let pool = sinew_checkpoint::sqlx::SqlitePool::connect(&format!("{url}?mode=rwc"))
+            .await
+            .unwrap();
+        for sql in [
+            "CREATE TABLE sinew_checkpoints (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id  TEXT    NOT NULL,
+                step       INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                checkpoint TEXT    NOT NULL
+            )",
+            r#"INSERT INTO sinew_checkpoints (thread_id, step, created_at, checkpoint)
+               VALUES ('old', 2, 0, '{"thread_id":"old","step":2,"next":"b","state":{"n":7}}')"#,
+        ] {
+            sinew_checkpoint::sqlx::query(sql)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        pool.close().await;
+    }
+    let store = SqliteCheckpointer::connect(&url).await.unwrap();
+    // Idempotent.
+    store.ensure_schema().await.unwrap();
+    let old = store.latest("old").await.unwrap().unwrap();
+    assert_eq!(old.checkpoint_id, "legacy-1");
+    assert_eq!(old.state["n"], 7);
+    assert_eq!(store.get("old", "legacy-1").await.unwrap(), Some(old));
+    common::namespaces_and_ids(&store).await;
 }

@@ -321,7 +321,7 @@ impl<S: State> AgentExecutor for GraphExecutor<S> {
                     out.finish();
                     events.complete(None);
                 }
-                GraphEvent::Interrupted { next, state } => {
+                GraphEvent::Interrupted { next, state, .. } => {
                     out.finish();
                     let text = (self.interrupt)(&state, &next);
                     let m = events.agent_message(vec![
@@ -331,7 +331,7 @@ impl<S: State> AgentExecutor for GraphExecutor<S> {
                     events.input_required(m);
                 }
                 GraphEvent::Error(e) => return Err(e.into()),
-                GraphEvent::NodeEnd { .. } | GraphEvent::Custom { .. } => {}
+                _ => {}
             }
         }
         Ok(())

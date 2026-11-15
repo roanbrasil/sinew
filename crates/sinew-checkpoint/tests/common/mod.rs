@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 use sinew_checkpoint::{Checkpoint, CheckpointStore};
+use sinew_graph::new_checkpoint_id;
 
 pub fn cp(thread: &str, step: usize, next: &str, n: i64) -> Checkpoint {
     Checkpoint {
@@ -13,6 +14,8 @@ pub fn cp(thread: &str, step: usize, next: &str, n: i64) -> Checkpoint {
         next: next.into(),
         tasks: Vec::new(),
         state: json!({ "n": n }),
+        checkpoint_id: new_checkpoint_id(),
+        ..Checkpoint::default()
     }
 }
 
@@ -39,6 +42,8 @@ pub async fn round_trip<S: CheckpointStore>(store: &S) {
             "neg": i64::MIN,
             "float": 0.1,
         }),
+        checkpoint_id: new_checkpoint_id(),
+        ..Checkpoint::default()
     };
     store.put(rich.clone()).await.unwrap();
     assert_eq!(store.latest("t").await.unwrap(), Some(rich.clone()));
@@ -172,4 +177,36 @@ pub async fn concurrent_puts_with_retention<S: CheckpointStore + 'static>(store:
         h.await.unwrap();
     }
     assert_eq!(store.history("hot").await.unwrap().len(), 5);
+}
+
+/// Namespaces, lookups by id and write-order history (time travel).
+pub async fn namespaces_and_ids<S: CheckpointStore>(store: &S) {
+    let root = cp("t", 0, "a", 1);
+    let sub = cp("t", 0, "x", 2).with_namespace("sub:0");
+    let root2 = cp("t", 1, "b", 3).with_parent(Some(root.checkpoint_id.clone()));
+    // A fork written later with a lower step.
+    let fork = cp("t", 0, "a", 4).with_parent(Some(root.checkpoint_id.clone()));
+    for c in [&root, &sub, &root2, &fork] {
+        store.put(c.clone()).await.unwrap();
+    }
+    assert_eq!(store.latest("t").await.unwrap(), Some(fork.clone()));
+    assert_eq!(
+        store.latest_in("t", "sub:0").await.unwrap(),
+        Some(sub.clone())
+    );
+    assert_eq!(store.latest_in("t", "nope").await.unwrap(), None);
+    assert_eq!(
+        store.get("t", &root2.checkpoint_id).await.unwrap(),
+        Some(root2.clone())
+    );
+    assert_eq!(
+        store.get("other", &root2.checkpoint_id).await.unwrap(),
+        None
+    );
+    assert_eq!(
+        ns(&store.history_in("t", "").await.unwrap()),
+        vec![1, 3, 4],
+        "write order, root namespace only"
+    );
+    assert_eq!(store.history("t").await.unwrap().len(), 4);
 }

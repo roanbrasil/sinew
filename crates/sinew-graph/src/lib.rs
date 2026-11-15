@@ -7,7 +7,17 @@
 //!
 //! Routers may fan out to several nodes (or `SendTo` one branch per item);
 //! branches run concurrently in a superstep and are merged with a reducer.
-//! [`CompiledGraph::stream`] yields per-node events and token deltas.
+//! [`CompiledGraph::stream`] yields per-node events and token deltas;
+//! [`CompiledGraph::stream_with`] selects [`StreamMode`]s and subgraph events.
+//!
+//! Nodes can also return a [`Command`] (update + `goto`, including into the
+//! parent graph from a subgraph), pause with
+//! [`NodeContext::interrupt`] and be resumed with [`Command::resume`].
+//! Compiled graphs nest as nodes ([`StateGraph::add_subgraph`]); threads keep
+//! a checkpoint tree for time travel ([`CompiledGraph::get_state_history`],
+//! [`RunConfig::at_checkpoint`], [`CompiledGraph::update_state_with`]);
+//! nodes get retry, cache and timeout policies; and a long-term [`Store`]
+//! is reachable from every node.
 //!
 //! ```no_run
 //! # use sinew_graph::*;
@@ -27,13 +37,25 @@
 )]
 
 mod checkpoint;
+mod command;
 mod events;
 mod graph;
+mod policy;
 pub mod prebuilt;
+mod pregel;
+pub mod store;
 
-pub use checkpoint::{Checkpoint, Checkpointer, MemoryCheckpointer, PendingTask};
-pub use events::{GraphEvent, GraphStream};
+pub use checkpoint::{
+    new_checkpoint_id, Checkpoint, Checkpointer, MemoryCheckpointer, PendingTask,
+};
+pub use command::{
+    Command, CommandGraph, Goto, GraphInterrupt, Interrupt, NodeTimeout, ParentCommand, Resume,
+    RunConfig, RunInput,
+};
+pub use events::{GraphEvent, GraphStream, StreamMode, StreamModes, StreamOptions};
 pub use graph::{
     BoxError, CompiledGraph, GraphError, NodeContext, NodeResult, RunOutcome, SendTo, State,
-    StateGraph, StateSnapshot, END,
+    StateGraph, StateSnapshot, END, START,
 };
+pub use policy::{CachePolicy, RetryPolicy};
+pub use store::{InMemoryStore, Store};

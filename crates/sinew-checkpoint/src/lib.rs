@@ -6,8 +6,14 @@
 //!   processes or hosts.
 //!
 //! Both store every [`Checkpoint`] as an opaque JSON blob, next to indexed
-//! columns for the thread id, the step and the creation time. New fields added
-//! to `Checkpoint` are persisted without a schema change.
+//! columns for the thread id, the step, the creation time, the checkpoint id
+//! and the subgraph namespace. Other fields added to `Checkpoint` are
+//! persisted without a schema change. Tables created by older versions are
+//! migrated in place by `ensure_schema` (two added columns); their rows get
+//! synthetic ids (`legacy-<row id>`) that `get` understands.
+//!
+//! [`SqliteStore`] (feature `sqlite`) is a durable long-term
+//! [`Store`](sinew_graph::Store) for memories shared across threads.
 //!
 //! Besides the [`Checkpointer`] trait, both implement [`CheckpointStore`] for
 //! housekeeping: listing and deleting threads, and pruning old checkpoints.
@@ -41,11 +47,15 @@ pub use sqlx;
 mod postgres;
 #[cfg(feature = "sqlite")]
 mod sqlite;
+#[cfg(feature = "sqlite")]
+mod store;
 
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresCheckpointer;
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteCheckpointer;
+#[cfg(feature = "sqlite")]
+pub use store::SqliteStore;
 
 /// Name of the table both backends create.
 pub const TABLE: &str = "sinew_checkpoints";
@@ -107,7 +117,24 @@ mod util {
         Ok(serde_json::to_string(checkpoint)?)
     }
 
-    pub(crate) fn decode(blob: &str) -> Result<Checkpoint, CheckpointError> {
-        Ok(serde_json::from_str(blob)?)
+    /// Decodes a stored blob. Rows written before checkpoints had ids get
+    /// a stable synthetic id, `legacy-<row id>`, accepted by `get`.
+    pub(crate) fn decode_row(row_id: i64, blob: &str) -> Result<Checkpoint, CheckpointError> {
+        let mut cp: Checkpoint = serde_json::from_str(blob)?;
+        if cp.checkpoint_id.is_empty() {
+            cp.checkpoint_id = format!("{LEGACY_PREFIX}{row_id}");
+        }
+        Ok(cp)
+    }
+
+    pub(crate) const LEGACY_PREFIX: &str = "legacy-";
+
+    pub(crate) fn legacy_row_id(checkpoint_id: &str) -> Option<i64> {
+        checkpoint_id.strip_prefix(LEGACY_PREFIX)?.parse().ok()
+    }
+
+    /// The `checkpoint_id` column value (NULL for checkpoints without id).
+    pub(crate) fn id_to_db(checkpoint: &Checkpoint) -> Option<&str> {
+        (!checkpoint.checkpoint_id.is_empty()).then_some(checkpoint.checkpoint_id.as_str())
     }
 }

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use sqlx::{postgres::PgPoolOptions, PgPool, Row};
 
 use crate::{
-    util::{decode, encode, keep_to_db, step_to_db},
+    util::{decode_row, encode, id_to_db, keep_to_db, legacy_row_id, step_to_db},
     Checkpoint, CheckpointError, CheckpointStore, Checkpointer,
 };
 
@@ -22,6 +22,14 @@ const SCHEMA: &[&str] = &[
         ON sinew_checkpoints (thread_id, id)",
     "CREATE INDEX IF NOT EXISTS sinew_checkpoints_thread_step
         ON sinew_checkpoints (thread_id, step, id)",
+    // Added after the first release; idempotent for tables of any version.
+    "ALTER TABLE sinew_checkpoints ADD COLUMN IF NOT EXISTS checkpoint_id TEXT",
+    "ALTER TABLE sinew_checkpoints
+        ADD COLUMN IF NOT EXISTS checkpoint_ns TEXT NOT NULL DEFAULT ''",
+    "CREATE INDEX IF NOT EXISTS sinew_checkpoints_thread_ns
+        ON sinew_checkpoints (thread_id, checkpoint_ns, id)",
+    "CREATE INDEX IF NOT EXISTS sinew_checkpoints_checkpoint_id
+        ON sinew_checkpoints (thread_id, checkpoint_id)",
 ];
 
 /// [`Checkpointer`] backed by Postgres, for several processes or hosts sharing
@@ -94,12 +102,15 @@ impl PostgresCheckpointer {
         let mut tx = self.pool.begin().await?;
         lock_thread(&mut tx, &checkpoint.thread_id).await?;
         sqlx::query(
-            "INSERT INTO sinew_checkpoints (thread_id, step, checkpoint)
-             VALUES ($1, $2, $3::jsonb)",
+            "INSERT INTO sinew_checkpoints
+                 (thread_id, step, checkpoint, checkpoint_id, checkpoint_ns)
+             VALUES ($1, $2, $3::jsonb, $4, $5)",
         )
         .bind(&checkpoint.thread_id)
         .bind(step)
         .bind(blob)
+        .bind(id_to_db(checkpoint))
+        .bind(&checkpoint.checkpoint_ns)
         .execute(&mut *tx)
         .await?;
         if let Some(keep) = self.retention {
@@ -112,28 +123,80 @@ impl PostgresCheckpointer {
     async fn latest_checkpoint(
         &self,
         thread_id: &str,
+        ns: &str,
     ) -> Result<Option<Checkpoint>, CheckpointError> {
         let row = sqlx::query(
-            "SELECT checkpoint::text FROM sinew_checkpoints
-             WHERE thread_id = $1 ORDER BY id DESC LIMIT 1",
+            "SELECT id, checkpoint::text FROM sinew_checkpoints
+             WHERE thread_id = $1 AND checkpoint_ns = $2 ORDER BY id DESC LIMIT 1",
         )
         .bind(thread_id)
+        .bind(ns)
         .fetch_optional(&self.pool)
         .await?;
-        row.map(|r| decode(r.try_get::<&str, _>(0)?)).transpose()
+        row.map(|r| decode_row(r.try_get(0)?, r.try_get::<&str, _>(1)?))
+            .transpose()
     }
 
     async fn thread_history(&self, thread_id: &str) -> Result<Vec<Checkpoint>, CheckpointError> {
         let rows = sqlx::query(
-            "SELECT checkpoint::text FROM sinew_checkpoints
+            "SELECT id, checkpoint::text FROM sinew_checkpoints
              WHERE thread_id = $1 ORDER BY step, id",
         )
         .bind(thread_id)
         .fetch_all(&self.pool)
         .await?;
         rows.iter()
-            .map(|r| decode(r.try_get::<&str, _>(0)?))
+            .map(|r| decode_row(r.try_get(0)?, r.try_get::<&str, _>(1)?))
             .collect()
+    }
+
+    async fn ns_history(
+        &self,
+        thread_id: &str,
+        ns: &str,
+    ) -> Result<Vec<Checkpoint>, CheckpointError> {
+        let rows = sqlx::query(
+            "SELECT id, checkpoint::text FROM sinew_checkpoints
+             WHERE thread_id = $1 AND checkpoint_ns = $2 ORDER BY id",
+        )
+        .bind(thread_id)
+        .bind(ns)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|r| decode_row(r.try_get(0)?, r.try_get::<&str, _>(1)?))
+            .collect()
+    }
+
+    async fn by_id(
+        &self,
+        thread_id: &str,
+        checkpoint_id: &str,
+    ) -> Result<Option<Checkpoint>, CheckpointError> {
+        let row = match legacy_row_id(checkpoint_id) {
+            Some(row_id) => {
+                sqlx::query(
+                    "SELECT id, checkpoint::text FROM sinew_checkpoints
+                     WHERE thread_id = $1 AND id = $2",
+                )
+                .bind(thread_id)
+                .bind(row_id)
+                .fetch_optional(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query(
+                    "SELECT id, checkpoint::text FROM sinew_checkpoints
+                     WHERE thread_id = $1 AND checkpoint_id = $2 ORDER BY id DESC LIMIT 1",
+                )
+                .bind(thread_id)
+                .bind(checkpoint_id)
+                .fetch_optional(&self.pool)
+                .await?
+            }
+        };
+        row.map(|r| decode_row(r.try_get(0)?, r.try_get::<&str, _>(1)?))
+            .transpose()
     }
 }
 
@@ -174,13 +237,35 @@ impl Checkpointer for PostgresCheckpointer {
     }
 
     async fn latest(&self, thread_id: &str) -> Result<Option<Checkpoint>, String> {
-        self.latest_checkpoint(thread_id)
+        self.latest_checkpoint(thread_id, "")
             .await
             .map_err(|e| e.to_string())
     }
 
     async fn history(&self, thread_id: &str) -> Result<Vec<Checkpoint>, String> {
         self.thread_history(thread_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn latest_in(&self, thread_id: &str, ns: &str) -> Result<Option<Checkpoint>, String> {
+        self.latest_checkpoint(thread_id, ns)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn history_in(&self, thread_id: &str, ns: &str) -> Result<Vec<Checkpoint>, String> {
+        self.ns_history(thread_id, ns)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn get(
+        &self,
+        thread_id: &str,
+        checkpoint_id: &str,
+    ) -> Result<Option<Checkpoint>, String> {
+        self.by_id(thread_id, checkpoint_id)
             .await
             .map_err(|e| e.to_string())
     }

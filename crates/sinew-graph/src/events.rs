@@ -12,7 +12,7 @@ use futures_core::Stream;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::GraphError;
+use crate::{GraphError, Interrupt};
 
 /// Something that happened while a graph ran. Produced by
 /// [`CompiledGraph::stream`](crate::CompiledGraph::stream).
@@ -52,9 +52,31 @@ pub enum GraphEvent<S> {
         task: usize,
         value: Value,
     },
-    /// The run paused before `next` (interrupt). Resume with
-    /// `stream(thread_id, None)` or `run(thread_id, None)`.
-    Interrupted { next: Vec<String>, state: S },
+    /// The full state after a superstep (and the state a run starts from).
+    /// Only with [`StreamMode::Values`].
+    Values { step: usize, state: S },
+    /// A checkpoint was written. Only with [`StreamMode::Debug`].
+    Checkpoint {
+        checkpoint_id: String,
+        step: usize,
+        next: Vec<String>,
+    },
+    /// An event from a subgraph (only when [`StreamOptions::subgraphs`] is
+    /// on). `namespace` is the path of subgraph nodes from the root graph
+    /// (`"node:task"` segments); the inner event's state is serialized.
+    Subgraph {
+        namespace: Vec<String>,
+        event: Box<GraphEvent<Value>>,
+    },
+    /// The run paused before `next`: a static interrupt
+    /// (`interrupt_before`/`interrupt_after`, `interrupts` empty) or dynamic
+    /// [`interrupt`](crate::NodeContext::interrupt)s. Resume with
+    /// `run(thread_id, None)` or `resume(thread_id, value)`.
+    Interrupted {
+        next: Vec<String>,
+        state: S,
+        interrupts: Vec<Interrupt>,
+    },
     /// The run reached `END`.
     Completed { state: S },
     /// The run failed.
@@ -71,10 +93,232 @@ impl<S> GraphEvent<S> {
     }
 }
 
+impl<S: serde::Serialize> GraphEvent<S> {
+    /// The same event with its state serialized (used to forward subgraph
+    /// events). Terminal events have no JSON counterpart and give `None`.
+    pub fn to_json(&self) -> Option<GraphEvent<Value>> {
+        let j = |s: &S| serde_json::to_value(s).unwrap_or(Value::Null);
+        Some(match self {
+            GraphEvent::NodeStart { node, step, task } => GraphEvent::NodeStart {
+                node: node.clone(),
+                step: *step,
+                task: *task,
+            },
+            GraphEvent::NodeEnd {
+                node,
+                step,
+                task,
+                state,
+            } => GraphEvent::NodeEnd {
+                node: node.clone(),
+                step: *step,
+                task: *task,
+                state: j(state),
+            },
+            GraphEvent::Token {
+                node,
+                step,
+                task,
+                delta,
+            } => GraphEvent::Token {
+                node: node.clone(),
+                step: *step,
+                task: *task,
+                delta: delta.clone(),
+            },
+            GraphEvent::Custom {
+                node,
+                step,
+                task,
+                value,
+            } => GraphEvent::Custom {
+                node: node.clone(),
+                step: *step,
+                task: *task,
+                value: value.clone(),
+            },
+            GraphEvent::Values { step, state } => GraphEvent::Values {
+                step: *step,
+                state: j(state),
+            },
+            GraphEvent::Checkpoint {
+                checkpoint_id,
+                step,
+                next,
+            } => GraphEvent::Checkpoint {
+                checkpoint_id: checkpoint_id.clone(),
+                step: *step,
+                next: next.clone(),
+            },
+            GraphEvent::Subgraph { namespace, event } => GraphEvent::Subgraph {
+                namespace: namespace.clone(),
+                event: Box::new(event.to_json()?),
+            },
+            GraphEvent::Interrupted { .. }
+            | GraphEvent::Completed { .. }
+            | GraphEvent::Error(_) => return None,
+        })
+    }
+}
+
+/// A kind of streamed output (LangGraph's `stream_mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StreamMode {
+    /// [`GraphEvent::Values`]: the full state after every superstep.
+    Values,
+    /// [`GraphEvent::NodeEnd`]: each node's output as it finishes.
+    Updates,
+    /// [`GraphEvent::Token`]: LLM tokens, tagged with node, step and task.
+    Messages,
+    /// [`GraphEvent::Custom`]: values nodes emit with `NodeContext::emit`.
+    Custom,
+    /// [`GraphEvent::NodeStart`]: a node starts.
+    Tasks,
+    /// Everything above plus [`GraphEvent::Checkpoint`].
+    Debug,
+}
+
+/// A set of [`StreamMode`]s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamModes(u8);
+
+impl StreamModes {
+    /// What [`CompiledGraph::stream`](crate::CompiledGraph::stream) emits:
+    /// tasks, updates, messages and custom events.
+    pub const DEFAULT: StreamModes = StreamModes(0b01_1110);
+    pub const NONE: StreamModes = StreamModes(0);
+
+    fn bit(m: StreamMode) -> u8 {
+        match m {
+            StreamMode::Values => 1,
+            StreamMode::Updates => 2,
+            StreamMode::Messages => 4,
+            StreamMode::Custom => 8,
+            StreamMode::Tasks => 16,
+            StreamMode::Debug => 32,
+        }
+    }
+
+    pub fn with(self, m: StreamMode) -> Self {
+        StreamModes(self.0 | Self::bit(m))
+    }
+
+    /// Whether events of mode `m` are wanted (`Debug` implies all but
+    /// `Values`).
+    pub fn contains(&self, m: StreamMode) -> bool {
+        let debug = self.0 & 32 != 0;
+        self.0 & Self::bit(m) != 0 || (debug && m != StreamMode::Values)
+    }
+}
+
+impl Default for StreamModes {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl From<StreamMode> for StreamModes {
+    fn from(m: StreamMode) -> Self {
+        StreamModes::NONE.with(m)
+    }
+}
+
+impl From<&[StreamMode]> for StreamModes {
+    fn from(ms: &[StreamMode]) -> Self {
+        ms.iter().fold(StreamModes::NONE, |acc, m| acc.with(*m))
+    }
+}
+
+impl<const N: usize> From<[StreamMode; N]> for StreamModes {
+    fn from(ms: [StreamMode; N]) -> Self {
+        StreamModes::from(&ms[..])
+    }
+}
+
+/// What a stream yields: the modes, and whether subgraph events are
+/// forwarded (wrapped in [`GraphEvent::Subgraph`]).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StreamOptions {
+    pub modes: StreamModes,
+    pub subgraphs: bool,
+}
+
+impl StreamOptions {
+    pub fn new(modes: impl Into<StreamModes>) -> Self {
+        Self {
+            modes: modes.into(),
+            subgraphs: false,
+        }
+    }
+
+    pub fn with_subgraphs(mut self, on: bool) -> Self {
+        self.subgraphs = on;
+        self
+    }
+}
+
+impl From<StreamMode> for StreamOptions {
+    fn from(m: StreamMode) -> Self {
+        Self::new(m)
+    }
+}
+
+impl<const N: usize> From<[StreamMode; N]> for StreamOptions {
+    fn from(ms: [StreamMode; N]) -> Self {
+        Self::new(ms)
+    }
+}
+
+impl From<StreamModes> for StreamOptions {
+    fn from(m: StreamModes) -> Self {
+        Self::new(m)
+    }
+}
+
 /// What a node can send through its [`NodeContext`](crate::NodeContext).
 pub(crate) enum Emission {
     Token(String),
     Custom(Value),
+    /// A (serialized) event of a subgraph run by this node.
+    Subgraph {
+        namespace: Vec<String>,
+        event: GraphEvent<Value>,
+    },
+}
+
+/// Where a run's events go, and which ones are wanted.
+pub(crate) struct EventSink<S> {
+    f: Arc<dyn Fn(GraphEvent<S>) + Send + Sync>,
+    pub(crate) opts: StreamOptions,
+}
+
+impl<S> Clone for EventSink<S> {
+    fn clone(&self) -> Self {
+        Self {
+            f: self.f.clone(),
+            opts: self.opts,
+        }
+    }
+}
+
+impl<S> EventSink<S> {
+    pub(crate) fn new(
+        opts: StreamOptions,
+        f: impl Fn(GraphEvent<S>) + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            f: Arc::new(f),
+            opts,
+        }
+    }
+
+    pub(crate) fn wants(&self, m: StreamMode) -> bool {
+        self.opts.modes.contains(m)
+    }
+
+    pub(crate) fn send(&self, ev: GraphEvent<S>) {
+        (self.f)(ev)
+    }
 }
 
 /// Type-erased sink for node emissions (the context is not generic over `S`).
@@ -95,8 +339,6 @@ impl fmt::Debug for Emitter {
         f.write_str("Emitter")
     }
 }
-
-pub(crate) type EventTx<S> = mpsc::UnboundedSender<GraphEvent<S>>;
 
 /// Stream of [`GraphEvent`]s for one run.
 ///
