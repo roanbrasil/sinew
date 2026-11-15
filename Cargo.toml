@@ -31,3 +31,4 @@ sinew-eval = { path = "crates/sinew-eval", version = "0.1.0" }
 axum = "0.8"
 futures = "0.3"
 regex = "1"
+criterion = { version = "0.8", default-features = false }

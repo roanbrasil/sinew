@@ -185,7 +185,7 @@ pub struct StreamModes(u8);
 impl StreamModes {
     /// What [`CompiledGraph::stream`](crate::CompiledGraph::stream) emits:
     /// tasks, updates, messages and custom events.
-    pub const DEFAULT: StreamModes = StreamModes(0b0_1111_0);
+    pub const DEFAULT: StreamModes = StreamModes(0b01_1110);
     pub const NONE: StreamModes = StreamModes(0);
 
     fn bit(m: StreamMode) -> u8 {

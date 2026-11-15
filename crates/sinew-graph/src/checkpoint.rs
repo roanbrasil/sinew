@@ -134,9 +134,34 @@ impl PendingTask {
     }
 }
 
-/// A fresh, time-ordered checkpoint id (UUID v7).
+/// A fresh, time-ordered checkpoint id in UUID v7 layout: 48-bit Unix
+/// milliseconds, then a per-process random seed mixed with a counter. Ids
+/// sort by creation time across processes and never repeat within one.
+/// Generated without a syscall for randomness on the hot path.
 pub fn new_checkpoint_id() -> String {
-    uuid::Uuid::now_v7().to_string()
+    use std::sync::{
+        atomic::{AtomicU64, Ordering},
+        OnceLock,
+    };
+    static SEED: OnceLock<u64> = OnceLock::new();
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seed = *SEED.get_or_init(|| {
+        let b = uuid::Uuid::new_v4();
+        let (hi, lo) = b.as_u64_pair();
+        hi ^ lo
+    });
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let ms = now_millis() & 0xFFFF_FFFF_FFFF;
+    let rand_a = (n & 0x0FFF) as u16;
+    let rand_b = (seed ^ n.rotate_left(32)) & 0x3FFF_FFFF_FFFF_FFFF;
+    format!(
+        "{:08x}-{:04x}-7{:03x}-{:04x}-{:012x}",
+        ms >> 16,
+        ms & 0xFFFF,
+        rand_a,
+        0x8000 | ((rand_b >> 48) as u16 & 0x3FFF),
+        rand_b & 0xFFFF_FFFF_FFFF
+    )
 }
 
 pub(crate) fn now_millis() -> u64 {
@@ -299,6 +324,16 @@ mod tests {
         let back: Checkpoint = serde_json::from_value(serde_json::to_value(&cp).unwrap()).unwrap();
         assert_eq!(back, cp);
         assert_eq!(back.next_nodes(), vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn checkpoint_ids_are_unique_and_uuid_shaped() {
+        let ids: std::collections::HashSet<String> =
+            (0..10_000).map(|_| new_checkpoint_id()).collect();
+        assert_eq!(ids.len(), 10_000);
+        let one = ids.iter().next().unwrap();
+        let parsed = uuid::Uuid::parse_str(one).unwrap();
+        assert_eq!(parsed.get_version_num(), 7);
     }
 
     #[tokio::test]

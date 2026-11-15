@@ -68,7 +68,10 @@ pub struct NodeContext {
     /// The task had pending interrupts (a subgraph should resume its own
     /// checkpoint instead of starting over).
     pub(crate) resuming: bool,
-    pub(crate) interrupts: Arc<Mutex<TaskInterrupts>>,
+    /// Resume values and the call counter; `None` when the task has no
+    /// resume values (its first `interrupt` call always pauses), which
+    /// saves an allocation per node execution.
+    pub(crate) interrupts: Option<Arc<Mutex<TaskInterrupts>>>,
 }
 
 impl NodeContext {
@@ -89,7 +92,7 @@ impl NodeContext {
             checkpointer: None,
             resume_map: None,
             resuming: false,
-            interrupts: Arc::default(),
+            interrupts: None,
         }
     }
 
@@ -101,8 +104,11 @@ impl NodeContext {
 
     /// Pre-loads resume values, as if the node had been interrupted and
     /// resumed that many times (for tests that call nodes directly).
-    pub fn with_resume_values(self, values: Vec<Value>) -> Self {
-        self.interrupts.lock().unwrap().resume = values;
+    pub fn with_resume_values(mut self, values: Vec<Value>) -> Self {
+        self.interrupts = Some(Arc::new(Mutex::new(TaskInterrupts {
+            resume: values,
+            counter: 0,
+        })));
         self
     }
 
@@ -156,12 +162,18 @@ impl NodeContext {
     /// Needs a checkpointer to resume; without one the run fails with
     /// [`GraphError::Interrupted`].
     pub fn interrupt<T: DeserializeOwned>(&self, value: impl Serialize) -> Result<T, BoxError> {
-        let mut st = self.interrupts.lock().unwrap();
-        let idx = st.counter;
-        st.counter += 1;
-        if let Some(v) = st.resume.get(idx) {
-            return Ok(serde_json::from_value(v.clone())?);
-        }
+        let idx = match &self.interrupts {
+            Some(st) => {
+                let mut st = st.lock().unwrap();
+                let idx = st.counter;
+                st.counter += 1;
+                if let Some(v) = st.resume.get(idx) {
+                    return Ok(serde_json::from_value(v.clone())?);
+                }
+                idx
+            }
+            None => 0,
+        };
         let value = serde_json::to_value(value)?;
         Err(Box::new(GraphInterrupt {
             interrupts: vec![Interrupt {
@@ -356,9 +368,12 @@ pub(crate) struct NodeSpec<S> {
     pub(crate) timeout: Option<Duration>,
 }
 
+type PlainReducer<S> = Arc<dyn Fn(S, S) -> S + Send + Sync>;
+type BaseReducer<S> = Arc<dyn Fn(&S, S, S) -> S + Send + Sync>;
+
 pub(crate) enum Reducer<S> {
-    Plain(Arc<dyn Fn(S, S) -> S + Send + Sync>),
-    WithBase(Arc<dyn Fn(&S, S, S) -> S + Send + Sync>),
+    Plain(PlainReducer<S>),
+    WithBase(BaseReducer<S>),
 }
 
 impl<S> Clone for Reducer<S> {

@@ -283,7 +283,7 @@ pub fn rank(
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
     } else {
-        hits.sort_by(|a, b| b.item.updated_at.cmp(&a.item.updated_at));
+        hits.sort_by_key(|h| std::cmp::Reverse(h.item.updated_at));
     }
     let limit = if query.limit == 0 {
         usize::MAX

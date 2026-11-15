@@ -1,7 +1,7 @@
 //! The superstep engine behind [`CompiledGraph`].
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
@@ -183,10 +183,9 @@ impl<S: State> CompiledGraph<S> {
                 changed = true;
             }
             if !c.goto.is_empty() {
-                let mut seen = HashSet::new();
                 tasks = Vec::new();
                 for g in c.goto {
-                    self.push_goto(START_LABEL, g, &mut tasks, &mut seen)?;
+                    self.push_goto(START_LABEL, g, &mut tasks)?;
                 }
                 changed = true;
             }
@@ -532,17 +531,15 @@ impl<S: State> CompiledGraph<S> {
 
     pub(crate) fn entry_tasks(&self, state: &S) -> Result<Vec<Task<S>>, GraphError> {
         let mut out = Vec::new();
-        let mut seen = HashSet::new();
-        self.eval_edge(START_LABEL, &self.entry, state, &mut out, &mut seen)?;
+        self.eval_edge(START_LABEL, &self.entry, state, &mut out)?;
         Ok(out)
     }
 
     /// The tasks that follow `node` if it had just produced `state`.
     pub(crate) fn next_from_node(&self, node: &str, state: &S) -> Result<Vec<Task<S>>, GraphError> {
         let mut out = Vec::new();
-        let mut seen = HashSet::new();
         if let Some(edge) = self.edges.get(node) {
-            self.eval_edge(node, edge, state, &mut out, &mut seen)?;
+            self.eval_edge(node, edge, state, &mut out)?;
         }
         Ok(out)
     }
@@ -553,7 +550,6 @@ impl<S: State> CompiledGraph<S> {
         edge: &Edge<S>,
         state: &S,
         out: &mut Vec<Task<S>>,
-        seen: &mut HashSet<String>,
     ) -> Result<(), GraphError> {
         let unknown = |to: String| GraphError::UnknownRoute {
             from: from.into(),
@@ -562,7 +558,7 @@ impl<S: State> CompiledGraph<S> {
         match edge {
             Edge::Static(targets) => {
                 for to in targets {
-                    push_plain(out, seen, to);
+                    push_plain(out, to);
                 }
             }
             Edge::Router {
@@ -572,7 +568,7 @@ impl<S: State> CompiledGraph<S> {
                     if !targets.contains(&to) {
                         return Err(unknown(to));
                     }
-                    push_plain(out, seen, &to);
+                    push_plain(out, &to);
                 }
             }
             Edge::Send { router, targets } => {
@@ -589,13 +585,7 @@ impl<S: State> CompiledGraph<S> {
         Ok(())
     }
 
-    fn push_goto(
-        &self,
-        from: &str,
-        g: Goto<S>,
-        out: &mut Vec<Task<S>>,
-        seen: &mut HashSet<String>,
-    ) -> Result<(), GraphError> {
+    fn push_goto(&self, from: &str, g: Goto<S>, out: &mut Vec<Task<S>>) -> Result<(), GraphError> {
         let check = |n: &str| {
             if n == END || self.nodes.contains_key(n) {
                 Ok(())
@@ -609,7 +599,7 @@ impl<S: State> CompiledGraph<S> {
         match g {
             Goto::Node(n) => {
                 check(&n)?;
-                push_plain(out, seen, &n);
+                push_plain(out, &n);
             }
             Goto::Send(SendTo { node, input }) => {
                 check(&node)?;
@@ -630,17 +620,17 @@ impl<S: State> CompiledGraph<S> {
         state: &S,
     ) -> Result<Vec<Task<S>>, GraphError> {
         let mut out = Vec::new();
-        let mut seen_targets = HashSet::new();
-        let mut seen_sources = HashSet::new();
-        for (t, r) in executed.iter().zip(results) {
+        for (i, (t, r)) in executed.iter().zip(results).enumerate() {
             let from = t.node.as_str();
-            if seen_sources.insert(from) {
+            // Each distinct node's edge is evaluated once (linear scans:
+            // supersteps are small, and this avoids hashing on the hot path).
+            if !executed[..i].iter().any(|e| e.node == from) {
                 if let Some(edge) = self.edges.get(from) {
-                    self.eval_edge(from, edge, state, &mut out, &mut seen_targets)?;
+                    self.eval_edge(from, edge, state, &mut out)?;
                 }
             }
             for g in &r.goto {
-                self.push_goto(from, g.clone(), &mut out, &mut seen_targets)?;
+                self.push_goto(from, g.clone(), &mut out)?;
             }
         }
         Ok(out)
@@ -740,6 +730,17 @@ impl<S: State> CompiledGraph<S> {
         trace_parent: Option<&RunRef>,
     ) -> Result<Vec<TaskOutcome<S>>, GraphError> {
         let parallel = tasks.len() > 1;
+        if !parallel {
+            let (t, input) = (&tasks[0], inputs.into_iter().next().flatten());
+            return Ok(vec![match input {
+                Some(input) => {
+                    self.job(run, step, 0, false, t, input, trace_parent)
+                        .run()
+                        .await?
+                }
+                None => TaskOutcome::Done(t.result.clone().expect("stored result")),
+            }]);
+        }
         let mut outcomes: Vec<Option<TaskOutcome<S>>> = (0..tasks.len()).map(|_| None).collect();
         let mut jobs = Vec::with_capacity(tasks.len());
         for (index, (t, input)) in tasks.iter().zip(inputs).enumerate() {
@@ -859,10 +860,12 @@ impl<S: State> CompiledGraph<S> {
             checkpointer: run.checkpointer.clone(),
             resume_map: run.resume.clone(),
             resuming: !t.interrupts.is_empty(),
-            interrupts: Arc::new(Mutex::new(TaskInterrupts {
-                resume: t.resume.clone(),
-                counter: 0,
-            })),
+            interrupts: (!t.resume.is_empty()).then(|| {
+                Arc::new(Mutex::new(TaskInterrupts {
+                    resume: t.resume.clone(),
+                    counter: 0,
+                }))
+            }),
         };
         Job {
             node: t.node.clone(),
@@ -878,8 +881,10 @@ impl<S: State> CompiledGraph<S> {
 
 const START_LABEL: &str = crate::START;
 
-fn push_plain<S>(out: &mut Vec<Task<S>>, seen: &mut HashSet<String>, to: &str) {
-    if to != END && seen.insert(to.to_string()) {
+/// Schedules a plain task unless it is `END` or already scheduled (plain
+/// targets are deduplicated; `SendTo` tasks never are).
+fn push_plain<S>(out: &mut Vec<Task<S>>, to: &str) {
+    if to != END && !out.iter().any(|t| t.input.is_none() && t.node == to) {
         out.push(Task::plain(to));
     }
 }
@@ -979,7 +984,9 @@ impl<S: State> Job<S> {
             } else {
                 input.take().expect("input available for the last attempt")
             };
-            ctx.interrupts.lock().unwrap().counter = 0;
+            if let Some(st) = &ctx.interrupts {
+                st.lock().unwrap().counter = 0;
+            }
             let fut = (spec.f)(inp, ctx.clone());
             let r = match spec.timeout {
                 Some(after) => match tokio::time::timeout(after, fut).await {
