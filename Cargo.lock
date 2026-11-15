@@ -1492,6 +1492,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-16-runnables"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "sample-common",
+ "serde_json",
+ "sinew",
+ "tokio",
+]
+
+[[package]]
 name = "sample-common"
 version = "0.0.0"
 dependencies = [
