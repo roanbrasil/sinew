@@ -12,7 +12,7 @@ use axum::{routing, Json, Router};
 use serde_json::{json, Value};
 use sinew_core::{mock::ScriptedModel, ChatModel, Message};
 use sinew_eval::{
-    evaluate_pairwise, Dataset, EvalError, Experiment, ExactMatch, Feedback, FnPairwise,
+    evaluate_pairwise, Dataset, EvalError, ExactMatch, Experiment, Feedback, FnPairwise,
     PairwiseEvaluator, PairwiseInput, Preference, PromptHub, PromptPush, ScopeClient,
 };
 use sinew_scope::{router_with, EngineConfig, ServerConfig, Store};
@@ -197,7 +197,10 @@ async fn prompt_hub_versions_tags_diff_and_cache() {
     // Promote v2 to prod.
     hub.tag("support-answer", "prod", &v2.commit).await.unwrap();
     assert_eq!(
-        hub.pull_version("support-answer@prod").await.unwrap().version,
+        hub.pull_version("support-answer@prod")
+            .await
+            .unwrap()
+            .version,
         2
     );
 
@@ -255,8 +258,28 @@ async fn feedback_queues_and_dataset_from_runs() {
         &s.url,
         "support",
         &[
-            run("r1", "r1", None, "agent", RunKind::Graph, t0, 100, None, json!({})),
-            run("r2", "r2", None, "agent", RunKind::Graph, t0 + 1, 100, None, json!({})),
+            run(
+                "r1",
+                "r1",
+                None,
+                "agent",
+                RunKind::Graph,
+                t0,
+                100,
+                None,
+                json!({}),
+            ),
+            run(
+                "r2",
+                "r2",
+                None,
+                "agent",
+                RunKind::Graph,
+                t0 + 1,
+                100,
+                None,
+                json!({}),
+            ),
         ],
     )
     .await;
@@ -295,7 +318,10 @@ async fn feedback_queues_and_dataset_from_runs() {
         .create_queue("review", "check answers", &["correctness", "tone"])
         .await
         .unwrap();
-    client.add_to_queue(&q, &["r1", "r2", "ghost"]).await.unwrap();
+    client
+        .add_to_queue(&q, &["r1", "r2", "ghost"])
+        .await
+        .unwrap();
     let detail = get(&c, format!("{}/api/queues/{q}", s.url)).await;
     assert_eq!(detail["pending"], 2);
     let next = get(&c, format!("{}/api/queues/{q}/next", s.url)).await;
@@ -315,7 +341,10 @@ async fn feedback_queues_and_dataset_from_runs() {
     assert_eq!(fb.len(), 2, "empty `tone` entry is skipped");
     assert_eq!(fb[1]["source"], "annotation:review");
     let queues = get(&c, format!("{}/api/queues", s.url)).await;
-    assert_eq!((queues[0]["pending"].clone(), queues[0]["done"].clone()), (json!(1), json!(1)));
+    assert_eq!(
+        (queues[0]["pending"].clone(), queues[0]["done"].clone()),
+        (json!(1), json!(1))
+    );
     let stats = get(&c, format!("{}/api/feedback/stats?project=support", s.url)).await;
     assert_eq!(stats.as_array().unwrap().len(), 2);
 
@@ -342,7 +371,11 @@ async fn cost_search_and_metrics() {
     let mut runs = Vec::new();
     for i in 0..20u64 {
         let tr = format!("t{i:02}");
-        let model = if i % 2 == 0 { "gpt-4o-mini" } else { "claude-sonnet-5-5" };
+        let model = if i % 2 == 0 {
+            "gpt-4o-mini"
+        } else {
+            "claude-sonnet-5-5"
+        };
         let mut root = run(
             &tr,
             &tr,
@@ -377,11 +410,18 @@ async fn cost_search_and_metrics() {
     // claude-sonnet-5-5 (Sonnet 5 pricing) $2 + 0.1 × $10 = $3.
     let t = get(&c, format!("{}/api/traces/t00", s.url)).await;
     assert!((t["summary"]["cost_usd"].as_f64().unwrap() - 0.21).abs() < 1e-9);
-    let llm = t["runs"].as_array().unwrap().iter().find(|r| r["kind"] == "llm").unwrap();
+    let llm = t["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["kind"] == "llm")
+        .unwrap();
     assert_eq!(llm["model"], "gpt-4o-mini");
     assert_eq!(llm["ttft_ms"], 20);
     let page = get(&c, format!("{}/api/traces?project=demo", s.url)).await;
-    assert!((page["stats"]["cost_usd"].as_f64().unwrap() - (10.0 * 0.21 + 10.0 * 3.0)).abs() < 1e-6);
+    assert!(
+        (page["stats"]["cost_usd"].as_f64().unwrap() - (10.0 * 0.21 + 10.0 * 3.0)).abs() < 1e-6
+    );
     assert!(page["stats"]["p99_latency_ms"].as_i64().is_some());
 
     // Trace filters: tag, metadata, full text.
@@ -419,7 +459,11 @@ async fn cost_search_and_metrics() {
     let claude = get(&c, format!("{}/api/runs?model=claude&limit=100", s.url)).await;
     assert_eq!(claude["runs"].as_array().unwrap().len(), 10);
     let text = get(&c, format!("{}/api/runs?q=answer%20t05", s.url)).await;
-    assert!(text["runs"].as_array().unwrap().iter().any(|r| r["id"] == "t05"));
+    assert!(text["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["id"] == "t05"));
     let errs = get(&c, format!("{}/api/runs?errors=true&root=true", s.url)).await;
     assert_eq!(errs["runs"].as_array().unwrap().len(), 1);
 
@@ -438,7 +482,11 @@ async fn cost_search_and_metrics() {
     .await;
     // Run-level tag filter: LLM runs carry no tags.
     assert_eq!(llm["totals"]["count"], 0);
-    let llm = get(&c, format!("{}/api/metrics?level=llm&group_by=model", s.url)).await;
+    let llm = get(
+        &c,
+        format!("{}/api/metrics?level=llm&group_by=model", s.url),
+    )
+    .await;
     let groups = llm["groups"].as_array().unwrap();
     assert_eq!(groups.len(), 2);
     let mini = groups.iter().find(|g| g["key"] == "gpt-4o-mini").unwrap();
@@ -458,7 +506,11 @@ async fn cost_search_and_metrics() {
     assert!((t["summary"]["cost_usd"].as_f64().unwrap() - 1.0).abs() < 1e-9);
     let t1 = get(&c, format!("{}/api/traces/t01", s.url)).await;
     assert_eq!(t1["summary"]["cost_usd"], 0.0, "claude no longer priced");
-    let r = c.delete(format!("{}/api/pricing", s.url)).send().await.unwrap();
+    let r = c
+        .delete(format!("{}/api/pricing", s.url))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), 200);
     let pricing = get(&c, format!("{}/api/pricing", s.url)).await;
     assert!(pricing["models"].as_array().unwrap().len() > 30);
@@ -523,8 +575,28 @@ async fn online_rules_score_incoming_runs() {
         &s.url,
         "prod",
         &[
-            run("g1", "g1", None, "agent", RunKind::Graph, t0, 10, None, json!({})),
-            run("g1-tool", "g1", Some("g1"), "calc", RunKind::Tool, t0, 5, None, json!({})),
+            run(
+                "g1",
+                "g1",
+                None,
+                "agent",
+                RunKind::Graph,
+                t0,
+                10,
+                None,
+                json!({}),
+            ),
+            run(
+                "g1-tool",
+                "g1",
+                Some("g1"),
+                "calc",
+                RunKind::Tool,
+                t0,
+                5,
+                None,
+                json!({}),
+            ),
         ],
     )
     .await;
@@ -532,7 +604,17 @@ async fn online_rules_score_incoming_runs() {
         &c,
         &s.url,
         "other",
-        &[run("g2", "g2", None, "agent", RunKind::Graph, t0, 10, None, json!({}))],
+        &[run(
+            "g2",
+            "g2",
+            None,
+            "agent",
+            RunKind::Graph,
+            t0,
+            10,
+            None,
+            json!({}),
+        )],
     )
     .await;
     let fb = eventually(|| {
@@ -544,12 +626,20 @@ async fn online_rules_score_incoming_runs() {
         }
     })
     .await;
-    let polite = fb.as_array().unwrap().iter().find(|f| f["key"] == "polite").unwrap();
+    let polite = fb
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["key"] == "polite")
+        .unwrap();
     assert_eq!(polite["score"], 0.9);
     assert_eq!(polite["source"], "rule:answers");
     assert_eq!(polite["comment"], "polite");
     let other = get(&c, format!("{}/api/feedback?run_id=g2", s.url)).await;
-    assert!(other.as_array().unwrap().is_empty(), "filtered out by project");
+    assert!(
+        other.as_array().unwrap().is_empty(),
+        "filtered out by project"
+    );
     let tool = get(&c, format!("{}/api/feedback?run_id=g1-tool", s.url)).await;
     assert!(tool.as_array().unwrap().is_empty(), "filtered out by kind");
     let rules = get(&c, format!("{}/api/rules", s.url)).await;
@@ -567,7 +657,12 @@ async fn online_rules_score_incoming_runs() {
         .await
         .unwrap();
     assert_eq!(r.status(), 200);
-    let (st, n) = post(&c, format!("{}/api/rules/{id}/run?limit=10", s.url), json!({})).await;
+    let (st, n) = post(
+        &c,
+        format!("{}/api/rules/{id}/run?limit=10", s.url),
+        json!({}),
+    )
+    .await;
     assert_eq!(st, 200);
     assert_eq!(n["feedback"], 1, "one prod graph run");
 }
@@ -596,14 +691,34 @@ async fn alerts_post_to_webhook_and_retention_purges() {
     let t0 = now_ms() - 1000;
     let mut runs = Vec::new();
     for i in 0..4u64 {
-        let mut r = run(&format!("e{i}"), &format!("e{i}"), None, "flaky", RunKind::Chain, t0 + i, 10, None, json!({}));
+        let mut r = run(
+            &format!("e{i}"),
+            &format!("e{i}"),
+            None,
+            "flaky",
+            RunKind::Chain,
+            t0 + i,
+            10,
+            None,
+            json!({}),
+        );
         if i < 2 {
             r.error = Some("boom".into());
         }
         runs.push(r);
     }
     // An old trace for retention.
-    runs.push(run("old", "old", None, "ancient", RunKind::Chain, 1_000, 10, None, json!({})));
+    runs.push(run(
+        "old",
+        "old",
+        None,
+        "ancient",
+        RunKind::Chain,
+        1_000,
+        10,
+        None,
+        json!({}),
+    ));
     ingest(&c, &s.url, "svc", &runs).await;
 
     let (st, alert) = post(
@@ -634,7 +749,10 @@ async fn alerts_post_to_webhook_and_retention_purges() {
     }
     // Cooldown: firing again does not notify.
     let (_, check) = post(&c, format!("{}/api/alerts/{id}/check", s.url), json!({})).await;
-    assert_eq!((check["status"].clone(), check["fired"].clone()), (json!("firing"), json!(false)));
+    assert_eq!(
+        (check["status"].clone(), check["fired"].clone()),
+        (json!("firing"), json!(false))
+    );
     assert_eq!(received.lock().unwrap().len(), 1);
     let a = get(&c, format!("{}/api/alerts/{id}", s.url)).await;
     assert_eq!(a["last_status"], "firing");
@@ -659,7 +777,10 @@ async fn alerts_post_to_webhook_and_retention_purges() {
     assert_eq!(purged["runs"], 1);
     let page = get(&c, format!("{}/api/traces?project=svc", s.url)).await;
     assert_eq!(page["total"], 4);
-    assert_eq!(get(&c, format!("{}/api/settings", s.url)).await["retention_days"], 30);
+    assert_eq!(
+        get(&c, format!("{}/api/settings", s.url)).await["retention_days"],
+        30
+    );
     assert!(s.store.has_fts());
 }
 
@@ -668,7 +789,17 @@ async fn otlp_sink_round_trips_into_scope() {
     let s = spawn().await;
     let t0 = now_ms();
     let runs = vec![
-        run("8f1d2c3b-0000-4000-8000-000000000001", "8f1d2c3b-0000-4000-8000-000000000001", None, "planner", RunKind::Graph, t0, 30, None, json!({"tags": ["otel"]})),
+        run(
+            "8f1d2c3b-0000-4000-8000-000000000001",
+            "8f1d2c3b-0000-4000-8000-000000000001",
+            None,
+            "planner",
+            RunKind::Graph,
+            t0,
+            30,
+            None,
+            json!({"tags": ["otel"]}),
+        ),
         run(
             "8f1d2c3b-0000-4000-8000-000000000002",
             "8f1d2c3b-0000-4000-8000-000000000001",
@@ -704,13 +835,23 @@ async fn otlp_sink_round_trips_into_scope() {
     let t = get(&c, format!("{}/api/traces/{tid}", s.url)).await;
     assert_eq!(t["summary"]["name"], "planner");
     assert_eq!(t["summary"]["kind"], "graph");
-    let llm = t["runs"].as_array().unwrap().iter().find(|r| r["kind"] == "llm").unwrap();
+    let llm = t["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["kind"] == "llm")
+        .unwrap();
     assert_eq!(llm["name"], "gpt-4o-mini");
     assert_eq!(llm["model"], "gpt-4o-mini-2024-07-18");
     assert_eq!(llm["ttft_ms"], 7);
     assert_eq!(llm["input_tokens"], 100);
     assert!(llm["cost_usd"].as_f64().unwrap() > 0.0);
-    let root = t["runs"].as_array().unwrap().iter().find(|r| r["kind"] == "graph").unwrap();
+    let root = t["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["kind"] == "graph")
+        .unwrap();
     assert_eq!(root["metadata"]["tags"], json!(["otel"]));
     let tagged = get(&c, format!("{}/api/traces?tag=otel", s.url)).await;
     assert_eq!(tagged["total"], 1);
@@ -761,15 +902,17 @@ async fn pairwise_upload_and_repetition_compare() {
     let client = ScopeClient::new(&s.url);
     client.upload_experiment(&ds, &a).await.unwrap();
     client.upload_report(&b).await.unwrap();
-    let evaluators: Vec<Box<dyn PairwiseEvaluator>> =
-        vec![Box::new(FnPairwise::new("correct", |i: PairwiseInput<'_>| {
+    let evaluators: Vec<Box<dyn PairwiseEvaluator>> = vec![Box::new(FnPairwise::new(
+        "correct",
+        |i: PairwiseInput<'_>| {
             let r = i.reference.cloned();
             match (Some(i.a.clone()) == r, Some(i.b.clone()) == r) {
                 (true, false) => Some(Preference::A),
                 (false, true) => Some(Preference::B),
                 _ => Some(Preference::Tie),
             }
-        }))];
+        },
+    ))];
     let pw = evaluate_pairwise(&a, &b, &evaluators, 2).await;
     client.upload_pairwise(&pw).await.unwrap();
 
@@ -818,9 +961,15 @@ async fn migrates_a_v1_database() {
         conn.close().await.unwrap();
     }
     let store = Store::open(&path).await.unwrap();
-    assert_eq!(store.schema_version().await.unwrap(), sinew_scope::store::SCHEMA_VERSION);
+    assert_eq!(
+        store.schema_version().await.unwrap(),
+        sinew_scope::store::SCHEMA_VERSION
+    );
     let t = store.trace("a").await.unwrap().unwrap();
-    assert!((t.summary.cost_usd - 2.5).abs() < 1e-9, "gpt-4o: 1M input tokens = $2.50");
+    assert!(
+        (t.summary.cost_usd - 2.5).abs() < 1e-9,
+        "gpt-4o: 1M input tokens = $2.50"
+    );
     let b = t.runs.iter().find(|r| r.run.id == "b").unwrap();
     assert_eq!(b.model.as_deref(), Some("gpt-4o"));
     let hits = store
@@ -850,14 +999,31 @@ async fn migrates_a_v1_database() {
 async fn ui_pages_are_served() {
     let s = spawn().await;
     let c = reqwest::Client::new();
-    let html = c.get(format!("{}/", s.url)).send().await.unwrap().text().await.unwrap();
-    for nav in ["#/monitor", "#/runs", "#/prompts", "#/queues", "#/rules", "#/settings"] {
+    let html = c
+        .get(format!("{}/", s.url))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for nav in [
+        "#/monitor",
+        "#/runs",
+        "#/prompts",
+        "#/queues",
+        "#/rules",
+        "#/settings",
+    ] {
         assert!(html.contains(nav), "nav link {nav}");
     }
     assert!(html.contains("pages.js") && html.contains("logo.png"));
     assert!(!html.contains("https://"), "no external resources");
     let js = c.get(format!("{}/pages.js", s.url)).send().await.unwrap();
-    assert!(js.headers()["content-type"].to_str().unwrap().contains("javascript"));
+    assert!(js.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .contains("javascript"));
     let js = js.text().await.unwrap();
     for f in [
         "function monitorPage",
@@ -874,9 +1040,23 @@ async fn ui_pages_are_served() {
     ] {
         assert!(js.contains(f), "{f}");
     }
-    let app = c.get(format!("{}/app.js", s.url)).send().await.unwrap().text().await.unwrap();
+    let app = c
+        .get(format!("{}/app.js", s.url))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
     assert!(app.contains("monitorPage") && app.contains("cost"));
-    let css = c.get(format!("{}/style.css", s.url)).send().await.unwrap().text().await.unwrap();
+    let css = c
+        .get(format!("{}/style.css", s.url))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
     assert!(css.contains("#EA7A3A") || css.contains("#ea7a3a"));
     let logo = c.get(format!("{}/logo.png", s.url)).send().await.unwrap();
     assert_eq!(logo.headers()["content-type"], "image/png");

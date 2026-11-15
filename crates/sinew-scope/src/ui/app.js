@@ -55,6 +55,14 @@ const fmt = {
   num(v) { return v == null ? "–" : Number(v).toLocaleString(); },
   pct(v) { return v == null ? "–" : (v * 100).toFixed(1) + "%"; },
   score(v) { return v == null ? "–" : Number(v).toFixed(2); },
+  usd(v) {
+    if (v == null) return "–";
+    const n = Number(v);
+    if (n === 0) return "$0";
+    if (Math.abs(n) < 0.01) return "$" + n.toFixed(4);
+    if (Math.abs(n) < 10) return "$" + n.toFixed(3);
+    return "$" + n.toFixed(2);
+  },
   short(id) { return id ? String(id).slice(0, 8) : ""; },
   text(v) { return typeof v === "string" ? v : JSON.stringify(v); },
 };
@@ -131,17 +139,26 @@ class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-async function api(path) {
+async function api(path, opts = {}) {
   const headers = { Accept: "application/json" };
   const token = store.get("sinew.token");
   if (token) headers.Authorization = "Bearer " + token;
-  const res = await fetch(path, { headers });
+  const init = { headers, method: opts.method || "GET" };
+  if (opts.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(opts.body);
+  }
+  const res = await fetch(path, init);
   const text = await res.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch (_) { body = { error: text }; }
   if (!res.ok) throw new ApiError(res.status, (body && body.error) || res.statusText);
   return body;
 }
+
+const apiPost = (path, body) => api(path, { method: "POST", body: body === undefined ? {} : body });
+const apiPut = (path, body) => api(path, { method: "PUT", body });
+const apiDelete = (path) => api(path, { method: "DELETE" });
 
 function qs(params) {
   const u = new URLSearchParams();
@@ -175,7 +192,9 @@ async function route() {
     const nav = a.getAttribute("data-nav");
     const active = nav === page || (nav === "traces" && page === "trace") ||
       (nav === "datasets" && page === "dataset") ||
-      (nav === "experiments" && (page === "experiment" || page === "compare"));
+      (nav === "prompts" && page === "prompt") ||
+      (nav === "queues" && page === "queue") ||
+      (nav === "experiments" && (page === "experiment" || page === "compare" || page === "pairwise"));
     a.classList.toggle("active", active);
   });
   const views = {
@@ -186,6 +205,15 @@ async function route() {
     experiments: () => experimentsPage(params),
     experiment: () => experimentPage(parts[1]),
     compare: () => comparePage(params.get("a"), params.get("b")),
+    monitor: () => monitorPage(params),
+    runs: () => runsPage(params),
+    prompts: () => promptsPage(),
+    prompt: () => promptPage(parts[1], params),
+    queues: () => queuesPage(),
+    queue: () => queuePage(parts[1]),
+    rules: () => rulesPage(),
+    settings: () => settingsPage(),
+    pairwise: () => pairwisePage(parts[1]),
   };
   try {
     const node = await (views[page] || views.traces)();
@@ -238,6 +266,8 @@ async function tracesPage(params) {
     errors: params.get("errors") === "true",
     from_ms: params.get("from_ms") || "",
     to_ms: params.get("to_ms") || "",
+    q: params.get("q") || "",
+    tag: params.get("tag") || "",
     limit,
     offset,
   };
@@ -245,6 +275,8 @@ async function tracesPage(params) {
   const s = page.stats;
 
   const name = h("input", { type: "search", placeholder: "root run name", value: q.name });
+  const text = h("input", { type: "search", placeholder: "words in inputs / outputs", value: q.q, size: 22 });
+  const tag = h("input", { type: "search", placeholder: "e.g. prod", value: q.tag, size: 10 });
   const kind = h("select", {}, KINDS.map((k) => h("option", { value: k, selected: k === q.kind }, k || "any")));
   const errors = h("input", { type: "checkbox", checked: q.errors });
   const from = h("input", { type: "datetime-local", value: toLocalInput(q.from_ms) });
@@ -252,6 +284,8 @@ async function tracesPage(params) {
   const apply = (ev) => {
     if (ev) ev.preventDefault();
     go("/traces", {
+      q: text.value.trim(),
+      tag: tag.value.trim(),
       name: name.value.trim(),
       kind: kind.value,
       errors: errors.checked ? "true" : "",
@@ -263,7 +297,9 @@ async function tracesPage(params) {
   errors.addEventListener("change", apply);
 
   const filters = h("form", { class: "card filters", onsubmit: apply },
+    h("label", {}, "Search", text),
     h("label", {}, "Name", name),
+    h("label", {}, "Tag", tag),
     h("label", {}, "Contains run kind", kind),
     h("label", {}, "From", from),
     h("label", {}, "To", to),
@@ -279,10 +315,10 @@ async function tracesPage(params) {
     stat("Error rate", fmt.pct(s.error_rate), s.error_count > 0),
     stat("Latency p50", fmt.ms(s.p50_latency_ms)),
     stat("Latency p95", fmt.ms(s.p95_latency_ms)),
-    stat("Avg latency", fmt.ms(s.avg_latency_ms)),
+    stat("Latency p99", fmt.ms(s.p99_latency_ms)),
     stat("Runs", fmt.num(s.run_count)),
-    stat("Tokens in", fmt.num(s.input_tokens)),
-    stat("Tokens out", fmt.num(s.output_tokens)));
+    stat("Tokens in / out", `${fmt.num(s.input_tokens)} / ${fmt.num(s.output_tokens)}`),
+    stat("Cost", fmt.usd(s.cost_usd)));
 
   let table;
   if (!page.traces.length) {
@@ -295,6 +331,7 @@ async function tracesPage(params) {
       h("td", {}, kindBadge(t.kind)),
       h("td", { class: "num" }, fmt.ms(t.latency_ms)),
       h("td", { class: "num" }, t.input_tokens || t.output_tokens ? `${fmt.num(t.input_tokens)} → ${fmt.num(t.output_tokens)}` : "–"),
+      h("td", { class: "num cost" }, t.cost_usd ? fmt.usd(t.cost_usd) : "–"),
       h("td", { class: "num" }, t.run_count),
       h("td", {}, t.error_count
         ? h("span", { class: "status-err", title: t.error || "" }, "● ", t.error_count === 1 ? "error" : t.error_count + " errors")
@@ -304,7 +341,7 @@ async function tracesPage(params) {
     table = h("div", { class: "card" },
       h("div", { class: "table-wrap" }, h("table", {},
         h("thead", {}, h("tr", {}, h("th", {}, "Started"), h("th", {}, "Trace"), h("th", {}, "Root kind"),
-          h("th", { class: "num" }, "Latency"), h("th", { class: "num" }, "Tokens"), h("th", { class: "num" }, "Runs"), h("th", {}, "Status"))),
+          h("th", { class: "num" }, "Latency"), h("th", { class: "num" }, "Tokens"), h("th", { class: "num" }, "Cost"), h("th", { class: "num" }, "Runs"), h("th", {}, "Status"))),
         h("tbody", {}, rows))),
       h("div", { class: "pager" },
         h("span", { class: "muted small" }, `${offset + 1}–${Math.min(offset + limit, page.total)} of ${fmt.num(page.total)}`), prev, next));
@@ -360,7 +397,7 @@ async function tracePage(traceId, params) {
         h("div", { class: "tree-label", style: { paddingLeft: depth * 16 + "px" } },
           caret, kindBadge(r.kind), h("span", { class: "name", title: r.name }, r.name),
           r.error ? h("span", { class: "err-dot", title: r.error }) : null,
-          h("span", { class: "meta" }, fmt.ms(dur) + tokens)),
+          h("span", { class: "meta" }, fmt.ms(dur) + tokens + (r.cost_usd ? " · " + fmt.usd(r.cost_usd) : ""))),
         h("div", { class: "wf k-" + r.kind, title: `+${fmt.ms(r.start_ms - t0)} · ${fmt.ms(dur)}` },
           h("div", { class: "wf-bar" + (r.error ? " err" : ""), style: { left: left + "%", width: Math.min(width, 100 - left) + "%" } }))));
       if (!isClosed) children.forEach((c) => walk(c, depth + 1));
@@ -401,12 +438,19 @@ async function tracePage(traceId, params) {
     ];
     if (r.input_tokens != null || r.output_tokens != null)
       kv.push(["Tokens", `${fmt.num(r.input_tokens)} in · ${fmt.num(r.output_tokens)} out · ${fmt.num((r.input_tokens || 0) + (r.output_tokens || 0))} total`]);
-    if (r.metadata && r.metadata.model) kv.push(["Model", r.metadata.model]);
+    const model = r.model || (r.metadata && r.metadata.model);
+    if (model) kv.push(["Model", model]);
+    if (r.cost_usd != null) kv.push(["Cost", fmt.usd(r.cost_usd)]);
+    if (r.ttft_ms != null) kv.push(["Time to first token", fmt.ms(r.ttft_ms)]);
+    const tags = r.metadata && Array.isArray(r.metadata.tags) ? r.metadata.tags : [];
+    if (tags.length) kv.push(["Tags", tags.map((t) => h("span", { class: "tag" }, String(t)))]);
     detailBox.replaceChildren(
       h("div", { class: "detail-head" },
         h("div", { class: "toolbar" }, kindBadge(r.kind), h("h2", { style: { margin: 0 } }, r.name)),
         r.error ? h("div", { class: "error-box", style: { marginTop: "10px", marginBottom: 0 } }, r.error) : null),
       h("div", { class: "detail-section" }, h("dl", { class: "kv" }, kv.map(([k, v]) => [h("dt", {}, k), h("dd", {}, v)]))),
+      h("div", { class: "detail-section" }, h("div", { class: "section-title" }, h("span", {}, "Feedback")), feedbackPanel(r.id)),
+      h("div", { class: "detail-section" }, runActions(r)),
       ioBlock("Inputs", r.inputs),
       r.outputs !== undefined && r.outputs !== null ? ioBlock("Outputs", r.outputs) : null,
       r.metadata && Object.keys(r.metadata).length ? ioBlock("Metadata", r.metadata) : null);
@@ -423,7 +467,8 @@ async function tracePage(traceId, params) {
         h("div", { class: "muted toolbar" },
           h("span", { class: "mono" }, s.trace_id),
           h("span", {}, [fmt.time(s.start_ms), fmt.ms(s.latency_ms),
-            `${fmt.num(s.input_tokens)} → ${fmt.num(s.output_tokens)} tokens`, `${s.run_count} runs`].join(" · ")),
+            `${fmt.num(s.input_tokens)} → ${fmt.num(s.output_tokens)} tokens`, `${s.run_count} runs`,
+            s.cost_usd ? fmt.usd(s.cost_usd) : null].filter(Boolean).join(" · ")),
           s.error_count ? h("span", { class: "status-err" }, `${s.error_count} error(s)`) : null)),
       h("button", { onclick: route }, "Refresh")),
     h("div", { class: "trace-layout" }, h("div", { class: "card" }, treeBox), detailBox));
@@ -527,12 +572,13 @@ async function datasetPage(name) {
 
 async function experimentsPage(params) {
   const dataset = params.get("dataset") || "";
-  const list = await api("/api/experiments" + qs({ dataset }));
+  const [list, pairwise] = await Promise.all([api("/api/experiments" + qs({ dataset })), api("/api/pairwise" + qs({ dataset }))]);
   return h("div", {},
     h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Experiments"),
       h("div", { class: "muted" }, dataset ? "Dataset " + dataset : "All datasets"))),
     list.length ? experimentsTable(list, { selectable: true, showDataset: true })
-      : h("div", { class: "card empty" }, "No experiments yet. Run sinew_eval::evaluate and upload the report."));
+      : h("div", { class: "card empty" }, "No experiments yet. Run sinew_eval::evaluate and upload the report."),
+    pairwise.length ? h("div", { class: "section", style: { marginTop: "18px" } }, h("h2", {}, `Pairwise comparisons (${pairwise.length})`), pairwiseTable(pairwise)) : null);
 }
 
 function scoreCell(s) {
@@ -551,7 +597,7 @@ async function experimentPage(id) {
   const drawRows = () => {
     const rows = r.results.filter((x) => !onlyFail || x.error || x.scores.some((s) => s.score < 0.5));
     tbody.replaceChildren(...rows.map((x) => h("tr", {},
-      h("td", { class: "num muted" }, x.index + 1),
+      h("td", { class: "num muted" }, x.index + 1, x.repetition ? h("div", { class: "small" }, "rep " + (x.repetition + 1)) : null),
       h("td", {}, cellJson(x.inputs)),
       h("td", {}, cellJson(x.reference)),
       h("td", {}, x.error ? h("div", { class: "status-err small" }, x.error) : cellJson(x.output)),
@@ -570,7 +616,10 @@ async function experimentPage(id) {
       stat("Examples", a.count), stat("Errors", a.errors, a.errors > 0),
       stat("Mean latency", fmt.ms(a.mean_latency_ms)), stat("p50", fmt.ms(a.p50_latency_ms)), stat("p95", fmt.ms(a.p95_latency_ms)),
       keys.map((k) => h("div", { class: "card stat" }, h("div", { class: "label" }, k),
-        h("div", { class: "value" }, scorePill(a.scores[k].mean))))),
+        h("div", { class: "value" }, scorePill(a.scores[k].mean)))),
+      (r.summary_scores || []).map((sc) => h("div", { class: "card stat", title: sc.reason || "" }, h("div", { class: "label" }, sc.key + " (summary)"),
+        h("div", { class: "value" }, scorePill(sc.score))))),
+    r.repetitions > 1 ? h("p", { class: "muted small" }, `Each example ran ${r.repetitions} times; aggregates cover every repetition.`) : null,
     r.metadata && Object.keys(r.metadata).length ? h("div", { class: "section card pad-s" }, h("div", { class: "section-title" }, "Metadata"), jsonView(r.metadata)) : null,
     h("div", { class: "toolbar", style: { marginBottom: "8px" } }, h("label", { class: "toolbar" }, failToggle, "Only failures (error or score < 0.5)")),
     h("div", { class: "card table-wrap" }, h("table", {},

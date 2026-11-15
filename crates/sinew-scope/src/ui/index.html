@@ -10,13 +10,19 @@
 <body>
   <header class="topbar">
     <a class="brand" href="#/traces" aria-label="Sinew Scope home">
-      <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><rect width="32" height="32" rx="7" fill="currentColor"/><path d="M7 21c4-10 8 4 12-6s5-2 6-2" stroke="var(--bg)" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+      <img src="logo.png" alt="" width="24" height="24">
       <span>Sinew Scope</span>
     </a>
     <nav class="nav">
+      <a href="#/monitor" data-nav="monitor">Monitor</a>
       <a href="#/traces" data-nav="traces">Traces</a>
+      <a href="#/runs" data-nav="runs">Runs</a>
       <a href="#/datasets" data-nav="datasets">Datasets</a>
       <a href="#/experiments" data-nav="experiments">Experiments</a>
+      <a href="#/prompts" data-nav="prompts">Prompts</a>
+      <a href="#/queues" data-nav="queues">Annotate</a>
+      <a href="#/rules" data-nav="rules">Rules &amp; alerts</a>
+      <a href="#/settings" data-nav="settings">Settings</a>
     </nav>
     <div class="topbar-right">
       <label class="project-picker">
@@ -32,6 +38,7 @@
     </div>
   </header>
   <main id="app" tabindex="-1"><p class="muted pad">Loading…</p></main>
+  <script src="pages.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

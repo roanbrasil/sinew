@@ -408,8 +408,8 @@ mod tests {
         assert!(runs.iter().all(|(p, _)| p == "support-bot"));
 
         let (_, agent) = &runs[0];
-        assert_eq!(agent.kind, RunKind::Chain);
-        assert_eq!(agent.name, "invoke_agent support");
+        assert_eq!(agent.kind, RunKind::Graph);
+        assert_eq!(agent.name, "support");
         assert_eq!(agent.parent_id, None);
         assert_eq!(agent.start_ms, 1_700_000_000_000);
         assert_eq!(agent.duration_ms(), Some(1500));

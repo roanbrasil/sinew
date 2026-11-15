@@ -1464,6 +1464,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-21-prompt-hub-and-feedback"
+version = "0.0.0"
+dependencies = [
+ "sample-common",
+ "serde_json",
+ "sinew",
+ "sinew-scope",
+ "tokio",
+]
+
+[[package]]
 name = "sample-common"
 version = "0.0.0"
 dependencies = [
