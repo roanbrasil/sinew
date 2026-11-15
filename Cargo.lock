@@ -1684,6 +1684,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinew-harness"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures-util",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sinew-core",
+ "sinew-graph",
+ "sinew-mcp",
+ "sinew-trace",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "sinew-mcp"
 version = "0.1.0"
 dependencies = [
