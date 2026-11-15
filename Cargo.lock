@@ -1393,6 +1393,77 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-08-streaming"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "sample-common",
+ "serde",
+ "serde_json",
+ "sinew",
+ "tokio",
+]
+
+[[package]]
+name = "sample-09-parallel-agents"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "sample-common",
+ "serde",
+ "serde_json",
+ "sinew",
+ "tokio",
+]
+
+[[package]]
+name = "sample-10-structured-output"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "sample-common",
+ "serde",
+ "serde_json",
+ "sinew",
+ "tokio",
+]
+
+[[package]]
+name = "sample-11-mcp"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "sample-common",
+ "serde",
+ "serde_json",
+ "sinew",
+ "tokio",
+]
+
+[[package]]
+name = "sample-12-durable-agent"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "sample-common",
+ "serde",
+ "serde_json",
+ "sinew",
+ "tokio",
+]
+
+[[package]]
+name = "sample-13-scope-and-evals"
+version = "0.0.0"
+dependencies = [
+ "sample-common",
+ "serde_json",
+ "sinew",
+ "sinew-scope",
+ "tokio",
+]
+
+[[package]]
 name = "sample-common"
 version = "0.0.0"
 dependencies = [
@@ -1541,8 +1612,11 @@ dependencies = [
  "futures-util",
  "serde",
  "serde_json",
+ "sinew-checkpoint",
  "sinew-core",
+ "sinew-eval",
  "sinew-graph",
+ "sinew-mcp",
  "sinew-trace",
  "tokio",
 ]

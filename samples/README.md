@@ -29,6 +29,12 @@ cargo run -p sample-03-tools-agent -- --ollama  # real model
 | 05 | [human-in-the-loop](05-human-in-the-loop/src/main.rs) | `interrupt_before`, `get_state`, `update_state` and resuming a thread |
 | 06 | [tracing](06-tracing/src/main.rs) | `Tracer` with JSONL, in-memory and custom sinks; tracing your own code |
 | 07 | [custom-model](07-custom-model/src/main.rs) | Implementing `ChatModel`: retry and fallback wrappers |
+| 08 | [streaming](08-streaming/src/main.rs) | `chat_stream` token by token; `graph.stream()` events from inside an agent |
+| 09 | [parallel-agents](09-parallel-agents/src/main.rs) | `add_fan_out` to three reviewers running concurrently, a reducer, and a join node |
+| 10 | [structured-output](10-structured-output/src/main.rs) | `StructuredOutput` → typed structs, tool mode and JSON mode, validation with retry |
+| 11 | [mcp](11-mcp/src/main.rs) | Serve a `ToolBox` over MCP and use MCP tools from an agent (feature `mcp`) |
+| 12 | [durable-agent](12-durable-agent/src/main.rs) | `SqliteCheckpointer`: pause, restart the process, resume the thread (feature `sqlite`) |
+| 13 | [scope-and-evals](13-scope-and-evals/src/main.rs) | `HttpSink` traces to the `sinew-scope` UI and an evaluation experiment (features `eval`, `http-trace`) |
 
 `common/` holds the helper that picks the model from the command line.
 

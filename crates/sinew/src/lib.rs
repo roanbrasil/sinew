@@ -1,8 +1,24 @@
-//! Sinew: LLM building blocks (`core`), agent graphs (`graph`) and tracing (`trace`).
+//! Sinew: LLM building blocks (`core`), agent graphs (`graph`) and tracing (`trace`),
+//! plus optional durable checkpoints (`checkpoint`), MCP (`mcp`) and evaluations (`eval`).
+//!
+//! | Feature | Adds |
+//! |---|---|
+//! | `sqlite` / `postgres` | [`checkpoint`]: durable checkpointers |
+//! | `mcp` | [`mcp`]: Model Context Protocol client and server |
+//! | `eval` | [`eval`]: datasets, evaluators, experiments |
+//! | `http-trace` | `trace::HttpSink` for `sinew-scope serve` |
+//! | `full` | all of the above except Postgres |
 
 pub use sinew_core as core;
 pub use sinew_graph as graph;
 pub use sinew_trace as trace;
+
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+pub use sinew_checkpoint as checkpoint;
+#[cfg(feature = "eval")]
+pub use sinew_eval as eval;
+#[cfg(feature = "mcp")]
+pub use sinew_mcp as mcp;
 
 pub mod prelude {
     pub use sinew_core::{

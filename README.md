@@ -80,14 +80,38 @@ let done = graph.run("thread-1", None).await?;            // resumes
 - **Tracing never breaks the app**: sink I/O errors are swallowed; a run handle dropped without finishing
   is recorded as failed instead of disappearing.
 
-## Roadmap
+## Cargo features (umbrella crate)
 
-1. Streaming (token deltas + per-step events) and parallel fan-out/fan-in with reducers.
-2. Persistent checkpointers (SQLite, Postgres).
-3. `sinew-scope` server: OTLP/HTTP ingest, storage, web UI, datasets and evaluations.
-4. More providers (Gemini, Bedrock) and structured output (JSON Schema → typed structs).
+```toml
+sinew = { version = "0.1", features = ["full"] }   # or pick: sqlite, postgres, mcp, eval, http-trace
+```
 
-Done: item 1 (see [docs/streaming.md](docs/streaming.md), [docs/fan-out.md](docs/fan-out.md)) and structured output from item 4 (`StructuredOutput`).
+| Feature | Adds |
+|---|---|
+| `sqlite` / `postgres` | `sinew::checkpoint` — durable checkpointers |
+| `mcp` | `sinew::mcp` — Model Context Protocol client and server |
+| `eval` | `sinew::eval` — datasets, evaluators, experiments |
+| `http-trace` | `sinew::trace::HttpSink` — ship traces to `sinew-scope serve` |
+| `full` | all of the above except Postgres |
+
+## Documentation
+
+[Streaming](docs/streaming.md) · [Fan-out](docs/fan-out.md) · [Checkpointing](docs/checkpointing.md) ·
+[MCP](docs/mcp.md) · [Scope server](docs/scope.md) · [Evaluation](docs/evaluation.md) · [Samples](samples/README.md)
+
+## Status and roadmap
+
+Done: providers (OpenAI-compatible, Anthropic) with streaming and structured output; typed state graphs with
+cycles, parallel fan-out/fan-in, streaming events, human-in-the-loop; durable SQLite/Postgres checkpointers;
+MCP client and server; tracing with a self-hosted dashboard (OTLP ingest, waterfall UI), datasets and evaluations.
+
+Next:
+
+1. More providers (Gemini, Bedrock) and embeddings + vector-store traits for RAG.
+2. Per-field reducers and a join that waits for all branches.
+3. MCP: sampling, roots and an HTTP server transport.
+4. Scope: OTLP protobuf, live updates of in-progress traces, retention policies.
+5. Publish to crates.io.
 
 ## License
 

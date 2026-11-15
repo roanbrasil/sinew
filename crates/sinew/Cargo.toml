@@ -8,13 +8,30 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+# Durable checkpointers (`sinew::checkpoint`).
+sqlite = ["dep:sinew-checkpoint", "sinew-checkpoint/sqlite"]
+postgres = ["dep:sinew-checkpoint", "sinew-checkpoint/postgres"]
+# Model Context Protocol client and server (`sinew::mcp`).
+mcp = ["dep:sinew-mcp"]
+# Datasets and evaluations (`sinew::eval`).
+eval = ["dep:sinew-eval"]
+# `HttpSink`: ship traces to a `sinew-scope serve` instance.
+http-trace = ["sinew-trace/http"]
+# Everything above except Postgres.
+full = ["sqlite", "mcp", "eval", "http-trace"]
+
 [dependencies]
 sinew-core.workspace = true
 sinew-graph.workspace = true
 sinew-trace.workspace = true
+sinew-checkpoint = { workspace = true, optional = true, default-features = false }
+sinew-mcp = { path = "../sinew-mcp", version = "0.1.0", optional = true }
+sinew-eval = { workspace = true, optional = true }
 
 [dev-dependencies]
-futures-util.workspace = true
-serde.workspace = true
 tokio.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+futures-util.workspace = true
