@@ -31,3 +31,9 @@ sinew-eval = { path = "crates/sinew-eval", version = "0.1.0" }
 axum = "0.8"
 futures = "0.3"
 regex = "1"
+sinew-rag = { path = "crates/sinew-rag", version = "0.1.0", default-features = false }
+globset = { version = "0.4", default-features = false }
+walkdir = "2"
+csv = "1"
+pdf-extract = "0.10"
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
