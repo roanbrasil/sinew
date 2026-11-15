@@ -1,6 +1,6 @@
 //! Streaming chat responses.
 //!
-//! [`ChatModel::chat_stream`](crate::ChatModel::chat_stream) yields
+//! [`ChatModel::chat_stream`] yields
 //! [`StreamEvent`]s: text deltas, tool-call deltas, complete tool calls, usage
 //! and a final `Done`. [`StreamAccumulator`] folds them back into a
 //! [`ChatResponse`], and [`SseParser`] turns raw Server-Sent Events bytes into
@@ -18,7 +18,7 @@ use crate::{ChatModel, ChatRequest, ChatResponse, Message, Result, ToolCall, Usa
 /// A boxed, sendable stream.
 pub type BoxStream<'a, T> = Pin<Box<dyn Stream<Item = T> + Send + 'a>>;
 
-/// The stream returned by [`ChatModel::chat_stream`](crate::ChatModel::chat_stream).
+/// The stream returned by [`ChatModel::chat_stream`].
 pub type ChatStream = BoxStream<'static, Result<StreamEvent>>;
 
 /// One incremental piece of a model response.

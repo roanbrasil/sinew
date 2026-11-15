@@ -1,0 +1,19 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got. Include error text.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Minimal reproduction
+      description: Smallest code or command that shows the problem. Use the offline `ScriptedModel` if you can.
+      render: rust
+  - type: input
+    attributes:
+      label: Versions
+      description: Sinew crate versions, `rustc --version`, OS, and the model provider if relevant.
