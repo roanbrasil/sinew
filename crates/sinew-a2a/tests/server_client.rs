@@ -17,7 +17,8 @@ use sinew_graph::{
 };
 use tokio::{sync::Notify, time::timeout};
 
-const LIMIT: Duration = Duration::from_secs(10);
+/// Generous so a cold local model (live test) can load before its first token.
+const LIMIT: Duration = Duration::from_secs(60);
 
 fn card() -> AgentCard {
     AgentCard::new("Test Agent", "An agent for tests", "")
