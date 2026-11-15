@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/banner.png" alt="Sinew — chains, agent graphs and tracing in Rust" width="100%"></p>
+
 # Sinew
 
 [![CI](https://github.com/roanbrasil/sinew/actions/workflows/ci.yml/badge.svg)](https://github.com/roanbrasil/sinew/actions/workflows/ci.yml)
