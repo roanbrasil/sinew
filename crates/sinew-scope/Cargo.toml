@@ -1,0 +1,16 @@
+[package]
+name = "sinew-scope"
+description = "Terminal viewer for Sinew traces"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "sinew-scope"
+path = "src/main.rs"
+
+[dependencies]
+sinew-trace.workspace = true
+serde_json.workspace = true

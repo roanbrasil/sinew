@@ -1,0 +1,17 @@
+[package]
+name = "sinew"
+description = "LLM chains, agent graphs and tracing in Rust"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+sinew-core.workspace = true
+sinew-graph.workspace = true
+sinew-trace.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+serde_json.workspace = true

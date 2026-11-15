@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+authors = ["Roan Brasil"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1"
+thiserror = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+uuid = { version = "1", features = ["v4"] }
+sinew-core = { path = "crates/sinew-core", version = "0.1.0" }
+sinew-graph = { path = "crates/sinew-graph", version = "0.1.0" }
+sinew-trace = { path = "crates/sinew-trace", version = "0.1.0" }
