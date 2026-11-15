@@ -172,19 +172,66 @@ pub(crate) fn encode_request(model: &str, default_max: u32, req: &ChatRequest) -
             .map(|t| json!({"name": t.name, "description": t.description, "input_schema": t.parameters}))
             .collect();
     }
-    if let Some(t) = req.temperature {
+    if let Some(t) = req.temperature.filter(|_| accepts_sampling(model)) {
         body["temperature"] = json!(t);
     }
     if let Some(choice) = &req.tool_choice {
-        body["tool_choice"] = match choice {
-            ToolChoice::Auto => json!({"type": "auto"}),
-            ToolChoice::Required => json!({"type": "any"}),
-            ToolChoice::Tool(name) => json!({"type": "tool", "name": name}),
-        };
+        if accepts_forced_tool_choice(model) {
+            body["tool_choice"] = match choice {
+                ToolChoice::Auto => json!({"type": "auto"}),
+                ToolChoice::Required => json!({"type": "any"}),
+                ToolChoice::Tool(name) => json!({"type": "tool", "name": name}),
+            };
+        } else {
+            // These models reject forced tool use with a 400: ask for `auto`
+            // and steer from the system prompt instead.
+            body["tool_choice"] = json!({"type": "auto"});
+            let steer = match choice {
+                ToolChoice::Auto => None,
+                ToolChoice::Required => {
+                    Some("You must answer by calling one of the tools.".to_string())
+                }
+                ToolChoice::Tool(name) => {
+                    Some(format!("You must answer by calling the `{name}` tool."))
+                }
+            };
+            if let Some(steer) = steer {
+                body["system"] = match body["system"].as_str() {
+                    Some(s) => json!(format!("{s}\n\n{steer}")),
+                    None => json!(steer),
+                };
+            }
+        }
     }
     // `response_format` has no direct equivalent here; StructuredOutput puts
     // the schema in the system prompt (JSON mode) or uses a forced tool.
     body
+}
+
+/// Claude models whose request surface removed sampling parameters
+/// (`temperature`, `top_p`, `top_k`): sending them returns a 400.
+fn accepts_sampling(model: &str) -> bool {
+    const NO_SAMPLING: &[&str] = &[
+        "claude-fable",
+        "claude-mythos",
+        "claude-opus-5",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-sonnet-5",
+        "claude-haiku-5",
+    ];
+    !NO_SAMPLING.iter().any(|p| model.starts_with(p))
+}
+
+/// Claude models that return a 400 for `tool_choice` `any` / `tool`.
+fn accepts_forced_tool_choice(model: &str) -> bool {
+    const NO_FORCED: &[&str] = &[
+        "claude-fable-5-1",
+        "claude-mythos-5-1",
+        "claude-opus-5-5",
+        "claude-sonnet-5-5",
+    ];
+    !NO_FORCED.iter().any(|p| model.starts_with(p))
 }
 
 struct ToolBlock {
@@ -541,6 +588,25 @@ data: {"type":"message_stop"}
         let body = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n";
         let err = decode_all(AnthropicStreamDecoder::new("x"), body).unwrap_err();
         assert!(err.to_string().contains("Overloaded"));
+    }
+
+    #[test]
+    fn newer_models_get_auto_tool_choice_and_no_temperature() {
+        let req = ChatRequest::new(vec![Message::system("be brief"), Message::user("go")])
+            .with_tool_choice(ToolChoice::Tool("respond".into()))
+            .with_temperature(0.2);
+        for m in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"] {
+            let body = encode_request(m, 10, &req);
+            assert_eq!(body["tool_choice"], json!({"type": "auto"}), "{m}");
+            assert!(body["system"].as_str().unwrap().contains("`respond` tool"));
+            assert!(body.get("temperature").is_none(), "{m}");
+        }
+        let old = encode_request("claude-sonnet-4-6", 10, &req);
+        assert_eq!(old["tool_choice"]["type"], "tool");
+        assert!(old.get("temperature").is_some());
+        let opus5 = encode_request("claude-opus-5", 10, &req);
+        assert_eq!(opus5["tool_choice"]["type"], "tool");
+        assert!(opus5.get("temperature").is_none());
     }
 
     #[test]
