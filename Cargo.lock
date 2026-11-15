@@ -1658,12 +1658,14 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
  "webpki-roots 1.0.12",
 ]
@@ -1979,6 +1981,18 @@ dependencies = [
  "sinew",
  "sinew-harness",
  "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "sample-20-serve"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "sample-common",
+ "serde_json",
+ "sinew",
+ "sinew-serve",
  "tokio",
 ]
 
@@ -2312,6 +2326,31 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "sinew-serve"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "bytes",
+ "futures-core",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sinew-checkpoint",
+ "sinew-core",
+ "sinew-graph",
+ "sinew-trace",
+ "sqlx",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tower-http",
+ "uuid",
 ]
 
 [[package]]
@@ -2965,6 +3004,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b1f9c3798725016c6ee5f2f57869ec0831e8bbc0ab0310a86e787e97f41389e"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wasm-streams"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

@@ -1,0 +1,46 @@
+[package]
+name = "sinew-serve"
+description = "Low-latency HTTP server for Sinew graphs and agents (LangGraph Platform / LangServe style), with an OpenAI-compatible facade and a typed client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["llm", "agents", "server", "sse", "openai"]
+categories = ["web-programming::http-server"]
+
+[features]
+default = ["sqlite"]
+# Durable threads in SQLite (`SqliteStore`).
+sqlite = ["sinew-checkpoint/sqlite", "sqlx/sqlite"]
+# Durable threads in Postgres (`PostgresStore`).
+postgres = ["sinew-checkpoint/postgres", "sqlx/postgres"]
+
+[dependencies]
+sinew-core.workspace = true
+sinew-graph.workspace = true
+sinew-trace.workspace = true
+sinew-checkpoint.workspace = true
+sqlx.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+tokio = { workspace = true, features = ["net", "signal"] }
+tokio-util.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+futures-core.workspace = true
+futures-util.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[bench]]
+name = "ttft"
+harness = false
