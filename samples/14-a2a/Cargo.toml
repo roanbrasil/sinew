@@ -1,0 +1,14 @@
+[package]
+name = "sample-14-a2a"
+description = "Serve an agent over the Agent2Agent (A2A) protocol and delegate to it from another agent"
+version = "0.0.0"
+edition.workspace = true
+publish = false
+
+[dependencies]
+sinew = { path = "../../crates/sinew" }
+sinew-a2a = { path = "../../crates/sinew-a2a" }
+sample-common = { path = "../common" }
+tokio.workspace = true
+serde_json.workspace = true
+futures-util.workspace = true
