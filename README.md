@@ -5,6 +5,8 @@
 [![CI](https://github.com/roanbrasil/sinew/actions/workflows/ci.yml/badge.svg)](https://github.com/roanbrasil/sinew/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![MSRV 1.88](https://img.shields.io/badge/MSRV-1.88-orange.svg)](Cargo.toml)
+[![crates.io](https://img.shields.io/crates/v/sinew.svg)](https://crates.io/crates/sinew)
+[![docs.rs](https://img.shields.io/docsrs/sinew)](https://docs.rs/sinew)
 
 LLM chains, agent graphs, retrieval, tracing, evaluation and deployment in Rust: the
 LangChain / LangGraph / LangSmith stack, plus an agent harness and the MCP and A2A protocols,
@@ -27,16 +29,20 @@ as one typed, async, low-latency workspace.
 
 ## Quick start
 
-Add it to any Rust project (until the crates are on crates.io, depend on the repository; pin a
-commit with `rev = "..."` for reproducible builds):
+Add it to any Rust project:
+
+```bash
+cargo add sinew --features full
+cargo add tokio --features full
+```
 
 ```toml
 [dependencies]
-sinew = { git = "https://github.com/roanbrasil/sinew", features = ["full"] }
+sinew = { version = "0.1", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 # or only what you use, e.g.
-# sinew-core = { git = "https://github.com/roanbrasil/sinew" }
-# sinew-mcp  = { git = "https://github.com/roanbrasil/sinew", features = ["http-server"] }
+# sinew-core = "0.1"
+# sinew-mcp  = { version = "0.1", features = ["http-server"] }
 ```
 
 ```rust
@@ -134,7 +140,7 @@ Sinew is built for low latency and high throughput:
 ## Status and roadmap
 
 Next: AWS Bedrock and Cohere native providers, A2A 1.0, MCP sampling, resources and prompts,
-`sqlx` 0.9 (bundled SQLite 3.54), publishing to crates.io.
+`sqlx` 0.9 (bundled SQLite 3.54).
 
 ## Contributing and security
 

@@ -6,8 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-16
+
+First release on crates.io.
+
 ### Added
 
+- Crates `sinew-core`, `sinew-graph`, `sinew-trace`, `sinew-checkpoint`, `sinew-mcp`, `sinew-scope`, `sinew-eval` and the `sinew` umbrella; samples 01–13.
 - Native Google Gemini provider (`Gemini`) with tools, streaming, structured output and thought-signature round trips.
 - OpenAI-compatible presets: xAI Grok, Groq, Mistral, DeepSeek, OpenRouter, Together, Fireworks, Perplexity, Cerebras, NVIDIA NIM, Hugging Face; local LM Studio, llama.cpp, vLLM, SGLang, LocalAI, Jan, llamafile, TGI.
 - `providers::from_spec("provider:model")`; samples accept `--model provider:model`.
@@ -30,6 +35,5 @@ All notable changes to this project are documented here. The format follows
 
 - `pdf-extract` 0.12 (lopdf 0.42) fixes RUSTSEC-2026-0187. RUSTSEC-2026-0459 (bundled SQLite) is acknowledged until the `sqlx` 0.9 upgrade.
 
-## [0.1.0]
-
-- Initial crates: `sinew-core`, `sinew-graph`, `sinew-trace`, `sinew-checkpoint`, `sinew-mcp`, `sinew-scope`, `sinew-eval`, `sinew`; samples 01–13.
+[Unreleased]: https://github.com/roanbrasil/sinew/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/roanbrasil/sinew/releases/tag/v0.1.0
