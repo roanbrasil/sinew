@@ -31,7 +31,7 @@ const INDEX_HTML: &str = include_str!("ui/index.html");
 const APP_JS: &str = include_str!("ui/app.js");
 const PAGES_JS: &str = include_str!("ui/pages.js");
 const STYLE_CSS: &str = include_str!("ui/style.css");
-const LOGO_PNG: &[u8] = include_bytes!("../../../docs/assets/logo-128.png");
+const LOGO_PNG: &[u8] = include_bytes!("ui/logo.png");
 
 #[derive(Clone)]
 pub(crate) struct AppState {

@@ -8,6 +8,8 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
+keywords = ["mcp", "protocol", "llm", "agents", "tools"]
+categories = ["api-bindings", "network-programming", "asynchronous"]
 
 [features]
 default = []
