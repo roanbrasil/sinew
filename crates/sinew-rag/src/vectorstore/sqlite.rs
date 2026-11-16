@@ -117,8 +117,10 @@ fn to_blob(v: &[f32]) -> Vec<u8> {
 }
 
 fn from_blob(b: &[u8]) -> Vec<f32> {
-    b.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+    b.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| f32::from_le_bytes(*c))
         .collect()
 }
 
@@ -127,18 +129,17 @@ fn from_blob(b: &[u8]) -> Vec<f32> {
 #[inline]
 fn dot_blob(q: &[f32], b: &[u8]) -> f32 {
     let mut acc = [0f32; 4];
-    let qc = q.chunks_exact(4);
-    let bc = b.chunks_exact(16);
-    let (qr, br) = (qc.remainder(), bc.remainder());
-    for (x, y) in qc.zip(bc) {
-        for (j, s) in acc.iter_mut().enumerate() {
-            let o = j * 4;
-            *s += x[j] * f32::from_le_bytes([y[o], y[o + 1], y[o + 2], y[o + 3]]);
+    let (qc, qr) = q.as_chunks::<4>();
+    let (bc, br) = b.as_chunks::<16>();
+    for (x, y) in qc.iter().zip(bc) {
+        let (lanes, _) = y.as_chunks::<4>();
+        for ((s, xi), yi) in acc.iter_mut().zip(x).zip(lanes) {
+            *s += xi * f32::from_le_bytes(*yi);
         }
     }
     let mut sum = (acc[0] + acc[2]) + (acc[1] + acc[3]);
-    for (x, y) in qr.iter().zip(br.chunks_exact(4)) {
-        sum += x * f32::from_le_bytes([y[0], y[1], y[2], y[3]]);
+    for (x, y) in qr.iter().zip(br.as_chunks::<4>().0) {
+        sum += x * f32::from_le_bytes(*y);
     }
     sum
 }

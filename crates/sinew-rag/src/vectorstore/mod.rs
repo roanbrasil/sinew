@@ -260,12 +260,9 @@ pub(crate) fn dot(a: &[f32], b: &[f32]) -> f32 {
     let n = a.len().min(b.len());
     let (a, b) = (&a[..n], &b[..n]);
     let mut acc = [0f32; 8];
-    let ca = a.chunks_exact(8);
-    let cb = b.chunks_exact(8);
-    let (ra, rb) = (ca.remainder(), cb.remainder());
-    for (x, y) in ca.zip(cb) {
-        let x: &[f32; 8] = x.try_into().unwrap();
-        let y: &[f32; 8] = y.try_into().unwrap();
+    let (ca, ra) = a.as_chunks::<8>();
+    let (cb, rb) = b.as_chunks::<8>();
+    for (x, y) in ca.iter().zip(cb) {
         for ((s, xi), yi) in acc.iter_mut().zip(x).zip(y) {
             *s += xi * yi;
         }

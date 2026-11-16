@@ -329,14 +329,13 @@ pub(crate) fn guess_media_type(url: &str) -> Option<String> {
 pub fn base64_encode(bytes: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    let mut chunks = bytes.chunks_exact(3);
-    for c in &mut chunks {
+    let (chunks, rem) = bytes.as_chunks::<3>();
+    for c in chunks {
         let n = (u32::from(c[0]) << 16) | (u32::from(c[1]) << 8) | u32::from(c[2]);
         for shift in [18, 12, 6, 0] {
             out.push(T[(n >> shift) as usize & 63] as char);
         }
     }
-    let rem = chunks.remainder();
     if !rem.is_empty() {
         let b1 = rem.get(1).copied().unwrap_or(0);
         let n = (u32::from(rem[0]) << 16) | (u32::from(b1) << 8);
