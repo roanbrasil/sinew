@@ -23,20 +23,29 @@ pub(crate) struct HttpOut {
     session: Mutex<Option<String>>,
     version: Mutex<Option<String>>,
     incoming: mpsc::UnboundedSender<Value>,
+    extra: Vec<(String, String)>,
 }
 
 impl HttpOut {
-    pub(crate) fn new(url: String, incoming: mpsc::UnboundedSender<Value>) -> Self {
+    pub(crate) fn new(
+        url: String,
+        incoming: mpsc::UnboundedSender<Value>,
+        extra: Vec<(String, String)>,
+    ) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: sinew_core::providers::shared_client(),
             url,
             session: Mutex::new(None),
             version: Mutex::new(None),
             incoming,
+            extra,
         }
     }
 
     fn with_headers(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        for (k, v) in &self.extra {
+            req = req.header(k.as_str(), v.as_str());
+        }
         if let Some(s) = self.session.lock().unwrap().clone() {
             req = req.header(SESSION_HEADER, s);
         }

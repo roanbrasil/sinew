@@ -55,6 +55,126 @@ where
     }
 }
 
+/// Wraps an async closure as a [`Tool`]: the usual shape for tools that call
+/// a database, another service or the file system.
+///
+/// ```
+/// # use sinew_core::{AsyncFnTool, Tool};
+/// # use serde_json::{json, Value};
+/// let lookup = AsyncFnTool::new(
+///     "get_order",
+///     "Fetch an order by id",
+///     json!({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
+///     |args: Value| async move { Ok(json!({"id": args["id"], "status": "shipped"})) },
+/// );
+/// assert_eq!(lookup.spec().name, "get_order");
+/// ```
+pub struct AsyncFnTool<F> {
+    spec: ToolSpec,
+    f: F,
+}
+
+impl<F, Fut> AsyncFnTool<F>
+where
+    F: Fn(Value) -> Fut + Send + Sync,
+    Fut: std::future::Future<Output = Result<Value>> + Send,
+{
+    pub fn new(name: &str, description: &str, parameters: Value, f: F) -> Self {
+        Self {
+            spec: ToolSpec {
+                name: name.into(),
+                description: description.into(),
+                parameters,
+            },
+            f,
+        }
+    }
+}
+
+#[async_trait]
+impl<F, Fut> Tool for AsyncFnTool<F>
+where
+    F: Fn(Value) -> Fut + Send + Sync,
+    Fut: std::future::Future<Output = Result<Value>> + Send,
+{
+    fn spec(&self) -> ToolSpec {
+        self.spec.clone()
+    }
+    async fn call(&self, arguments: Value) -> Result<Value> {
+        (self.f)(arguments).await
+    }
+}
+
+/// A tool with typed arguments and output (feature `schemars`): the JSON
+/// Schema comes from `A`, arguments are deserialized into `A` before the call
+/// and the result is serialized from `R`.
+///
+/// ```
+/// # #[cfg(feature = "schemars")] {
+/// use sinew_core::{Tool, TypedTool};
+///
+/// #[derive(serde::Deserialize, schemars::JsonSchema)]
+/// struct Add { a: f64, b: f64 }
+///
+/// let add = TypedTool::new("add", "Add two numbers", |x: Add| async move { Ok(x.a + x.b) });
+/// assert_eq!(add.spec().parameters["required"], serde_json::json!(["a", "b"]));
+/// # }
+/// ```
+#[cfg(feature = "schemars")]
+pub struct TypedTool<A, F> {
+    spec: ToolSpec,
+    f: F,
+    _args: std::marker::PhantomData<fn(A)>,
+}
+
+#[cfg(feature = "schemars")]
+impl<A, R, F, Fut> TypedTool<A, F>
+where
+    A: serde::de::DeserializeOwned + schemars::JsonSchema + Send,
+    R: Serialize,
+    F: Fn(A) -> Fut + Send + Sync,
+    Fut: std::future::Future<Output = Result<R>> + Send,
+{
+    pub fn new(name: &str, description: &str, f: F) -> Self {
+        let mut parameters = serde_json::to_value(schemars::schema_for!(A)).unwrap_or_default();
+        if let Some(obj) = parameters.as_object_mut() {
+            obj.remove("$schema");
+            obj.remove("title");
+        }
+        Self {
+            spec: ToolSpec {
+                name: name.into(),
+                description: description.into(),
+                parameters,
+            },
+            f,
+            _args: std::marker::PhantomData,
+        }
+    }
+}
+
+#[cfg(feature = "schemars")]
+#[async_trait]
+impl<A, R, F, Fut> Tool for TypedTool<A, F>
+where
+    A: serde::de::DeserializeOwned + schemars::JsonSchema + Send,
+    R: Serialize,
+    F: Fn(A) -> Fut + Send + Sync,
+    Fut: std::future::Future<Output = Result<R>> + Send,
+{
+    fn spec(&self) -> ToolSpec {
+        self.spec.clone()
+    }
+    async fn call(&self, arguments: Value) -> Result<Value> {
+        let args: A = serde_json::from_value(arguments).map_err(|e| Error::Tool {
+            name: self.spec.name.clone(),
+            message: format!("invalid arguments: {e}"),
+        })?;
+        let out = (self.f)(args).await?;
+        Ok(serde_json::to_value(out)?)
+    }
+}
+
 /// Registry of tools, keyed by name. Cheap to clone.
 #[derive(Clone, Default)]
 pub struct ToolBox {

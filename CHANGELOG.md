@@ -16,7 +16,9 @@ All notable changes to this project are documented here. The format follows
 - `sinew-checkpoint`: checkpoint ids and namespaces (with in-place migrations), `SqliteStore`.
 - New crates: `sinew-rag` (retrieval), `sinew-harness` (agent harness and `sinew-agent` CLI), `sinew-serve` (deployment server, OpenAI-compatible endpoint), `sinew-a2a` (Agent2Agent 0.3).
 - `sinew-scope`/`sinew-trace`/`sinew-eval`: prompt hub, feedback and annotation queues, cost and TTFT tracking, monitoring dashboards, online evaluator rules and alerts, OTLP export (JSON and protobuf), full-text run search, retention, pairwise experiments.
-- Samples 14–21; umbrella features `rag`, `harness`, `serve`, `a2a`, `otlp`.
+- `sinew-mcp`: Streamable HTTP server transport (`McpServer::http_router`, `serve_http`, `McpHttpConfig`: sessions or stateless, bearer auth, origin allow-list, health route); HTTP client with token or custom headers.
+- `sinew-core`: `AsyncFnTool` (async closures) and `TypedTool` (schema derived from the argument type, feature `schemars`).
+- Samples 14–22; umbrella features `rag`, `harness`, `serve`, `a2a`, `otlp`.
 - Per-crate READMEs, logo, banner; workspace lints (`unsafe_code = "forbid"`), release profile with thin LTO; CI on Linux and macOS, docs, MSRV and cargo-deny.
 
 ### Changed

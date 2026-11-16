@@ -8,7 +8,7 @@
 //! | `harness` | `harness`: agent harness with built-in tools, subagents, permissions |
 //! | `serve` | `serve`: deployment server, client and OpenAI-compatible endpoint |
 //! | `a2a` | `a2a`: Agent2Agent protocol client and server |
-//! | `mcp` | `mcp`: Model Context Protocol client and server |
+//! | `mcp` / `mcp-http` | `mcp`: Model Context Protocol client and server (stdio; `mcp-http` adds Streamable HTTP for microservices) |
 //! | `eval` | `eval`: datasets, evaluators, experiments, prompt hub client |
 //! | `http-trace` | `trace::HttpSink` for `sinew-scope serve` |
 //! | `otlp` / `otlp-proto` | `trace::OtlpSink` for any OpenTelemetry collector |
@@ -41,9 +41,9 @@ pub use sinew_serve as serve;
 pub mod prelude {
     pub use sinew_core::{
         providers::{from_spec, Anthropic, Gemini, OpenAiCompat},
-        ChatModel, ChatModelExt, ChatPromptTemplate, ChatRequest, ChatResponse, ContentPart,
-        FnTool, Message, PromptTemplate, Role, Runnable, RunnableExt, StrOutputParser, StreamEvent,
-        StructuredMode, StructuredOutput, Tool, ToolBox, ToolCall, ToolSpec, Usage,
+        AsyncFnTool, ChatModel, ChatModelExt, ChatPromptTemplate, ChatRequest, ChatResponse,
+        ContentPart, FnTool, Message, PromptTemplate, Role, Runnable, RunnableExt, StrOutputParser,
+        StreamEvent, StructuredMode, StructuredOutput, Tool, ToolBox, ToolCall, ToolSpec, Usage,
     };
     pub use sinew_graph::{
         prebuilt::{create_supervisor, react_agent, AgentState},

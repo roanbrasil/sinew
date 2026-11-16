@@ -21,16 +21,22 @@ as one typed, async, low-latency workspace.
 | [`sinew-trace`](crates/sinew-trace) | LangSmith SDK | Run tree with timings, I/O, tokens, cost and time to first token; JSONL, memory, HTTP and OpenTelemetry (OTLP JSON / protobuf, GenAI conventions) sinks |
 | [`sinew-scope`](crates/sinew-scope) | LangSmith app | Self-hosted server and web UI: traces and waterfall, full-text run search, prompt hub, feedback and annotation queues, datasets and experiments, monitoring dashboards (latency percentiles, TTFT, errors, cost), online evaluator rules and alerts, OTLP ingest, retention |
 | [`sinew-eval`](crates/sinew-eval) | LangSmith evaluation | Datasets, evaluators (exact, contains, regex, JSON field, numeric, LLM judge), experiments with repetitions and summary metrics, pairwise A/B, prompt hub client |
-| [`sinew-mcp`](crates/sinew-mcp) | MCP adapters | Model Context Protocol client and server; `sinew-mcp --traces` lets coding assistants inspect traces |
+| [`sinew-mcp`](crates/sinew-mcp) | MCP adapters | Model Context Protocol client and server over stdio or Streamable HTTP (an axum router to merge into a microservice, with sessions, bearer auth and origin checks); `sinew-mcp --traces` lets coding assistants inspect traces |
 | [`sinew-a2a`](crates/sinew-a2a) | A2A | Agent2Agent protocol (0.3) server and client; serve any model or graph as an A2A agent, delegate to remote agents as a tool |
 | [`sinew`](crates/sinew) | umbrella | Re-exports and a `prelude`, with a feature per optional crate |
 
 ## Quick start
 
+Add it to any Rust project (until the crates are on crates.io, depend on the repository; pin a
+commit with `rev = "..."` for reproducible builds):
+
 ```toml
 [dependencies]
-sinew = { version = "0.1", features = ["full"] }
+sinew = { git = "https://github.com/roanbrasil/sinew", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
+# or only what you use, e.g.
+# sinew-core = { git = "https://github.com/roanbrasil/sinew" }
+# sinew-mcp  = { git = "https://github.com/roanbrasil/sinew", features = ["http-server"] }
 ```
 
 ```rust
@@ -72,9 +78,9 @@ cargo run -p sinew-scope -- serve                        # trace UI at http://12
 
 ## Samples
 
-[`samples/`](samples/README.md) has 21 runnable programs, from a first chat call to tools, custom graphs,
+[`samples/`](samples/README.md) has 22 runnable programs, from a first chat call to tools, custom graphs,
 human-in-the-loop, tracing, MCP, A2A, RAG, runnables, multi-agent supervisors, time travel, the harness,
-deployment with `sinew-serve`, and the prompt hub. They run offline by default; add `--ollama`, `--openai`,
+deployment with `sinew-serve`, the prompt hub, and an MCP microservice. They run offline by default; add `--ollama`, `--openai`,
 `--anthropic`, `--gemini`, `--xai` or `--model provider:model` to use a real model.
 
 ## Performance
@@ -101,7 +107,7 @@ Sinew is built for low latency and high throughput:
 | `harness` | `sinew::harness`: agent harness |
 | `serve` | `sinew::serve`: deployment server and client |
 | `a2a` | `sinew::a2a`: Agent2Agent protocol |
-| `mcp` | `sinew::mcp`: Model Context Protocol |
+| `mcp` / `mcp-http` | `sinew::mcp`: Model Context Protocol (stdio; `mcp-http` adds the HTTP client and server for microservices) |
 | `eval` | `sinew::eval`: datasets, evaluators, experiments, prompt hub client |
 | `http-trace` | `trace::HttpSink` for `sinew-scope serve` |
 | `otlp` / `otlp-proto` | `trace::OtlpSink` for any OpenTelemetry collector |
@@ -127,7 +133,7 @@ Sinew is built for low latency and high throughput:
 
 ## Status and roadmap
 
-Next: AWS Bedrock and Cohere native providers, A2A 1.0, MCP sampling and an HTTP server transport,
+Next: AWS Bedrock and Cohere native providers, A2A 1.0, MCP sampling, resources and prompts,
 `sqlx` 0.9 (bundled SQLite 3.54), publishing to crates.io.
 
 ## Contributing and security

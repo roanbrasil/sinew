@@ -46,6 +46,7 @@ cargo run -p sample-03-tools-agent -- --ollama  # real model
 | 19 | [harness](19-harness/src/main.rs) | `sinew-harness` agent in a temp workspace: file tools, a subagent, approvals, a written summary |
 | 20 | [serve](20-serve/src/main.rs) | Deploy an agent with `sinew-serve`; call it through `ServeClient` and through the OpenAI-compatible endpoint |
 | 21 | [prompt-hub-and-feedback](21-prompt-hub-and-feedback/src/main.rs) | Versioned prompts in the hub, feedback and annotation queues, cost and monitoring in `sinew-scope` |
+| 22 | [mcp-microservice](22-mcp-microservice/src/main.rs) | A microservice with REST routes plus an MCP endpoint (Streamable HTTP, bearer auth); typed async tools; an agent using them over HTTP (feature `mcp-http`) |
 
 `common/` holds the helper that picks the model from the command line.
 

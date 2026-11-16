@@ -56,6 +56,8 @@ pub mod client;
 pub mod error;
 #[cfg(feature = "http")]
 mod http;
+#[cfg(feature = "http-server")]
+pub mod http_server;
 pub mod protocol;
 pub mod server;
 pub mod traces;
@@ -63,5 +65,7 @@ pub mod traces;
 pub use agent::AgentTool;
 pub use client::{McpClient, McpTool};
 pub use error::{McpError, Result};
+#[cfg(feature = "http-server")]
+pub use http_server::McpHttpConfig;
 pub use protocol::{CallToolResult, Content, InitializeResult, McpToolInfo};
 pub use server::McpServer;

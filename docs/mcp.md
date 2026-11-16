@@ -83,6 +83,62 @@ McpServer::new("calculator", "0.1.0")
 `serve(reader, writer)` serves any byte streams. `handle_message(json)` answers a single message, if
 you want to plug in your own transport.
 
+## MCP in a microservice (Streamable HTTP)
+
+With the `http-server` feature (umbrella: `mcp-http`), `McpServer::http_router` returns an axum
+`Router` serving the MCP Streamable HTTP transport, so a service can expose its operations as MCP
+tools next to its REST routes. Tools are usually async (they hit a database or another API), and
+`TypedTool` (feature `schemars` on `sinew-core`) derives the JSON Schema from the argument struct:
+
+```rust
+use schemars::JsonSchema;
+use serde::Deserialize;
+use sinew_core::{ToolBox, TypedTool};
+use sinew_mcp::{McpHttpConfig, McpServer};
+
+#[derive(Deserialize, JsonSchema)]
+struct GetOrder {
+    /// Order id, e.g. "A-1001".
+    id: String,
+}
+
+let tools = ToolBox::new().with(TypedTool::new("get_order", "Look up an order", |a: GetOrder| async move {
+    Ok(serde_json::json!({ "id": a.id, "status": "paid" })) // query your database here
+}));
+
+let mcp = McpServer::new("orders", "1.0.0")
+    .with_tools(tools)
+    .http_router(McpHttpConfig::default().with_bearer_token(std::env::var("MCP_TOKEN")?));
+
+let app = axum::Router::new()
+    .route("/orders", axum::routing::get(list_orders))
+    .merge(mcp); // POST/DELETE /mcp and GET /health
+axum::serve(tokio::net::TcpListener::bind("0.0.0.0:8080").await?, app).await?;
+```
+
+| Behavior | Details |
+|---|---|
+| `POST /mcp` | One JSON-RPC message (batches from older clients are accepted). Requests get `application/json`; notifications and responses get `202` |
+| Sessions | `initialize` returns `Mcp-Session-Id`; later requests without it get `400`, with an unknown or expired one `404`. Idle TTL (default 1 h) and a cap on open sessions |
+| `stateless()` | No sessions, so any replica behind a load balancer can answer any request |
+| `DELETE /mcp` | Ends the session. `GET /mcp` answers `405` (no server-initiated stream) |
+| Auth | `with_bearer_token` (repeatable, for rotation; constant-time compare, `401` + `WWW-Authenticate`) |
+| Origin | `with_allowed_origins([...])` rejects browser requests from other origins (`403`), against DNS rebinding |
+| Version | An unsupported `MCP-Protocol-Version` header gets `400` |
+| `GET /health` | Unauthenticated, for probes |
+| Path | `with_path("/tools/mcp")` |
+
+Other services, or agents, connect with the HTTP client:
+
+```rust
+let client = sinew_mcp::McpClient::connect_http_with_token("http://orders:8080/mcp", token).await?;
+let agent = react_agent(model, client.toolbox().await?)?; // remote tools, local agent
+```
+
+`connect_http_with_headers` adds any other header (API keys, tenant ids, trace context). Claude Code
+can use the same service: `claude mcp add --transport http orders http://127.0.0.1:8080/mcp --header "Authorization: Bearer <token>"`.
+See [sample 22](../samples/22-mcp-microservice/src/main.rs).
+
 ## The `sinew-mcp` trace server
 
 ```bash

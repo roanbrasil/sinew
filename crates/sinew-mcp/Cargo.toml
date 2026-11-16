@@ -13,6 +13,8 @@ readme = "README.md"
 default = []
 # Streamable HTTP client transport (uses reqwest, already a dependency of sinew-core).
 http = ["dep:reqwest"]
+# Streamable HTTP server transport: `McpServer::http_router` / `serve_http` (axum).
+http-server = ["dep:axum", "dep:uuid", "tokio/net"]
 
 [[bin]]
 name = "sinew-mcp"
@@ -28,9 +30,13 @@ async-trait.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["process", "io-util", "io-std"] }
 reqwest = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["net"] }
+reqwest.workspace = true
+axum.workspace = true
 
 [lints]
 workspace = true

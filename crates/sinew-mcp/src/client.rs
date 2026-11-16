@@ -133,8 +133,38 @@ impl McpClient {
     /// Connects to a Streamable HTTP endpoint such as `http://localhost:8000/mcp`.
     #[cfg(feature = "http")]
     pub async fn connect_http(url: impl Into<String>) -> Result<Self> {
+        Self::connect_http_with_headers(url, Vec::<(String, String)>::new()).await
+    }
+
+    /// Like [`connect_http`](Self::connect_http), sending `Authorization:
+    /// Bearer <token>` on every request (service-to-service auth).
+    #[cfg(feature = "http")]
+    pub async fn connect_http_with_token(
+        url: impl Into<String>,
+        token: impl AsRef<str>,
+    ) -> Result<Self> {
+        let auth = format!("Bearer {}", token.as_ref());
+        Self::connect_http_with_headers(url, [("authorization".to_string(), auth)]).await
+    }
+
+    /// Like [`connect_http`](Self::connect_http), with extra headers on every
+    /// request (API keys, tracing headers, tenant ids).
+    #[cfg(feature = "http")]
+    pub async fn connect_http_with_headers<I, K, V>(
+        url: impl Into<String>,
+        headers: I,
+    ) -> Result<Self>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        let headers = headers
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
         let (tx, rx) = mpsc::unbounded_channel();
-        let out = crate::http::HttpOut::new(url.into(), tx);
+        let out = crate::http::HttpOut::new(url.into(), tx, headers);
         let client = Self::new(Box::new(out), rx, None);
         client.initialize().await?;
         Ok(client)

@@ -37,4 +37,6 @@ pub use stream::{
     chat_streaming, collect_stream, BoxStream, ChatStream, StreamAccumulator, StreamEvent,
 };
 pub use structured::{structured, StructuredMode, StructuredOutput};
-pub use tool::{FnTool, Tool, ToolBox, ToolSpec};
+#[cfg(feature = "schemars")]
+pub use tool::TypedTool;
+pub use tool::{AsyncFnTool, FnTool, Tool, ToolBox, ToolSpec};

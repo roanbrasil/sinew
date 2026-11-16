@@ -2008,6 +2008,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-22-mcp-microservice"
+version = "0.0.0"
+dependencies = [
+ "axum",
+ "sample-common",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sinew",
+ "tokio",
+]
+
+[[package]]
 name = "sample-common"
 version = "0.0.0"
 dependencies = [
@@ -2294,6 +2307,7 @@ name = "sinew-mcp"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "reqwest",
  "serde",
  "serde_json",
@@ -2302,6 +2316,7 @@ dependencies = [
  "sinew-trace",
  "thiserror",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
