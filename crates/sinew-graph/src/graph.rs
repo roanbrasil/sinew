@@ -217,38 +217,54 @@ impl<S> SendTo<S> {
     }
 }
 
+/// Errors from compiling and running a graph. Every variant links to its
+/// entry in the [troubleshooting guide](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md).
 #[derive(Debug, Error)]
 pub enum GraphError {
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#graph-error-build).
     #[error("invalid graph:\n  - {}", .0.join("\n  - "))]
     Build(Vec<String>),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#graph-error-node).
     #[error("node `{node}` failed: {source}")]
     Node { node: String, source: BoxError },
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#graph-error-recursion-limit).
     #[error("recursion limit of {0} supersteps reached before the graph hit END; raise it with `with_recursion_limit` or `RunConfig::with_recursion_limit` if the loop is intended")]
     RecursionLimit(usize),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#graph-error-unknown-route).
     #[error("router of `{from}` returned unknown target `{to}`")]
     UnknownRoute { from: String, to: String },
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#graph-error-interrupted).
     #[error("graph was interrupted at `{0}`; use `run` with a checkpointer to resume")]
     Interrupted(String),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#graph-error-no-checkpoint).
     #[error("no checkpoint for thread `{0}`")]
     NoCheckpoint(String),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#graph-error-checkpoint-not-found).
     #[error("no checkpoint `{checkpoint_id}` in thread `{thread_id}`")]
     CheckpointNotFound {
         thread_id: String,
         checkpoint_id: String,
     },
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#graph-error-no-checkpointer).
     #[error("this operation needs a checkpointer")]
     NoCheckpointer,
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#graph-error-checkpoint).
     #[error("checkpointer error: {0}")]
     Checkpoint(String),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#graph-error-serde).
     #[error("state serialization failed: {0}")]
     Serde(#[from] serde_json::Error),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#graph-error-no-reducer).
     #[error("superstep runs several branches ({}) but no reducer is set; call `StateGraph::with_reducer`", .0.join(", "))]
     NoReducer(Vec<String>),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#graph-error-invalid-command).
     #[error("invalid command: {0}")]
     InvalidCommand(String),
     /// A node of a subgraph returned a [`Command`] for the parent graph.
     /// Handled by the subgraph node; only seen when calling a subgraph's
     /// internals directly.
+    ///
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#graph-error-parent-command).
     #[error("a subgraph node sent a command to its parent graph")]
     ParentCommand(Box<ParentCommand>),
 }

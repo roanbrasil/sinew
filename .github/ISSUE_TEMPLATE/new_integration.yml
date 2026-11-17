@@ -1,0 +1,47 @@
+name: New integration
+description: Propose a vector store, document loader, tool, checkpointer or store
+labels: [enhancement, community]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing an integration. Each kind has a step-by-step guide in [docs/contributing/](https://github.com/roanbrasil/sinew/blob/main/docs/contributing/README.md).
+  - type: dropdown
+    attributes:
+      label: Kind
+      options:
+        - Vector store (sinew-rag `VectorStore`)
+        - Document loader (sinew-rag `Loader`)
+        - Tool (`#[sinew::tool]` or built-in harness tool)
+        - Checkpointer (`Checkpointer` / `CheckpointStore`)
+        - Long-term store (`Store`)
+        - Other
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Name and link
+      description: The service, format or library, with a link to its documentation.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Use case
+      description: What it lets you build that the existing integrations do not.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Dependencies and feature flag
+      description: New crates it needs (with versions and licenses), system libraries, and the cargo feature name you propose.
+  - type: textarea
+    attributes:
+      label: Testing plan
+      description: How `cargo test` covers it offline (recorded payloads, in-process backend, fixture files), and how the live tests run (`docker run ...`, environment variables).
+    validations:
+      required: true
+  - type: checkboxes
+    attributes:
+      label: Contribution
+      options:
+        - label: I can open a pull request for this

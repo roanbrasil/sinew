@@ -1,0 +1,57 @@
+name: New provider
+description: Propose a chat model provider (OpenAI-compatible preset or native client)
+labels: [enhancement, "area: core", community]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing a provider. The steps are in [docs/contributing/provider.md](https://github.com/roanbrasil/sinew/blob/main/docs/contributing/provider.md).
+  - type: input
+    attributes:
+      label: Provider
+      description: Name, and the spec prefix you propose (e.g. `acme` for `acme:<model>`).
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: Kind
+      options:
+        - Hosted, OpenAI-compatible endpoint (preset)
+        - Local server, OpenAI-compatible endpoint (preset)
+        - Native API (new client)
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Base URL and API reference
+      description: Base URL (or default local host and port) and a link to the API documentation.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Environment variable
+      description: Variable for the API key (hosted) or host (local), e.g. `ACME_API_KEY` or `ACME_HOST`.
+  - type: checkboxes
+    attributes:
+      label: Capabilities documented by the provider for this endpoint
+      description: Tick only what the provider documents. Unlisted features stay off.
+      options:
+        - label: Tools
+        - label: Streaming
+        - label: Images
+        - label: PDF
+        - label: Audio
+        - label: JSON schema output
+        - label: Cached-token usage reporting
+        - label: Forced tool choice
+        - label: Sampling parameters (temperature)
+  - type: textarea
+    attributes:
+      label: Differences from the OpenAI format
+      description: Parameters it rejects, extra headers, different usage or error bodies. Paste recorded request and response bodies (without keys) if you have them.
+      render: json
+  - type: checkboxes
+    attributes:
+      label: Contribution
+      options:
+        - label: I can open a pull request for this

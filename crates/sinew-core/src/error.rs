@@ -2,10 +2,14 @@ use std::time::Duration;
 
 use thiserror::Error;
 
+/// Errors from models, tools, prompts and parsers. Every variant links to
+/// its entry in the [troubleshooting guide](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md).
 #[derive(Debug, Error)]
 pub enum Error {
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-http).
     #[error("http error: {0}")]
     Http(#[from] reqwest::Error),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-provider).
     #[error("{provider} returned HTTP {status}: {body}")]
     Provider {
         provider: String,
@@ -14,6 +18,8 @@ pub enum Error {
     },
     /// The provider rejected the request with HTTP 429, or sent a
     /// `Retry-After` header with an error status (typically 503).
+    ///
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-rate-limited).
     #[error("{provider} returned HTTP {status} (rate limited): {body}")]
     RateLimited {
         provider: String,
@@ -23,29 +29,43 @@ pub enum Error {
         body: String,
     },
     /// A [`timeout`](crate::resilience::WithTimeout) elapsed.
+    ///
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-timeout).
     #[error("timed out after {0:?}")]
     Timeout(Duration),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-invalid-response).
     #[error("invalid provider response: {0}")]
     InvalidResponse(String),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-json).
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-tool-not-found).
     #[error("tool `{0}` is not registered")]
     ToolNotFound(String),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-tool).
     #[error("tool `{name}` failed: {message}")]
     Tool { name: String, message: String },
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-missing-variable).
     #[error("prompt template is missing variable `{0}`")]
     MissingVariable(String),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-template).
     #[error("malformed prompt template: {0}")]
     Template(String),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-config).
     #[error("missing configuration: {0}")]
     Config(String),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-structured).
     #[error("structured output failed: {message}")]
     Structured { message: String, raw: String },
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-stream).
     #[error("stream error: {0}")]
     Stream(String),
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-script-exhausted).
     #[error("scripted model has no responses left")]
     ScriptExhausted,
     /// Free-form error raised by a runnable or user code.
+    ///
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-other).
     #[error("{0}")]
     Other(String),
 }
