@@ -20,6 +20,7 @@ as one typed, async, low-latency workspace.
 | [`sinew-checkpoint`](crates/sinew-checkpoint) | LangGraph checkpointers | Durable SQLite and Postgres checkpointers and a SQLite `Store` |
 | [`sinew-memory`](crates/sinew-memory) | LangMem / Mem0 | Long-term memory across threads on any `Store`: model-driven extraction of facts, preferences and episodes, add / update / delete consolidation, semantic or keyword recall per user, a memory-enabled ReAct agent and a harness hook |
 | [`sinew-harness`](crates/sinew-harness) | Deep agents / Claude-Code-style harness | `Agent` with file, shell, HTTP and todo tools, subagents, hooks, permission policies and approvals, context compaction, budgets, guardrails, skills, MCP tools; the `sinew-agent` CLI |
+| [`sinew-tools`](crates/sinew-tools) | LangChain community tools | Built-in tools, one feature per family: web search (Tavily, Brave, SearXNG), web fetch with Readability and an SSRF guard, Wikipedia, calculator, date/time, HTTP requests with a host allow-list, e-mail (SMTP send, IMAP read) |
 | [`sinew-serve`](crates/sinew-serve) | LangGraph Platform / LangServe | HTTP server for graphs and agents: assistants, threads, runs (wait, SSE stream, background, cancel, join), multitask strategies, webhooks, an OpenAI-compatible `/v1/chat/completions`, and a typed client |
 | [`sinew-trace`](crates/sinew-trace) | LangSmith SDK | Run tree with timings, I/O, tokens, cost and time to first token; JSONL, memory, HTTP and OpenTelemetry (OTLP JSON / protobuf, GenAI conventions) sinks |
 | [`sinew-scope`](crates/sinew-scope) | LangSmith app | Self-hosted server and web UI: traces and waterfall, full-text run search, prompt hub, feedback and annotation queues, datasets and experiments, monitoring dashboards (latency percentiles, TTFT, errors, cost), online evaluator rules and alerts, OTLP ingest, retention |
@@ -124,6 +125,7 @@ Sinew is built for low latency and high throughput:
 | `sqlite` / `postgres` | `sinew::checkpoint`: durable checkpointers |
 | `rag` (+ `pgvector`, `qdrant`, `pdf`) | `sinew::rag`: retrieval stack |
 | `harness` | `sinew::harness`: agent harness |
+| `tools` | `sinew::builtin_tools`: web search, web fetch, Wikipedia, calculator, date/time, HTTP, e-mail ([guide](docs/builtin-tools.md)) |
 | `memory` | `sinew::memory`: long-term memory (extraction, dedup, recall) |
 | `serve` | `sinew::serve`: deployment server and client |
 | `a2a` | `sinew::a2a`: Agent2Agent protocol |
@@ -139,7 +141,7 @@ Sinew is built for low latency and high throughput:
 
 - **Architecture:** [Crates, layers and data flow](docs/architecture.md) · [Architecture decision records](docs/adr/README.md)
 - **Coming from Python:** [Migrating from LangChain / LangGraph / LangSmith](docs/migrating-from-langchain.md)
-- **Models:** [Providers and capabilities](docs/providers.md) · [Tools](docs/tools.md) · [Prompt templates](docs/prompts.md) · [Runnables](docs/runnables.md) · [Multimodal](docs/multimodal.md) · [Resilience and cost](docs/resilience.md) · [Model routing](docs/routing.md) · [Streaming](docs/streaming.md)
+- **Models:** [Providers and capabilities](docs/providers.md) · [Tools](docs/tools.md) · [Built-in tools](docs/builtin-tools.md) · [Prompt templates](docs/prompts.md) · [Runnables](docs/runnables.md) · [Multimodal](docs/multimodal.md) · [Resilience and cost](docs/resilience.md) · [Model routing](docs/routing.md) · [Streaming](docs/streaming.md)
 - **Graphs:** [Fan-out](docs/fan-out.md) · [Commands and interrupts](docs/commands-and-interrupts.md) · [Subgraphs](docs/subgraphs.md) · [Time travel](docs/time-travel.md) · [Checkpointing](docs/checkpointing.md) · [Durable execution](docs/durable-execution.md) · [Store](docs/store.md) · [Multi-agent](docs/multi-agent.md) · [Loop detection](docs/loop-detection.md) · [Diagrams](docs/visualization.md)
 - **Agents and retrieval:** [Harness](docs/harness.md) · [Context engineering](docs/context.md) · [Guardrails](docs/guardrails.md) · [Long-term memory](docs/memory.md) · [RAG](docs/rag.md)
 - **Deployment and protocols:** [Production checklist](docs/production.md) · [Serve](docs/serve.md) · [MCP](docs/mcp.md) · [A2A](docs/a2a.md)

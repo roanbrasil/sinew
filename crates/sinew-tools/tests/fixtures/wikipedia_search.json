@@ -1,0 +1,40 @@
+{
+    "pages": [
+        {
+            "id": 29414838,
+            "key": "Rust_(programming_language)",
+            "title": "Rust (programming language)",
+            "excerpt": "<span class=\"searchmatch\">Rust</span> is a general-purpose <span class=\"searchmatch\">programming</span> <span class=\"searchmatch\">language</span> that emphasizes performance, type safety, concurrency, and memory safety. <span class=\"searchmatch\">Rust</span> supports multiple programming",
+            "matched_title": null,
+            "anchor": null,
+            "description": "General-purpose programming language",
+            "thumbnail": {
+                "mimetype": "image/svg+xml",
+                "width": 60,
+                "height": 60,
+                "duration": null,
+                "url": "//thumb.wikimedia.org/wikipedia/commons/thumb/d/d5/Rust_programming_language_black_logo.svg/60px-Rust_programming_language_black_logo.svg.png?utm_source=en.wikipedia.org&utm_campaign=rest&utm_content=thumbnail"
+            }
+        },
+        {
+            "id": 81297551,
+            "key": "Outline_of_the_Rust_programming_language",
+            "title": "Outline of the Rust programming language",
+            "excerpt": "topical guide to <span class=\"searchmatch\">Rust</span>: <span class=\"searchmatch\">Rust</span> is a multi-paradigm <span class=\"searchmatch\">programming</span> <span class=\"searchmatch\">language</span> emphasizing performance, memory safety, and concurrency. <span class=\"searchmatch\">Rust</span> was initially developed",
+            "matched_title": null,
+            "anchor": null,
+            "description": "Overview of and topical guide to Rust",
+            "thumbnail": null
+        },
+        {
+            "id": 144144,
+            "key": "List_of_programming_languages_by_type",
+            "title": "List of programming languages by type",
+            "excerpt": "Raku Red Ruby <span class=\"searchmatch\">Rust</span> Scheme SequenceL Smalltalk Source TREE-META Wolfram Mathematica (Wolfram <span class=\"searchmatch\">language</span>) Zig Modular <span class=\"searchmatch\">programming</span> is a <span class=\"searchmatch\">programming</span> paradigm of",
+            "matched_title": null,
+            "anchor": null,
+            "description": "List of programming languages types and the languages that meet its description",
+            "thumbnail": null
+        }
+    ]
+}

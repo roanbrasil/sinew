@@ -1,0 +1,24 @@
+{
+  "query": "rust async runtime",
+  "follow_up_questions": null,
+  "answer": null,
+  "images": [],
+  "results": [
+    {
+      "url": "https://tokio.rs/",
+      "title": "Tokio - An asynchronous Rust runtime",
+      "content": "Tokio is an asynchronous runtime for the Rust programming language. It provides the building blocks needed for writing network applications.",
+      "score": 0.91,
+      "raw_content": null
+    },
+    {
+      "url": "https://rust-lang.github.io/async-book/",
+      "title": "Asynchronous Programming in Rust",
+      "content": "This book aims to be a comprehensive, up-to-date guide to using Rust's async language features and libraries.",
+      "score": 0.83,
+      "raw_content": null,
+      "published_date": "2025-03-02"
+    }
+  ],
+  "response_time": 1.21
+}

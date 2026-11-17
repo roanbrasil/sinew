@@ -140,6 +140,11 @@ impl Tool for Inventory {
 }
 ```
 
+## Built-in tools
+
+Web search, web fetch, Wikipedia, a calculator, date/time, HTTP requests and e-mail are ready-made in
+`sinew-tools`, one cargo feature per family: see [Built-in tools](builtin-tools.md).
+
 ## Using tools
 
 - **Agents**: `react_agent(model, tools)`, the supervisor and swarm prebuilts, and the harness all take a
