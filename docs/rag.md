@@ -199,11 +199,21 @@ lists unique sources; `cited()` returns the passages whose `[n]` marker appears 
 `with_system_prompt`, `with_template` (`{context}`, `{question}`), `with_temperature` and
 `with_max_chars` tune it.
 
+## Evaluation
+
+`sinew-eval` with the `rag` feature measures a RAG pipeline: faithfulness, answer relevance,
+context precision and recall, citation accuracy (judged by any `ChatModel`), answer similarity
+(embeddings), hit rate, recall, precision, MRR and nDCG at `k` (no model), and writes synthetic
+test sets from your chunks. `rag_output(&answer)` turns a `RagAnswer` into an experiment output.
+See [Evaluating RAG](evaluation.md#evaluating-rag).
+
 ## Sample
 
 `samples/15-rag` indexes this repository's `docs/*.md` (header split, then size split, section
 path prepended to each chunk), builds a hybrid BM25 + vector retriever, answers a question with
-`RagChain` and lists the sources, then runs a ReAct agent with the retriever as a tool.
+`RagChain` and lists the sources, then runs a ReAct agent with the retriever as a tool. Last, it
+writes a two-question synthetic test set from `docs/checkpointing.md` and prints the RAG metrics
+of the chain's answers.
 
 ```bash
 cargo run -p sample-15-rag                         # offline: FakeEmbeddings + scripted model

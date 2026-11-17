@@ -323,6 +323,157 @@ and one that searches before reading) with every trajectory evaluator, and check
 `Trajectory::from_runs` on the harness trace agrees with the messages. Sample 13 runs a trajectory
 experiment next to the answer experiment.
 
+## Evaluating RAG
+
+A retrieval-augmented answer can fail in the retriever (the right passage is not found), in the
+generator (the answer goes beyond the passages), or in both. The `rag` module scores each part.
+Enable it with the `rag` feature (it adds a dependency on `sinew-rag`; with the umbrella crate,
+features `eval` and `rag` together turn it on):
+
+```toml
+[dependencies]
+sinew-eval = { version = "0.1", features = ["rag"] }
+```
+
+### The sample
+
+Every metric reads a `RagSample`: the `question`, the retrieved `contexts` in rank order (each
+with text and an optional document `id`), the `answer`, an optional `reference` answer and the
+`relevant_ids` of the documents that answer the question.
+
+```rust
+use sinew_eval::rag::RagSample;
+
+let sample = RagSample::new("Where is the Eiffel Tower?", "In Paris [1].")
+    .with_context("paris", "The Eiffel Tower is in Paris.")
+    .with_context("rome", "The Colosseum is in Rome.")
+    .with_reference("Paris")
+    .with_relevant_ids(["paris"]);
+// From a RagChain answer: context ids are the document ids, else their `source` metadata.
+let sample = RagSample::from_answer(question, &rag.invoke(question).await?);
+```
+
+### Metrics
+
+| Metric | Key | Needs | Score |
+|---|---|---|---|
+| `Faithfulness::new(judge)` | `faithfulness` | contexts | supported claims / claims. The judge splits the answer into atomic claims (call 1), then checks each against the contexts (call 2). No claims (for example "I don't know") scores 1; claims without contexts score 0. |
+| `AnswerRelevance::new(judge)` | `answer_relevance` | | judge grade 0–1 of how directly the answer addresses the question (not whether it is correct) |
+| `AnswerRelevance::from_generated_questions(judge, embeddings, n)` | `answer_relevance` | embeddings | the judge writes `n` questions the answer answers; mean cosine similarity of their embeddings to the question's (negative counts as 0). An answer the judge marks noncommittal scores 0. |
+| `ContextPrecision::new(judge)` | `context_precision` | contexts, reference (else the answer) | the judge marks each context useful or not; average precision `Σ_k precision@k · useful_k / Σ useful_k`, so useful contexts ranked first score higher |
+| `ContextRecall::new(judge)` | `context_recall` | contexts, reference | reference statements attributable to the contexts / reference statements |
+| `CitationAccuracy::new(judge)` | `citation_accuracy` | contexts, `[n]` markers | supported citations / citations. A citation of a passage that does not exist is unsupported without a judge call. No citations scores 0. |
+| `AnswerSimilarity::new(embeddings)` | `answer_similarity` | reference | cosine similarity of answer and reference embeddings (negative counts as 0); `.threshold(t)` makes it pass/fail |
+| `RetrievalMetric::hit_rate(k)` | `hit_rate@k` | context ids, relevant ids | 1 if a relevant id is in the top `k` |
+| `RetrievalMetric::recall(k)` | `recall@k` | context ids, relevant ids | relevant ids in the top `k` / relevant ids |
+| `RetrievalMetric::precision(k)` | `precision@k` | context ids, relevant ids | relevant ids in the top `k` / `k` |
+| `RetrievalMetric::mrr()` | `mrr` | context ids, relevant ids | `1 / rank` of the first relevant id; its mean over the experiment is the MRR |
+| `RetrievalMetric::ndcg(k)` | `ndcg@k` | context ids, relevant ids | nDCG with binary relevance, `log2(rank + 1)` discount |
+
+The judge metrics follow the RAGAS definitions. They send structured requests at temperature 0
+(`StructuredMode::Tool` by default, `.mode(StructuredMode::Json)` for models without forced tool
+choice) and cut each context to 2000 characters (`.max_context_chars(n)`). A nested array that
+arrives as a JSON-encoded string, which some local models send in tool mode, is decoded; any
+other invalid reply is retried once and then scores 0 with the reason. A verdict the judge skips
+counts as negative. The retrieval metrics make no model call; a retrieved id that appears twice
+(two chunks of one source) counts once, and an example without relevant ids scores 0 with a
+reason. The functions `hit_rate_at_k`, `recall_at_k`, `precision_at_k`, `reciprocal_rank` and
+`ndcg_at_k` work on plain id lists. Every metric has `.named(key)`.
+
+Each metric implements `RagMetric`, whose `measure(&sample)` returns a `MetricResult`: the
+score, a reason (`2 of 3 claims supported; unsupported: ...`), metric-specific `details` (claims
+and verdicts, per-context usefulness, generated questions and similarities, ranks) and the
+`JudgeUsage` of its model calls (calls, input and output tokens, and the cost in USD when the
+model is in the price table). Implement `RagMetric` for your own metric and wrap it in
+`RagEvaluator` to use it in an experiment.
+
+```rust
+use sinew_eval::rag::{Faithfulness, RagMetric};
+
+let r = Faithfulness::new(judge_model.clone()).measure(&sample).await;
+println!("{:.2} {} ({})", r.score, r.reason, r.usage.summary()); // 0.67 2 of 3 claims ... (2 calls, 812 tokens)
+println!("{}", r.details["claims"]);
+```
+
+### In an experiment
+
+The built-in metrics are also `Evaluator`s. The target returns `rag_output(&answer)` (or
+`sample.to_output()`), an object `{"answer": ..., "contexts": [{"id": ..., "content": ...}]}`, and
+`RagSample::from_eval` reads the question from `inputs.question` (or `query`, `input`, or a string
+input), the reference from the reference string or `reference.answer`, and the relevant ids from
+`reference.relevant_ids` or `reference.source_ids`. The judge usage is appended to each score's
+reason (`... [judge: 2 calls, 812 tokens, $0.000210]`).
+
+```rust
+use sinew_eval::{rag::*, Experiment};
+
+let report = Experiment::new(&dataset)
+    .evaluator(RetrievalMetric::hit_rate(4))
+    .evaluator(RetrievalMetric::mrr())
+    .evaluator(RetrievalMetric::ndcg(4))
+    .evaluator(Faithfulness::new(judge.clone()))
+    .evaluator(AnswerRelevance::new(judge.clone()))
+    .evaluator(ContextPrecision::new(judge.clone()))
+    .evaluator(ContextRecall::new(judge.clone()))
+    .evaluator(CitationAccuracy::new(judge))
+    .evaluator(AnswerSimilarity::new(embeddings))
+    .run(|inputs: Value| {
+        let rag = rag.clone();
+        async move {
+            let q = inputs["question"].as_str().unwrap_or_default().to_string();
+            rag.invoke(&q).await.map(|a| rag_output(&a))
+        }
+    })
+    .await;
+println!("{}", report.summary());
+```
+
+A judge and a target that share a `ScriptedModel` need `.concurrency(1)` so replies stay in
+order.
+
+### Synthetic test sets
+
+`TestsetGenerator` writes question / reference answer / source id triples from documents with
+any `ChatModel`:
+
+```rust
+use sinew_eval::rag::{QuestionType, TestsetGenerator};
+
+let testset = TestsetGenerator::new(model)
+    .count(20)
+    .question_types([QuestionType::Factual, QuestionType::MultiHop])
+    .seed(7)
+    .generate(&chunks)
+    .await;
+println!("{} examples, {} duplicates dropped, {}", testset.len(), testset.duplicates, testset.usage.summary());
+testset.to_dataset("docs-synthetic").save_jsonl("docs-synthetic.jsonl")?;
+```
+
+Attempts alternate between the question types. Each takes the next document of an order shuffled
+by the seed; a multi-hop attempt pairs it with the document that shares the most words with it
+and asks for a question that needs both. The model answers `{"question", "answer"}` and sees the
+questions written so far. Documents shorter than 50 characters are skipped (`.min_chars(n)`) and
+each is cut to 2000 in the prompt (`.max_chars(n)`). A question whose word set overlaps an
+earlier one by at least 0.8 (Jaccard, `.dedup_threshold(t)`) is dropped as a duplicate.
+Generation stops at `count` examples or after `3 × count` model calls (`.max_attempts(n)`); model
+errors and empty replies are listed in `testset.failures` and never abort the run.
+
+The source ids are the document ids, else their `source` metadata, else `doc-<index>`. Generate
+from the same chunks you index so they match the ids your retriever returns. `to_dataset` gives
+examples with inputs `{"question": ...}`, reference `{"answer": ..., "source_ids": [...]}` and
+metadata `{"question_type": ..., "synthetic": true}`, ready for the metrics above. Review a
+synthetic set before trusting it: the generator's model can write questions the documents do not
+answer.
+
+### Sample and tests
+
+`samples/15-rag` writes a factual and a multi-hop question from two chunks of
+`docs/checkpointing.md`, answers them with its `RagChain` and prints every metric (offline with a
+scripted judge and `FakeEmbeddings`; with `--ollama` the same model generates, answers and
+judges). `crates/sinew-eval/tests/rag.rs` checks every metric against hand-computed scores with
+scripted judges and `FakeEmbeddings`, validates the retrieval metrics on a small labeled set with
+a BM25 retriever, and runs the generator and a full experiment.
+
 ## Uploading to sinew-scope
 
 ```rust

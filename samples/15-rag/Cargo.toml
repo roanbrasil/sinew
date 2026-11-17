@@ -1,6 +1,6 @@
 [package]
 name = "sample-15-rag"
-description = "Index the repo docs and answer questions with sources (hybrid BM25 + vector retrieval, RAG chain, retriever tool)"
+description = "Index the repo docs and answer questions with sources (hybrid BM25 + vector retrieval, RAG chain, retriever tool) and evaluate the chain with RAG metrics"
 version = "0.0.0"
 edition.workspace = true
 publish = false
@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 sinew = { path = "../../crates/sinew" }
 sinew-rag = { path = "../../crates/sinew-rag" }
+sinew-eval = { path = "../../crates/sinew-eval", features = ["rag"] }
 sample-common = { path = "../common" }
 tokio.workspace = true
 serde_json.workspace = true

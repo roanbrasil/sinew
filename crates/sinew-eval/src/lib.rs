@@ -11,6 +11,11 @@
 //! For agents, the [`trajectory`] module scores the path as well as the
 //! answer: which tools were called, in which order, and at what cost.
 //!
+//! For retrieval-augmented generation, the `rag` module (feature `rag`)
+//! scores faithfulness, answer relevance, context precision and recall,
+//! citation accuracy, semantic similarity and ranking quality, and writes
+//! synthetic test sets from a corpus.
+//!
 //! ```no_run
 //! # async fn demo() -> Result<(), sinew_eval::EvalError> {
 //! use serde_json::{json, Value};
@@ -40,6 +45,8 @@ mod dataset;
 mod evaluators;
 pub mod hub;
 pub mod pairwise;
+#[cfg(feature = "rag")]
+pub mod rag;
 pub mod summary;
 pub mod trajectory;
 

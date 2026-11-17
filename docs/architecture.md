@@ -34,6 +34,7 @@ flowchart BT
     n_graph --> n_trace
     n_rag --> n_core
     n_eval --> n_core
+    n_eval -. feature rag .-> n_rag
     n_checkpoint --> n_graph
     n_mcp --> n_core
     n_mcp --> n_graph
@@ -73,7 +74,8 @@ Read bottom to top:
 1. **Foundation:** `sinew-core` (and the `sinew-macros` proc macro it re-exports).
 2. **Observation:** `sinew-trace`, which only needs `sinew-core` types.
 3. **Composition:** `sinew-graph` (uses `sinew-trace` to record node, model and tool runs),
-   `sinew-rag` and `sinew-eval` (both only on `sinew-core`).
+   `sinew-rag` and `sinew-eval` (both on `sinew-core`; `sinew-eval` uses `sinew-rag` for its RAG
+   metrics behind the `rag` feature).
 4. **Persistence:** `sinew-checkpoint`, a set of `Checkpointer` / `Store` backends for
    `sinew-graph`.
 5. **Applications and protocols:** `sinew-harness`, `sinew-serve`, `sinew-mcp`, `sinew-a2a`,
@@ -96,7 +98,7 @@ about graphs, and graphs carry an optional `Tracer`.
 | `sinew-graph` | `StateGraph<S>`, `CompiledGraph<S>`, the Pregel loop, `Command` / interrupts, `Checkpointer` trait and `MemoryCheckpointer`, `Store` trait and `InMemoryStore`, stream modes and `GraphEvent`, policies, diagrams, prebuilt ReAct / supervisor / swarm agents, `GraphError` | `sinew-core`, `sinew-trace` | [crates/sinew-graph/src/lib.rs](../crates/sinew-graph/src/lib.rs), [pregel.rs](../crates/sinew-graph/src/pregel.rs) |
 | `sinew-checkpoint` | `SqliteCheckpointer`, `PostgresCheckpointer`, `SqliteStore`, `CheckpointStore` (retention, listing) | `sinew-graph` | [crates/sinew-checkpoint/src/lib.rs](../crates/sinew-checkpoint/src/lib.rs) |
 | `sinew-rag` | `Embeddings`, loaders, splitters, `VectorStore` (in-memory, SQLite, pgvector, Qdrant), retrievers, `RagChain`, its own `Error` | `sinew-core` | [crates/sinew-rag/src/lib.rs](../crates/sinew-rag/src/lib.rs) |
-| `sinew-eval` | datasets, `Evaluator` / `SummaryEvaluator` / `PairwiseEvaluator`, experiments, prompt hub client | `sinew-core` | [crates/sinew-eval/src/lib.rs](../crates/sinew-eval/src/lib.rs) |
+| `sinew-eval` | datasets, `Evaluator` / `SummaryEvaluator` / `PairwiseEvaluator`, experiments, prompt hub client, RAG metrics and synthetic test sets (feature `rag`) | `sinew-core`, `sinew-rag` (optional, feature `rag`) | [crates/sinew-eval/src/lib.rs](../crates/sinew-eval/src/lib.rs) |
 | `sinew-mcp` | MCP client and server (stdio, Streamable HTTP), `sinew-mcp` binary, `McpError` | `sinew-core`, `sinew-graph`, `sinew-trace` | [crates/sinew-mcp/src/lib.rs](../crates/sinew-mcp/src/lib.rs) |
 | `sinew-a2a` | A2A 0.3 server and client, `AgentExecutor`, `TaskStore`, `A2aError` | `sinew-core`, `sinew-graph` | [crates/sinew-a2a/src/lib.rs](../crates/sinew-a2a/src/lib.rs) |
 | `sinew-harness` | `Agent` / `AgentBuilder`, built-in tools, `Hook`, `Guardrail`, permissions, budgets, compaction, `sinew-agent` binary, `HarnessError` | `sinew-core`, `sinew-graph`, `sinew-trace`, `sinew-mcp` (optional, feature `mcp`) | [crates/sinew-harness/src/lib.rs](../crates/sinew-harness/src/lib.rs) |
@@ -257,7 +259,7 @@ crate features they turn on:
 | `http-trace` | `sinew-trace/http` (`HttpSink`) |
 | `otlp` | `sinew-trace/otlp` (`OtlpSink`, JSON) |
 | `otlp-proto` | `otlp` + `sinew-trace/otlp-proto` |
-| `rag` | `sinew-rag` with `sqlite`; with `mcp`, also `sinew-mcp/rag` (MCP resources as `Document`s) |
+| `rag` | `sinew-rag` with `sqlite`; with `mcp`, also `sinew-mcp/rag` (MCP resources as `Document`s); with `eval`, also `sinew-eval/rag` (RAG metrics) |
 | `pgvector` | `rag` + `sinew-rag/pgvector` |
 | `qdrant` | `rag` + `sinew-rag/qdrant` |
 | `pdf` | `rag` + `sinew-rag/pdf` (`pdf-extract`) |

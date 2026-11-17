@@ -11,6 +11,11 @@ readme = "README.md"
 keywords = ["llm", "evaluation", "datasets", "benchmark", "langsmith"]
 categories = ["development-tools::testing", "science"]
 
+[features]
+# `sinew_eval::rag`: RAG metrics (faithfulness, context precision/recall, retrieval
+# metrics, embedding similarity) and synthetic test-set generation.
+rag = ["dep:sinew-rag"]
+
 [dependencies]
 sinew-core.workspace = true
 sinew-trace.workspace = true
@@ -22,6 +27,7 @@ reqwest.workspace = true
 uuid.workspace = true
 futures.workspace = true
 regex.workspace = true
+sinew-rag = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio.workspace = true

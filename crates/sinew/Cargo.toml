@@ -30,7 +30,7 @@ http-trace = ["sinew-trace/http"]
 otlp = ["sinew-trace/otlp"]
 otlp-proto = ["otlp", "sinew-trace/otlp-proto"]
 # Retrieval: embeddings, loaders, splitters, vector stores, retrievers (`sinew::rag`).
-rag = ["dep:sinew-rag", "sinew-rag/sqlite", "sinew-mcp?/rag"]
+rag = ["dep:sinew-rag", "sinew-rag/sqlite", "sinew-mcp?/rag", "sinew-eval?/rag"]
 pgvector = ["rag", "sinew-rag/pgvector"]
 qdrant = ["rag", "sinew-rag/qdrant"]
 pdf = ["rag", "sinew-rag/pdf"]

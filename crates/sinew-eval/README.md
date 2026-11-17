@@ -36,6 +36,8 @@ ScopeClient::new("http://127.0.0.1:7878").upload_experiment(&ds, &report).await?
 
 For agents, trajectory evaluators score the tool calls as well as the answer: `TrajectoryMatch` (exact, unordered, in-order subsequence, superset, subset; optional JSON-subset argument matching), `ToolUsage`, `TrajectoryBudget`, `RelativeEfficiency`, `NoRepeatedCalls` and `TrajectoryJudge`. Build a `Trajectory` from messages or from trace runs.
 
+For RAG pipelines, the `rag` feature adds `sinew_eval::rag`: faithfulness, answer relevance, context precision and recall, and citation accuracy judged by any `ChatModel`; answer similarity with embeddings; hit rate, recall, precision, MRR and nDCG at `k` without a model; and `TestsetGenerator`, which writes synthetic question / answer / source id triples from your documents.
+
 Upload datasets and reports to [`sinew-scope`](../sinew-scope) with `ScopeClient` to compare experiments in the browser. See the [evaluation guide](../../docs/evaluation.md).
 
 How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
