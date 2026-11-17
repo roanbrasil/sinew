@@ -214,6 +214,7 @@ async function route() {
     rules: () => rulesPage(),
     settings: () => settingsPage(),
     pairwise: () => pairwisePage(parts[1]),
+    playground: () => playgroundPage(params),
   };
   try {
     const node = await (views[page] || views.traces)();

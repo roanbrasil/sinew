@@ -1,5 +1,6 @@
 // Sinew Scope web UI, part 2: monitoring, run search, prompt hub, feedback,
-// annotation queues, rules & alerts, settings and pairwise comparisons.
+// annotation queues, rules & alerts, settings, pairwise comparisons and the
+// playground.
 // Loaded before app.js; uses its helpers (h, api, fmt, ...) at call time.
 "use strict";
 
@@ -347,7 +348,8 @@ function runActions(r) {
         ev.preventDefault();
         if (!qsel.value) return;
         await attempt(msg, () => apiPost(`/api/queues/${encodeURIComponent(qsel.value)}/items`, { run_ids: [r.id] }), "Added to the annotation queue.");
-      } }, qsel, h("button", { type: "submit", class: "small" }, "Add to queue"))),
+      } }, qsel, h("button", { type: "submit", class: "small" }, "Add to queue")),
+      r.kind === "llm" ? h("button", { type: "button", class: "small", onclick: () => go("/playground", { run: r.id }) }, "Open in playground") : null),
     msg);
 }
 
@@ -448,6 +450,7 @@ async function promptPage(name, params) {
         h("div", { class: "top actions", style: { justifyContent: "space-between" } },
           h("h2", { style: { margin: 0 } }, `v${selected.version} `, h("span", { class: "mono muted small" }, selected.commit), " ", tagsOf(selected.tags)),
           h("div", { class: "actions" }, cmpSel,
+            h("button", { onclick: () => go("/playground", { prompt: `${name}@${selected.commit}` }) }, "Open in playground"),
             h("button", { onclick: () => editHolder.replaceChildren(promptForm({ ...selected, description: p.description }, (r) => go("/prompt/" + encodeURIComponent(name), { v: r.commit }))) }, "Edit as new version"))),
         selected.message ? h("p", { class: "muted" }, selected.message) : null,
         h("div", { class: "section-title" }, h("span", {}, "Template"), copyButton(() => selected.template)),
@@ -747,4 +750,317 @@ async function pairwisePage(id) {
         h("td", {}, x.error ? h("div", { class: "status-err small" }, x.error) : cellJson(x.output_a)),
         h("td", {}, cellJson(x.output_b)),
         keys.map((k) => { const sc = x.scores.find((y) => y.key === k); return h("td", {}, sc ? pref(sc.preference) : "–", sc && sc.reason ? h("div", { class: "reason", title: sc.reason }, sc.reason) : null); })))))));
+}
+
+// ---------- playground ----------
+
+const PG_ROLES = ["system", "user", "assistant"];
+
+/** `{name}` placeholders (not `{{`/`}}` escapes), in order of first use. */
+function templateVars(texts) {
+  const seen = [];
+  for (const t of texts) {
+    const clean = String(t || "").replace(/\{\{|\}\}/g, "");
+    for (const m of clean.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) if (!seen.includes(m[1])) seen.push(m[1]);
+  }
+  return seen;
+}
+
+/** Reads a `text/event-stream` response body, calling `onEvent(name, data)`. */
+async function readSse(res, onEvent) {
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      let name = "message";
+      const data = [];
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) name = line.slice(6).trim();
+        else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+      }
+      if (data.length) onEvent(name, JSON.parse(data.join("\n")));
+    }
+  }
+}
+
+async function playgroundPage(params) {
+  const [catalog, prompts] = await Promise.all([api("/api/playground/models"), api("/api/prompts").catch(() => [])]);
+  const msg = h("div");
+  const state = {
+    messages: [{ role: "system", content: "You are a helpful assistant." }, { role: "user", content: "{question}" }],
+    vars: {},
+    models: [],
+    templating: true,
+    promptName: "",
+    source: null,
+  };
+
+  // ----- options (declared first: prefill writes into them) -----
+  const temp = h("input", { type: "number", step: "0.1", min: "0", max: "2", placeholder: "model default", size: 8 });
+  const maxTok = h("input", { type: "number", min: "1", placeholder: "model default", size: 8 });
+  const fmtSel = h("select", {}, h("option", { value: "" }, "text"), h("option", { value: "json" }, "JSON object"), h("option", { value: "json_schema" }, "JSON schema"));
+  const schemaBox = h("textarea", { rows: 5, placeholder: '{"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}' });
+  const toolsBox = h("textarea", { rows: 5, placeholder: '[{"name": "search", "description": "Search the web", "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}}]' });
+  const streamBox = h("input", { type: "checkbox", checked: true });
+  const schemaWrap = h("label", { class: "wide", style: { display: "none" } }, "JSON schema", schemaBox);
+  fmtSel.addEventListener("change", () => { schemaWrap.style.display = fmtSel.value === "json_schema" ? "" : "none"; });
+
+  const loadVersion = (v) => {
+    state.messages = v.messages && v.messages.length ? v.messages.map((m) => ({ ...m })) : [{ role: "user", content: v.template }];
+    state.templating = true;
+    state.promptName = v.name;
+    state.source = h("span", {}, "Loaded ", h("a", { href: `#/prompt/${encodeURIComponent(v.name)}?v=${v.commit}` }, `${v.name} v${v.version}`), ` (${v.commit}).`);
+    const cfg = v.model_config || {};
+    const specs = Array.isArray(cfg.model) ? cfg.model : cfg.model ? [cfg.model] : [];
+    if (specs.length) state.models = specs.slice();
+    if (cfg.temperature != null) temp.value = cfg.temperature;
+    if (cfg.max_tokens != null) maxTok.value = cfg.max_tokens;
+  };
+
+  // Prefill from a traced run or a prompt-hub version.
+  const runId = params.get("run");
+  const promptRef = params.get("prompt");
+  if (runId) {
+    const p = await api(`/api/runs/${encodeURIComponent(runId)}/playground`);
+    state.messages = p.messages.map((m) => ({ ...m }));
+    state.templating = false;
+    state.source = h("span", {}, "Opened from run ",
+      h("a", { href: `#/trace/${encodeURIComponent(p.trace_id)}?run=${encodeURIComponent(p.run_id)}` }, fmt.short(p.run_id)),
+      ` (project ${p.project}, model ${p.model || p.name})`,
+      p.spec && !p.spec_allowed ? `; ${p.spec} is not allowed on this server, pick another model.` : ".");
+    if (p.spec && p.spec_allowed) state.models = [p.spec];
+    if (p.temperature != null) temp.value = p.temperature;
+    if (p.max_tokens != null) maxTok.value = p.max_tokens;
+    if (p.tools) toolsBox.value = JSON.stringify(p.tools, null, 2);
+    const rf = p.response_format;
+    if (rf && rf.type) {
+      fmtSel.value = rf.type;
+      if (rf.type === "json_schema") { schemaBox.value = JSON.stringify(rf.schema, null, 2); schemaWrap.style.display = ""; }
+    }
+  } else if (promptRef) {
+    const at = promptRef.indexOf("@");
+    const name = at < 0 ? promptRef : promptRef.slice(0, at);
+    const ref = at < 0 ? "latest" : promptRef.slice(at + 1);
+    loadVersion(await api(`/api/prompts/${encodeURIComponent(name)}/${encodeURIComponent(ref)}`));
+  }
+
+  // ----- messages + variables -----
+  const msgBox = h("div", { class: "pg-messages" });
+  const varBox = h("div", { class: "form-grid" });
+  const tmplBox = h("input", { type: "checkbox", checked: state.templating, onchange: (e) => { state.templating = e.target.checked; drawVars(); } });
+  const drawVars = () => {
+    if (!state.templating) {
+      varBox.replaceChildren(h("p", { class: "hint wide" }, "Messages are sent exactly as written."));
+      return;
+    }
+    const names = templateVars(state.messages.map((m) => m.content));
+    varBox.replaceChildren(...(names.length ? names.map((n) => {
+      const input = h("textarea", { rows: 2, placeholder: n });
+      input.value = state.vars[n] ?? "";
+      input.addEventListener("input", () => { state.vars[n] = input.value; });
+      return h("label", {}, "{" + n + "}", input);
+    }) : [h("p", { class: "hint wide" }, "No {variables} in the messages.")]));
+  };
+  const drawMessages = () => {
+    msgBox.replaceChildren(...state.messages.map((m, i) => {
+      const role = h("select", { "aria-label": "Role", onchange: (e) => { m.role = e.target.value; } },
+        [...new Set([...PG_ROLES, m.role])].map((r) => h("option", { value: r, selected: r === m.role }, r)));
+      const text = h("textarea", { rows: Math.min(12, Math.max(2, (m.content || "").split("\n").length + 1)), "aria-label": "Message " + (i + 1) });
+      text.value = m.content || "";
+      text.addEventListener("input", () => { m.content = text.value; drawVars(); });
+      return h("div", { class: "pg-msg" },
+        h("div", { class: "actions" }, role,
+          m.tool_calls && m.tool_calls.length ? h("span", { class: "small muted" }, `${m.tool_calls.length} tool call(s) kept`) : null,
+          h("button", { type: "button", class: "small", style: { marginLeft: "auto" }, disabled: state.messages.length < 2,
+            onclick: () => { state.messages.splice(i, 1); drawMessages(); drawVars(); } }, "Remove")),
+        text);
+    }), h("button", { type: "button", class: "small", onclick: () => {
+      const last = state.messages[state.messages.length - 1];
+      state.messages.push({ role: last && last.role === "user" ? "assistant" : "user", content: "" });
+      drawMessages();
+    } }, "Add message"));
+  };
+
+  // ----- models -----
+  const modelBox = h("div", { class: "pg-models" });
+  const known = catalog.models.map((m) => m.spec);
+  const specIn = h("input", { placeholder: "provider:model, e.g. ollama:llama3.2", size: 30, list: "pg-specs", "aria-label": "Model spec" });
+  const specList = h("datalist", { id: "pg-specs" }, known.map((s) => h("option", { value: s })));
+  const drawModels = () => {
+    const all = [...new Set([...known, ...state.models])];
+    modelBox.replaceChildren(...(
+      all.length ? all.map((s) => h("label", { class: "check pg-model" },
+        h("input", { type: "checkbox", checked: state.models.includes(s), onchange: (e) => {
+          if (e.target.checked) { if (!state.models.includes(s)) state.models.push(s); } else state.models = state.models.filter((x) => x !== s);
+        } }), h("span", { class: "mono small" }, s))) : [h("span", { class: "hint" }, "No models found. Type a spec below (for Ollama: ollama:<model>).")]));
+  };
+  const addSpec = (ev) => {
+    ev.preventDefault();
+    const s = specIn.value.trim();
+    if (s && !state.models.includes(s)) state.models.push(s);
+    specIn.value = "";
+    drawModels();
+  };
+
+  // ----- prompt hub loader -----
+  const sourceBox = h("div", { class: "hint" }, state.source);
+  const saveName = h("input", { placeholder: "prompt name", value: state.promptName || "", size: 18, "aria-label": "Prompt name" });
+  const promptSel = h("select", { "aria-label": "Prompt" }, h("option", { value: "" }, "Load from prompt hub…"),
+    prompts.map((p) => h("option", { value: p.name }, p.name)));
+  const refIn = h("input", { placeholder: "latest, prod, v3…", size: 10, "aria-label": "Version or tag" });
+  const loadPrompt = async () => {
+    if (!promptSel.value) return;
+    const v = await attempt(msg, () => api(`/api/prompts/${encodeURIComponent(promptSel.value)}/${encodeURIComponent(refIn.value.trim() || "latest")}`));
+    if (!v) return;
+    loadVersion(v);
+    tmplBox.checked = true;
+    saveName.value = v.name;
+    sourceBox.replaceChildren(state.source);
+    drawMessages(); drawVars(); drawModels();
+  };
+
+  // ----- outputs -----
+  const outBox = h("div", { class: "pg-outputs" }, h("div", { class: "card empty" }, "Pick models and press Run."));
+  const traceLine = h("div", { class: "small muted" });
+  const outCard = (spec) => {
+    const text = h("div", { class: "pg-text" });
+    const metrics = h("div", { class: "pg-metrics small muted" }, "running…");
+    const extra = h("div");
+    const card = h("div", { class: "card pad-m pg-out" }, h("div", { class: "section-title" }, h("span", { class: "mono" }, spec)), text, extra, metrics);
+    return { card, text, metrics, extra, buf: "" };
+  };
+  const fillResult = (slot, r) => {
+    if (r.output) {
+      slot.text.textContent = r.output.content || "";
+      const calls = r.output.tool_calls || [];
+      slot.extra.replaceChildren(...(calls.length ? [h("div", { class: "section-title" }, "Tool calls"), jsonView(calls)] : []));
+    }
+    if (r.error) slot.extra.replaceChildren(h("div", { class: "error-box" }, r.error));
+    const parts = [
+      ["Latency", fmt.ms(r.latency_ms)],
+      ["TTFT", fmt.ms(r.ttft_ms)],
+      ["Tokens", r.input_tokens != null ? `${fmt.num(r.input_tokens)} → ${fmt.num(r.output_tokens)}` : "–"],
+      ["Cost", r.cost_usd != null ? fmt.usd(r.cost_usd) : "–"],
+    ];
+    slot.metrics.replaceChildren(
+      ...parts.map(([k, v]) => h("span", {}, k + " ", h("b", {}, v))),
+      r.model ? h("span", {}, "Model ", h("b", {}, r.model)) : "",
+      r.ignored && r.ignored.length ? h("span", { title: "The model does not support these options" }, "Ignored: " + r.ignored.join(", ")) : "");
+  };
+
+  const buildBody = () => {
+    const body = { models: state.models.slice(), messages: state.messages.map((m) => ({ ...m })) };
+    if (state.templating) {
+      const names = templateVars(state.messages.map((m) => m.content));
+      if (names.length) body.variables = Object.fromEntries(names.map((n) => [n, state.vars[n] ?? ""]));
+    }
+    if (temp.value !== "") body.temperature = Number(temp.value);
+    if (maxTok.value !== "") body.max_tokens = Number(maxTok.value);
+    if (toolsBox.value.trim()) body.tools = JSON.parse(toolsBox.value);
+    if (fmtSel.value === "json") body.response_format = { type: "json" };
+    if (fmtSel.value === "json_schema") body.response_format = { type: "json_schema", name: "output", schema: JSON.parse(schemaBox.value || "{}") };
+    return body;
+  };
+
+  const runBtn = h("button", { class: "primary", type: "button" }, "Run");
+  runBtn.addEventListener("click", async () => {
+    msg.replaceChildren();
+    let body;
+    try { body = buildBody(); } catch (e) { msg.replaceChildren(notice("err", "Invalid JSON in tools or schema: " + e.message)); return; }
+    if (!body.models.length) { msg.replaceChildren(notice("err", "Pick at least one model.")); return; }
+    const slots = body.models.map(outCard);
+    outBox.replaceChildren(...slots.map((s) => s.card));
+    traceLine.replaceChildren();
+    runBtn.disabled = true;
+    const done = (d) => {
+      (d.results || []).forEach((r) => fillResult(slots[r.index], r));
+      traceLine.replaceChildren("Traced in project ", h("b", {}, d.project), ": ",
+        h("a", { href: "#/trace/" + encodeURIComponent(d.trace_id) }, fmt.short(d.trace_id)),
+        d.trace_error ? " (not stored: " + d.trace_error + ")" : "");
+    };
+    try {
+      if (!streamBox.checked) {
+        done(await apiPost("/api/playground/run", body));
+      } else {
+        const headers = { "Content-Type": "application/json", Accept: "text/event-stream" };
+        const token = store.get("sinew.token");
+        if (token) headers.Authorization = "Bearer " + token;
+        const res = await fetch("/api/playground/run", { method: "POST", headers, body: JSON.stringify({ ...body, stream: true }) });
+        if (!res.ok) {
+          let err = res.statusText;
+          try { err = (await res.json()).error || err; } catch (_) { /* not JSON */ }
+          throw new ApiError(res.status, err);
+        }
+        await readSse(res, (name, data) => {
+          if (name === "delta") { const s = slots[data.index]; s.buf += data.text; s.text.textContent = s.buf; }
+          else if (name === "result") fillResult(slots[data.index], data);
+          else if (name === "done") done(data);
+        });
+      }
+    } catch (e) {
+      msg.replaceChildren(notice("err", String(e.message || e)));
+    } finally {
+      runBtn.disabled = false;
+    }
+  });
+
+  // ----- save to prompt hub -----
+  const saveMsg = h("input", { placeholder: "commit message", size: 24, "aria-label": "Commit message" });
+  const saveTags = h("input", { placeholder: "tags, e.g. staging", size: 14, "aria-label": "Tags" });
+  const save = async (ev) => {
+    ev.preventDefault();
+    const name = saveName.value.trim();
+    if (!name) return;
+    const bad = state.messages.find((m) => !PG_ROLES.includes(m.role));
+    if (bad) { msg.replaceChildren(notice("err", `The prompt hub stores system, user and assistant messages; remove the ${bad.role} message first.`)); return; }
+    const model_config = {};
+    if (state.models.length) model_config.model = state.models.length === 1 ? state.models[0] : state.models.slice();
+    if (temp.value !== "") model_config.temperature = Number(temp.value);
+    if (maxTok.value !== "") model_config.max_tokens = Number(maxTok.value);
+    await attempt(msg, () => apiPost("/api/prompts", {
+      name, template: "", messages: state.messages.map((m) => ({ role: m.role, content: m.content || "" })),
+      model_config, message: saveMsg.value.trim() || null,
+      tags: saveTags.value.split(",").map((t) => t.trim()).filter(Boolean),
+    }), (x) => x.created ? `Saved ${x.name} version ${x.version} (${x.commit}).` : `No change: same as ${x.name} version ${x.version}.`);
+  };
+
+  drawMessages(); drawVars(); drawModels();
+  const allowed = catalog.allowed_providers.length ? catalog.allowed_providers.join(", ") : "none";
+  return h("div", {},
+    pageHead("Playground", "Run a prompt against several models side by side. Models run on the server with its own credentials; allowed providers: " + allowed + "."),
+    msg,
+    h("div", { class: "pg-layout" },
+      h("div", {},
+        h("div", { class: "card pad-m section" },
+          h("div", { class: "actions", style: { justifyContent: "space-between" } },
+            h("h2", { style: { margin: 0 } }, "Prompt"),
+            h("div", { class: "actions" }, promptSel, refIn, h("button", { type: "button", onclick: loadPrompt }, "Load"))),
+          sourceBox,
+          msgBox,
+          h("div", { class: "section-title", style: { marginTop: "12px" } }, h("span", {}, "Variables"),
+            h("label", { class: "check small" }, tmplBox, "Treat {placeholders} as variables")),
+          varBox),
+        h("div", { class: "card pad-m section" },
+          h("h2", {}, "Models"),
+          modelBox,
+          h("form", { class: "actions", style: { marginTop: "8px" }, onsubmit: addSpec }, specIn, specList, h("button", { type: "submit", class: "small" }, "Add")),
+          h("div", { class: "form-grid", style: { marginTop: "12px" } },
+            h("label", {}, "Temperature", temp),
+            h("label", {}, "Max tokens", maxTok),
+            h("label", {}, "Response format", fmtSel),
+            schemaWrap,
+            h("label", { class: "wide" }, "Tools (JSON array of {name, description, parameters}; optional)", toolsBox)),
+          h("div", { class: "actions", style: { marginTop: "12px" } }, runBtn, h("label", { class: "check small" }, streamBox, "Stream"))),
+        h("form", { class: "card pad-m section", onsubmit: save },
+          h("h2", {}, "Save as prompt version"),
+          h("p", { class: "hint" }, "Commits the messages, the selected models, temperature and max tokens as a new version in the prompt hub."),
+          h("div", { class: "actions" }, saveName, saveMsg, saveTags, h("button", { type: "submit" }, "Save version")))),
+      h("div", {}, h("h2", {}, "Outputs"), traceLine, outBox)));
 }

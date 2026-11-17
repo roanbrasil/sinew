@@ -3,7 +3,7 @@
 //! ```text
 //! sinew-scope serve  [--db scope.db] [--addr 127.0.0.1:7878] [--token T]
 //!                    [--pricing prices.json] [--retention-days N] [--no-engine]
-//!                    [--metrics-auth]
+//!                    [--metrics-auth] [--playground-providers LIST]
 //! sinew-scope import <traces.jsonl> [--db scope.db] [--project P]
 //! sinew-scope view   <traces.jsonl> [--trace <id-prefix>] [--io]
 //! sinew-scope <traces.jsonl> [--trace <id-prefix>] [--io]   # same as `view`
@@ -17,6 +17,10 @@ const USAGE: &str = "usage:
   sinew-scope serve  [--db scope.db] [--addr 127.0.0.1:7878] [--token T]
                      [--pricing prices.json] [--retention-days N] [--no-engine]
                      [--metrics-auth]   (require the token on GET /metrics)
+                     [--playground-providers ollama,openai,...|local|all|none]
+                     (providers the playground may call with this server's
+                      API keys; default: local providers only; also read from
+                      SINEW_SCOPE_PLAYGROUND_PROVIDERS)
                      (token also read from SINEW_SCOPE_TOKEN)
   sinew-scope import <traces.jsonl> [--db scope.db] [--project default]
   sinew-scope view   <traces.jsonl> [--trace <id-prefix>] [--io]
@@ -31,6 +35,7 @@ enum Cmd {
         retention_days: Option<u32>,
         no_engine: bool,
         metrics_auth: bool,
+        playground_providers: Option<Vec<String>>,
     },
     Import {
         path: String,
@@ -66,6 +71,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Cmd, String> {
     let (mut path, mut trace, mut io) = (None, None, false);
     let (mut pricing, mut retention_days, mut no_engine) = (None, None, false);
     let mut metrics_auth = false;
+    let mut playground_providers = None;
     while let Some(a) = it.next() {
         let mut value = |flag: &str| it.next().ok_or(format!("{flag} needs a value"));
         match a.as_str() {
@@ -87,6 +93,11 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Cmd, String> {
             }
             "--no-engine" => no_engine = true,
             "--metrics-auth" => metrics_auth = true,
+            "--playground-providers" => {
+                playground_providers = Some(sinew_scope::playground::parse_providers(&value(
+                    "--playground-providers",
+                )?)?)
+            }
             "-h" | "--help" => return Err(String::new()),
             _ if !a.starts_with("--") && path.is_none() => path = Some(a),
             _ => return Err(format!("unexpected argument `{a}`")),
@@ -101,6 +112,14 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Cmd, String> {
             retention_days,
             no_engine,
             metrics_auth,
+            playground_providers: match playground_providers {
+                Some(p) => Some(p),
+                None => std::env::var("SINEW_SCOPE_PLAYGROUND_PROVIDERS")
+                    .ok()
+                    .map(|v| sinew_scope::playground::parse_providers(&v))
+                    .transpose()
+                    .map_err(|e| format!("SINEW_SCOPE_PLAYGROUND_PROVIDERS: {e}"))?,
+            },
         },
         "import" => Cmd::Import {
             path: path.ok_or("missing trace file")?,
@@ -145,6 +164,7 @@ fn main() -> ExitCode {
             retention_days,
             no_engine,
             metrics_auth,
+            playground_providers,
         } => run_async(async move {
             let addr: SocketAddr = addr
                 .parse()
@@ -176,6 +196,18 @@ fn main() -> ExitCode {
                 store.set_settings(&s).await.map_err(|e| e.to_string())?;
                 eprintln!("retention: {days} days");
             }
+            let mut playground = sinew_scope::PlaygroundConfig::default();
+            if let Some(p) = playground_providers {
+                playground = playground.allow_providers(p);
+            }
+            eprintln!(
+                "playground providers: {}",
+                if playground.allowed_providers().is_empty() {
+                    "none".to_string()
+                } else {
+                    playground.allowed_providers().join(", ")
+                }
+            );
             sinew_scope::server::serve_with_config(
                 addr,
                 store,
@@ -183,6 +215,7 @@ fn main() -> ExitCode {
                     token,
                     disable_engine: no_engine,
                     metrics_auth,
+                    playground,
                     ..Default::default()
                 },
             )

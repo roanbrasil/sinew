@@ -312,3 +312,14 @@ button.small, .small-btn { font-size: 12px; padding: 2px 8px; }
 .review { display: grid; grid-template-columns: 1fr minmax(300px, 380px); gap: 16px; align-items: start; }
 @media (max-width: 1000px) { .review { grid-template-columns: 1fr; } }
 .switch { display: inline-flex; align-items: center; gap: 6px; }
+
+/* playground */
+.pg-layout { display: grid; grid-template-columns: minmax(380px, 1fr) minmax(380px, 1.2fr); gap: 16px; align-items: start; }
+@media (max-width: 1000px) { .pg-layout { grid-template-columns: 1fr; } }
+.pg-messages { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; align-items: flex-start; }
+.pg-msg { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.pg-msg textarea { width: 100%; box-sizing: border-box; }
+.pg-models { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.pg-outputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-top: 8px; }
+.pg-text { white-space: pre-wrap; word-break: break-word; min-height: 2.5em; margin-bottom: 8px; }
+.pg-metrics { display: flex; flex-wrap: wrap; gap: 4px 12px; border-top: 1px solid var(--border); padding-top: 6px; }
