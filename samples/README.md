@@ -39,7 +39,7 @@ cargo run -p sample-03-tools-agent -- --ollama  # real model
 | 12 | [durable-agent](12-durable-agent/src/main.rs) | `SqliteCheckpointer`: pause, restart the process, resume the thread (feature `sqlite`) |
 | 13 | [scope-and-evals](13-scope-and-evals/src/main.rs) | `HttpSink` traces to the `sinew-scope` UI and evaluation experiments on the answer and on the agent trajectory (features `eval`, `http-trace`) |
 | 14 | [a2a](14-a2a/src/main.rs) | Serve an agent over the Agent2Agent protocol and delegate to it from another agent with `A2aAgentTool`; `message/stream` |
-| 15 | [rag](15-rag/src/main.rs) | Load and split `docs/*.md`, embed, hybrid BM25 + vector retrieval, `RagChain` answers with sources, retriever as an agent tool (`--embed provider:model`) |
+| 15 | [rag](15-rag/src/main.rs) | Load and split `docs/*.md`, embed, hybrid BM25 + vector retrieval, `RagChain` answers with sources, retriever as an agent tool (`--embed provider:model`), then a synthetic test set and RAG metrics (faithfulness, context precision/recall, citations, MRR, nDCG) |
 | 16 | [runnables](16-runnables/src/main.rs) | LCEL-style pipelines: `prompt.pipe(model).pipe(parser)`, `parallel`, branches, retry/fallback wrappers and cost per model |
 | 17 | [multi-agent](17-multi-agent/src/main.rs) | `create_supervisor` routing between worker agents with handoff tools |
 | 18 | [time-travel](18-time-travel/src/main.rs) | `interrupt()` inside a node, `Command::resume`, state history, replay and fork from a past checkpoint |

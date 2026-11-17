@@ -1,7 +1,9 @@
 //! Retrieval-augmented generation over this repository's `docs/*.md`:
 //! load → split by Markdown headers and size → embed → hybrid retrieval
 //! (BM25 + vectors, reciprocal rank fusion) → answer with cited sources.
-//! Then the same retriever is handed to a ReAct agent as a tool.
+//! Then the same retriever is handed to a ReAct agent as a tool, and the
+//! chain is evaluated: a synthetic test set is written from two chunks and
+//! every RAG metric scores the chain's answers in an experiment.
 //!
 //! ```bash
 //! cargo run -p sample-15-rag                                   # offline: fake embeddings + scripted model
@@ -19,6 +21,13 @@ use std::{path::PathBuf, sync::Arc, time::Instant};
 use sample_common::{is_live, pick_model, BoxError};
 use serde_json::json;
 use sinew::prelude::*;
+use sinew_eval::{
+    rag::{
+        rag_output, AnswerRelevance, AnswerSimilarity, CitationAccuracy, ContextPrecision,
+        ContextRecall, Faithfulness, QuestionType, RetrievalMetric, TestsetGenerator,
+    },
+    Experiment,
+};
 use sinew_rag::{
     embeddings_from_spec, english_tokenize, retriever_tool, Bm25Retriever, CachedEmbeddings,
     DirectoryLoader, Document, Embeddings, EnsembleRetriever, FakeEmbeddings, InMemoryVectorStore,
@@ -99,7 +108,8 @@ async fn main() -> Result<(), BoxError> {
         .collect();
 
     // 3. Embed (cached) into an in-memory store.
-    let embeddings = CachedEmbeddings::new(pick_embeddings()?);
+    let base_embeddings = pick_embeddings()?;
+    let embeddings = CachedEmbeddings::new(base_embeddings.clone());
     println!(
         "Indexing {} chunks from {} files with `{}` ...",
         chunks.len(),
@@ -116,7 +126,8 @@ async fn main() -> Result<(), BoxError> {
     let hybrid: Arc<dyn Retriever> = Arc::new(
         EnsembleRetriever::new(vec![
             Arc::new(
-                Bm25Retriever::from_documents_with_tokenizer(chunks, english_tokenize).with_k(6),
+                Bm25Retriever::from_documents_with_tokenizer(chunks.clone(), english_tokenize)
+                    .with_k(6),
             ),
             Arc::new(VectorStoreRetriever::new(store).with_k(6)),
         ])
@@ -145,6 +156,7 @@ async fn main() -> Result<(), BoxError> {
     ])?;
     let question = question();
     let rag = RagChain::new(model.clone(), hybrid.clone()).with_max_chars(1500);
+    let eval_rag = RagChain::new(answer_model()?, hybrid.clone()).with_max_chars(1500);
     let t = Instant::now();
     let out = rag.invoke(&question).await?;
     println!("Q: {question}\n");
@@ -197,8 +209,141 @@ async fn main() -> Result<(), BoxError> {
             _ => println!("  {}", m.content),
         }
     }
+    // 7. Evaluate the chain on a synthetic test set.
+    evaluate_chain(&chunks, eval_rag, base_embeddings).await?;
+
     if !is_live() {
         println!("\n(offline run: add --ollama or --model provider:model for real answers)");
+    }
+    Ok(())
+}
+
+/// The model that answers the evaluation questions (scripted offline).
+fn answer_model() -> Result<Arc<dyn ChatModel>, BoxError> {
+    pick_model(vec![
+        Message::assistant(
+            "`PostgresCheckpointer` is the one to use when several processes or hosts share \
+             threads [3].",
+        ),
+        Message::assistant(
+            "Use `SqliteCheckpointer` on a single machine [1]: connect it to a SQLite file and \
+             pass it to `with_checkpointer` when compiling the graph [2].",
+        ),
+    ])
+}
+
+/// Writes two questions (one factual, one multi-hop) from the first two
+/// chunks of `docs/checkpointing.md`, answers them with the RAG chain and
+/// scores the answers with every RAG metric.
+async fn evaluate_chain(
+    chunks: &[Document],
+    rag: RagChain,
+    embeddings: Arc<dyn Embeddings>,
+) -> Result<(), BoxError> {
+    let corpus: Vec<Document> = chunks
+        .iter()
+        .filter(|c| c.source() == Some("docs/checkpointing.md"))
+        .take(2)
+        .cloned()
+        .collect();
+    let generator = pick_model(vec![
+        Message::assistant(
+            r#"{"question": "Which checkpointer should several processes or hosts sharing threads use?",
+                "answer": "PostgresCheckpointer."}"#,
+        ),
+        Message::assistant(
+            r#"{"question": "How do I make graph threads durable on one machine, and how is the checkpointer attached to the graph?",
+                "answer": "Use SqliteCheckpointer (connected to a SQLite file) and attach it with with_checkpointer when compiling the graph."}"#,
+        ),
+    ])?;
+    let testset = TestsetGenerator::new(generator)
+        .count(2)
+        .question_types([QuestionType::Factual, QuestionType::MultiHop])
+        .seed(1) // offline: the factual question comes from the first chunk
+        .generate(&corpus)
+        .await;
+    println!(
+        "\nSynthetic test set ({} questions, generator: {}):",
+        testset.len(),
+        testset.usage.summary()
+    );
+    for e in &testset.examples {
+        println!(
+            "  [{}] {}\n      sources: {}",
+            e.question_type.as_str(),
+            e.question,
+            e.source_ids.join(", ")
+        );
+    }
+    for f in &testset.failures {
+        println!("  skipped: {f}");
+    }
+    let dataset = testset.to_dataset("rag-checkpointing");
+
+    // The judge (scripted offline) replies in evaluator order for each example.
+    let first = [
+        r#"{"claims": ["PostgresCheckpointer is for several processes or hosts sharing threads."]}"#,
+        r#"{"verdicts": [{"index": 1, "supported": true, "reason": "stated in the table"}]}"#,
+        r#"{"score": 1, "reasoning": "names the checkpointer asked for"}"#,
+        r#"{"verdicts": [{"index": 1, "useful": false}, {"index": 2, "useful": false},
+            {"index": 3, "useful": true}, {"index": 4, "useful": false}]}"#,
+        r#"{"statements": [{"statement": "PostgresCheckpointer.", "attributed": true}]}"#,
+        r#"{"verdicts": [{"index": 1, "supported": true}]}"#,
+    ];
+    let second = [
+        r#"{"claims": ["SqliteCheckpointer suits a single machine.", "It connects to a SQLite file.",
+            "It is passed to with_checkpointer when compiling the graph."]}"#,
+        r#"{"verdicts": [{"index": 1, "supported": true}, {"index": 2, "supported": true},
+            {"index": 3, "supported": false, "reason": "no retrieved passage shows with_checkpointer"}]}"#,
+        r#"{"score": 1, "reasoning": "answers both parts"}"#,
+        r#"{"verdicts": [{"index": 1, "useful": true}, {"index": 2, "useful": false},
+            {"index": 3, "useful": true}, {"index": 4, "useful": false}]}"#,
+        r#"{"statements": [{"statement": "Use SqliteCheckpointer with a SQLite file.", "attributed": true},
+            {"statement": "Attach it with with_checkpointer.", "attributed": false}]}"#,
+        r#"{"verdicts": [{"index": 1, "supported": true}, {"index": 2, "supported": false}]}"#,
+    ];
+    let judge = pick_model(
+        first
+            .iter()
+            .chain(&second)
+            .map(|r| Message::assistant(*r))
+            .collect(),
+    )?;
+    let report = Experiment::new(&dataset)
+        .evaluator(RetrievalMetric::hit_rate(4))
+        .evaluator(RetrievalMetric::recall(4))
+        .evaluator(RetrievalMetric::mrr())
+        .evaluator(RetrievalMetric::ndcg(4))
+        .evaluator(Faithfulness::new(judge.clone()))
+        .evaluator(AnswerRelevance::new(judge.clone()))
+        .evaluator(ContextPrecision::new(judge.clone()))
+        .evaluator(ContextRecall::new(judge.clone()))
+        .evaluator(CitationAccuracy::new(judge))
+        .evaluator(AnswerSimilarity::new(embeddings))
+        .concurrency(1) // the scripted judge answers in order
+        .name("rag-chain")
+        .run(|inputs: serde_json::Value| {
+            let rag = rag.clone();
+            async move {
+                let q = inputs["question"].as_str().unwrap_or_default().to_string();
+                rag.invoke(&q).await.map(|a| rag_output(&a))
+            }
+        })
+        .await;
+    println!("\n{}", report.summary());
+    for r in &report.results {
+        println!("\n  Q: {}", r.inputs["question"].as_str().unwrap_or(""));
+        if let Some(e) = &r.error {
+            println!("    error: {e}");
+        }
+        for s in &r.scores {
+            println!(
+                "    {:<18} {:.2}  {}",
+                s.key,
+                s.score,
+                s.reason.as_deref().unwrap_or("")
+            );
+        }
     }
     Ok(())
 }
