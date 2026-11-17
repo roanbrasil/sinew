@@ -7,7 +7,9 @@ jobs:
   # Publishes crates whose version is not on crates.io yet (after a release PR
   # is merged), then tags and creates the GitHub Release.
   release:
-    if: github.repository_owner == 'roanbrasil'
+    # Off until trusted publishing is configured (see RELEASING.md):
+    # Settings → Secrets and variables → Actions → Variables → RELEASE_ENABLED=true
+    if: github.repository_owner == 'roanbrasil' && vars.RELEASE_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: crates-io
     permissions:
@@ -42,7 +44,7 @@ jobs:
 
   # Opens or updates the release PR (version bump) on every push to main.
   release-pr:
-    if: github.repository_owner == 'roanbrasil'
+    if: github.repository_owner == 'roanbrasil' && vars.RELEASE_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
