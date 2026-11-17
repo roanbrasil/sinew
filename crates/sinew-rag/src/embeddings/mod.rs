@@ -77,6 +77,36 @@ impl<T: Embeddings + ?Sized> Embeddings for Box<T> {
     }
 }
 
+/// Adapts any [`Embeddings`] model to
+/// [`sinew_core::context::TextEmbedder`], for
+/// [`SemanticSelect`](sinew_core::context::SemanticSelect) context selection.
+/// Errors other than [`Error::Core`] become `sinew_core::Error::Other`.
+///
+/// ```
+/// # #[tokio::main(flavor = "current_thread")]
+/// # async fn main() {
+/// use sinew_core::context::{SemanticSelect, TextEmbedder};
+/// use sinew_rag::embeddings::{ContextEmbedder, FakeEmbeddings};
+///
+/// let embedder = ContextEmbedder(FakeEmbeddings::new(64));
+/// let vectors = embedder.embed(&["hello".to_string()]).await.unwrap();
+/// assert_eq!(vectors[0].len(), 64);
+/// let _select = SemanticSelect::new(embedder);
+/// # }
+/// ```
+#[derive(Debug, Clone)]
+pub struct ContextEmbedder<E>(pub E);
+
+#[async_trait]
+impl<E: Embeddings> sinew_core::context::TextEmbedder for ContextEmbedder<E> {
+    async fn embed(&self, texts: &[String]) -> sinew_core::Result<Vec<Vec<f32>>> {
+        self.0.embed_documents(texts).await.map_err(|e| match e {
+            Error::Core(e) => e,
+            other => sinew_core::Error::Other(other.to_string()),
+        })
+    }
+}
+
 /// Builds an embedding model from `"provider:model"`.
 ///
 /// Providers: `gemini` (`GEMINI_API_KEY`), the hosted OpenAI-compatible

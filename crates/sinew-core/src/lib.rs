@@ -16,6 +16,7 @@ extern crate self as sinew_core;
 
 pub mod batch;
 pub mod cache;
+pub mod context;
 pub mod error;
 pub mod message;
 pub mod mock;
