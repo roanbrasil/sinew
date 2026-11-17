@@ -205,6 +205,22 @@ loop that did not stop where the test expected.
 **How to fix.** Add the missing responses, or inspect `ScriptedModel::requests()` to see which call was
 unexpected.
 
+<a id="error-guardrail"></a>
+### `blocked by guardrail` (`Error::Guardrail`)
+
+**Meaning.** A guardrail rule blocked a model input or output: the message names the guardrail, the stage
+(`input`, `tool_output`, `output`) and the guardrail's reason. With a `Retry` rule, the reason ends with
+`(still failing after N retries)` when the model kept producing answers that failed the check.
+
+**Common causes.** A `Block` rule, a guardrail that returns `Block` under the default `Redact` action
+(`MaxLength`, `DenyList`, `JsonSchemaGuard`, `LlmJudge`), or an `InjectionDetector::blocking()` match. In
+`StreamGuardMode::Final`, any rewrite or refusal after the text was streamed also ends the stream with this error.
+
+**How to fix.** If the block is expected, catch the error and answer the user, or use `.refuse("...")` to return
+a fixed message instead. If it is a false positive, narrow the rule (`.at(...)`, fewer keywords) or switch it to
+`.warn()` while you tune it. For schema failures, give the model more retries (`.retry(n)`) or a clearer prompt.
+See [Guardrails](guardrails.md).
+
 <a id="error-other"></a>
 ### `{0}` (`Error::Other`)
 

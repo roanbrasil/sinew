@@ -522,6 +522,26 @@ pub trait ChatModelExt: ChatModel + Sized {
     fn with_cache<C: ResponseCache + 'static>(self, cache: C) -> CachedModel<Self, C> {
         CachedModel::new(self, cache)
     }
+
+    /// Checks each request's new user messages and tool results with
+    /// `input`, and the response with `output`; see
+    /// [`Guarded`](crate::guardrails::Guarded) and the
+    /// [guardrails module](crate::guardrails).
+    ///
+    /// ```
+    /// use sinew_core::guardrails::{guard, Guardrails, PiiRedactor};
+    /// use sinew_core::{mock::ScriptedModel, ChatModelExt, Message};
+    ///
+    /// let model = ScriptedModel::new([Message::assistant("ok")])
+    ///     .with_guardrails([guard(PiiRedactor::new())], Guardrails::new());
+    /// ```
+    fn with_guardrails(
+        self,
+        input: impl Into<crate::guardrails::Guardrails>,
+        output: impl Into<crate::guardrails::Guardrails>,
+    ) -> crate::guardrails::Guarded<Self> {
+        crate::guardrails::Guarded::new(self, input, output)
+    }
 }
 
 impl<M: ChatModel + Sized> ChatModelExt for M {}

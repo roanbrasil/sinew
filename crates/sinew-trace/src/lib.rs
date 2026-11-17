@@ -407,6 +407,62 @@ fn set_cache_usage(run: &mut RunHandle, usage: &sinew_core::Usage) {
     }
 }
 
+/// Records a guardrail event ([`sinew_core::guardrails::GuardEvent`]) as a
+/// finished `chain` run named `guardrail:<name>`, with the stage in
+/// `inputs`, the whole event in `outputs` and `metadata.guardrail`.
+/// Events from a [`Block`](sinew_core::guardrails::GuardAction::Block) or
+/// [`Retry`](sinew_core::guardrails::GuardAction::Retry) rule are recorded
+/// as failed runs with the reason as the error.
+pub fn record_guard_event(
+    tracer: &Tracer,
+    parent: Option<&RunRef>,
+    event: &sinew_core::guardrails::GuardEvent,
+) {
+    use sinew_core::guardrails::GuardAction;
+    let mut run = tracer.start(
+        format!("guardrail:{}", event.guard),
+        RunKind::Chain,
+        parent,
+        json!({ "stage": event.stage }),
+    );
+    run.set_metadata("guardrail", json!(event));
+    let blocked = matches!(event.action, GuardAction::Block | GuardAction::Retry { .. })
+        || (event.action == GuardAction::Redact && !event.rewrote);
+    if blocked {
+        run.fail(&event.reason);
+    } else {
+        run.finish(json!(event));
+    }
+}
+
+/// A [`GuardObserver`](sinew_core::guardrails::GuardObserver) that records
+/// every event with [`record_guard_event`], for
+/// [`Guardrails::with_observer`](sinew_core::guardrails::Guardrails::with_observer)
+/// or [`Guarded::with_observer`](sinew_core::guardrails::Guarded::with_observer).
+///
+/// ```
+/// use std::sync::Arc;
+/// use sinew_core::guardrails::{guard, Guardrails, MaxLength};
+/// use sinew_core::{mock::ScriptedModel, ChatModel, ChatModelExt, ChatRequest, Message};
+/// use sinew_trace::{guardrail_observer, MemorySink, Tracer};
+///
+/// # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
+/// let sink = Arc::new(MemorySink::new());
+/// let tracer = Tracer::new().with_shared_sink(sink.clone());
+/// let model = ScriptedModel::new([Message::assistant("a long answer")])
+///     .with_guardrails(Guardrails::new(), [guard(MaxLength::chars(5)).warn()])
+///     .with_observer(guardrail_observer(tracer, None));
+/// model.chat(ChatRequest::new(vec![Message::user("hi")])).await.unwrap();
+/// assert_eq!(sink.runs()[0].name, "guardrail:max_length");
+/// # });
+/// ```
+pub fn guardrail_observer(
+    tracer: Tracer,
+    parent: Option<RunRef>,
+) -> sinew_core::guardrails::GuardObserver {
+    Arc::new(move |event| record_guard_event(&tracer, parent.as_ref(), event))
+}
+
 /// Runs a tool call, recording a `tool` run when a tracer is present.
 pub async fn traced_tool(
     tools: &ToolBox,

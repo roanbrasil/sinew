@@ -139,7 +139,7 @@ Sinew is built for low latency and high throughput:
 - **Coming from Python:** [Migrating from LangChain / LangGraph / LangSmith](docs/migrating-from-langchain.md)
 - **Models:** [Providers and capabilities](docs/providers.md) · [Tools](docs/tools.md) · [Prompt templates](docs/prompts.md) · [Runnables](docs/runnables.md) · [Multimodal](docs/multimodal.md) · [Resilience and cost](docs/resilience.md) · [Model routing](docs/routing.md) · [Streaming](docs/streaming.md)
 - **Graphs:** [Fan-out](docs/fan-out.md) · [Commands and interrupts](docs/commands-and-interrupts.md) · [Subgraphs](docs/subgraphs.md) · [Time travel](docs/time-travel.md) · [Checkpointing](docs/checkpointing.md) · [Durable execution](docs/durable-execution.md) · [Store](docs/store.md) · [Multi-agent](docs/multi-agent.md) · [Loop detection](docs/loop-detection.md) · [Diagrams](docs/visualization.md)
-- **Agents and retrieval:** [Harness](docs/harness.md) · [Context engineering](docs/context.md) · [RAG](docs/rag.md)
+- **Agents and retrieval:** [Harness](docs/harness.md) · [Context engineering](docs/context.md) · [Guardrails](docs/guardrails.md) · [RAG](docs/rag.md)
 - **Deployment and protocols:** [Production checklist](docs/production.md) · [Serve](docs/serve.md) · [MCP](docs/mcp.md) · [A2A](docs/a2a.md)
 - **Testing:** [Testing agents and record/replay](docs/testing.md)
 - **Observability:** [Scope](docs/scope.md) · [Monitoring](docs/monitoring.md) · [Prompt hub](docs/prompt-hub.md) · [Evaluation](docs/evaluation.md) · [OpenTelemetry](docs/otel.md) · [Redaction](docs/redaction.md)

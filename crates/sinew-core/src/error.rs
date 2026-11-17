@@ -63,6 +63,19 @@ pub enum Error {
     /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-script-exhausted).
     #[error("scripted model has no responses left")]
     ScriptExhausted,
+    /// A guardrail blocked a model input or output, or an output kept
+    /// failing after its retries. See [`crate::guardrails`].
+    ///
+    /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-guardrail).
+    #[error("blocked by guardrail `{guard}` at {stage}: {reason}")]
+    Guardrail {
+        /// The guardrail's [`name`](crate::guardrails::AsyncGuardrail::name).
+        guard: String,
+        /// Where the text was checked.
+        stage: crate::guardrails::GuardrailStage,
+        /// Why it was blocked.
+        reason: String,
+    },
     /// Free-form error raised by a runnable or user code.
     ///
     /// See [troubleshooting](https://github.com/roanbrasil/sinew/blob/main/docs/troubleshooting.md#error-other).

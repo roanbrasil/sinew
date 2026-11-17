@@ -281,7 +281,7 @@ safe and used as `Arc<dyn Trait>` or `Box<dyn Trait>` somewhere in the workspace
 | `VectorStore` | [sinew-rag/src/vectorstore/mod.rs](../crates/sinew-rag/src/vectorstore/mod.rs) | `embeddings`, `add_vectors`, `delete`, `get`, `len`, `search_by_vector` | retrievers, `RagChain` |
 | `Embeddings` | [sinew-rag/src/embeddings/mod.rs](../crates/sinew-rag/src/embeddings/mod.rs) | `model`, `embed_documents` (optional: `embed_query`) | vector stores |
 | `TraceSink` | [sinew-trace/src/lib.rs](../crates/sinew-trace/src/lib.rs) | `record` (optional: `flush`) | `Tracer::with_sink` |
-| `Guardrail` | [sinew-harness/src/guardrails.rs](../crates/sinew-harness/src/guardrails.rs) | `name`, `check` → `Pass` / `Modify` / `Block` | harness input, output and tool-output checks |
+| `Guardrail` / `AsyncGuardrail` | [sinew-core/src/guardrails/mod.rs](../crates/sinew-core/src/guardrails/mod.rs) | `name`, `check` → `Pass` / `Modify` / `Block` | `Guarded` models (`with_guardrails`), `GuardStep`, `ReactAgent::tool_guardrails`, harness input, output and tool-output checks ([guide](guardrails.md)) |
 | `Hook` | [sinew-harness/src/hooks.rs](../crates/sinew-harness/src/hooks.rs) | none (all default): `before_model`, `after_model`, `before_tool` → `ToolDecision`, `after_tool` | harness agent loop |
 
 Other traits follow the same pattern: `Runnable` and `ResponseCache` (sinew-core); `Retriever`,

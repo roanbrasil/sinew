@@ -240,6 +240,12 @@ phone numbers (10–15 digits with separators) and Luhn-valid card numbers;
 phrases or chat-template tokens with a warning (or blocks them with
 `InjectionDetector::blocking()`). Both are heuristics.
 
+The trait and the built-in guardrails are defined in `sinew_core::guardrails` and re-exported here, so
+`SecretRedactor`, `DenyList`, `JsonSchemaGuard` and `MaxLength` can be registered too, and the same guardrails
+work on any model, chain or `ReactAgent`. The harness applies them with the `Redact` action. For per-rule
+actions (warn, refuse, retry with feedback) or an LLM judge, wrap the model with `with_guardrails`; see
+[Guardrails](guardrails.md).
+
 ## Project instructions and skills
 
 `project_instructions()` loads `AGENTS.md`, `CLAUDE.md`, `.claude/CLAUDE.md`

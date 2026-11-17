@@ -51,7 +51,7 @@ while let Some(ev) = events.next().await {
 | Approvals | `Ask` pauses the graph (interrupt); `Agent::resume(thread, decisions)` continues it |
 | Context | token estimates; compaction of older turns with the model (tool calls and results never split); large tool outputs offloaded to `.sinew/tool-outputs/` with a preview |
 | Budgets | max steps, max tokens, max cost (with `Pricing`), wall-clock timeout; a budget ends the turn with a `StopReason` |
-| Guardrails | `Guardrail` trait on input, final output and tool output; `PiiRedactor` (e-mail, phone, Luhn-checked cards), `InjectionDetector` |
+| Guardrails | `Guardrail` trait (shared with `sinew_core::guardrails`) on input, final output and tool output; `PiiRedactor` (e-mail, phone, Luhn-checked cards), `SecretRedactor`, `InjectionDetector`, `DenyList`, `JsonSchemaGuard`, `MaxLength`. See [docs/guardrails.md](../../docs/guardrails.md) |
 | Project memory | `AGENTS.md`, `CLAUDE.md`, `.claude/CLAUDE.md`; skills folders (`*/SKILL.md` with `name`/`description` frontmatter) listed in the prompt and loaded with `load_skill` |
 | MCP | feature `mcp`: `builder.mcp_server(&client).await?` adds an MCP server's tools |
 | Tracing | `.tracer(tracer)`: graph, node, every model call (with usage) and every tool call become `sinew-trace` runs |
