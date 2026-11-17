@@ -15,6 +15,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Releases are automated with release-plz and crates.io trusted publishing; see [RELEASING.md](RELEASING.md) (#101).
 - Tool parameter schemas from `TypedTool` and `#[tool]` inline nested types instead of using `$ref`/`$defs`, which several providers reject.
 - Samples 03 and 22 use `#[sinew::tool]`.
 - `sinew-harness`: loop detection is on by default (see above).

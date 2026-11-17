@@ -18,3 +18,7 @@ cargo deny check   # optional locally: cargo install cargo-deny
 - One logical change per PR, with a clear description of the behavior change.
 
 By contributing you agree that your work is dual-licensed under MIT and Apache-2.0, like the rest of the project.
+
+## Releases
+
+Add a line under `## [Unreleased]` in `CHANGELOG.md` with every user-visible change. Releases are cut by merging the automated release PR; see [RELEASING.md](RELEASING.md).

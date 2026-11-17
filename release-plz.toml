@@ -1,0 +1,22 @@
+# Release automation: https://release-plz.dev
+# On every push to main, release-plz opens (or updates) a release PR that bumps
+# the workspace version. Merging that PR publishes the changed crates to
+# crates.io with trusted publishing (no token) and the release workflow then
+# tags `v<version>` and creates the GitHub Release from CHANGELOG.md.
+
+[workspace]
+# CHANGELOG.md at the repository root is curated by hand in each PR.
+changelog_update = false
+# Only the umbrella crate gets the `v<version>` tag and GitHub Release.
+git_tag_enable = false
+git_release_enable = false
+# crates.io indexes each crate before the next one can depend on it.
+publish_timeout = "15m"
+# Release PR title.
+pr_name = "Release v{{ version }}"
+pr_labels = ["chore"]
+
+[[package]]
+name = "sinew"
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
