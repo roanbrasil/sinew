@@ -309,7 +309,7 @@ impl<S: State> CompiledGraph<S> {
     }
 
     async fn execute(&self, run: &Run<S>, ls: LoopState<S>) -> Result<RunOutcome<S>, GraphError> {
-        let graph_run = run.tracer.as_ref().map(|t| {
+        let mut graph_run = run.tracer.as_ref().map(|t| {
             let start: Vec<&str> = ls.tasks.iter().map(|t| t.node.as_str()).collect();
             let name = if run.ns.is_empty() {
                 "graph".to_string()
@@ -323,6 +323,10 @@ impl<S: State> CompiledGraph<S> {
                 json!({ "thread_id": run.thread_id, "start": start, "resumed": ls.skip_before }),
             )
         });
+        if let Some(gr) = graph_run.as_mut().filter(|_| run.ns.is_empty()) {
+            // The graph's shape, so trace viewers can draw it and highlight the path.
+            gr.set_metadata("graph", json!(self.view()));
+        }
         let parent = graph_run.as_ref().map(|r| r.reference());
         let result = self.step_loop(run, ls, parent.as_ref()).await;
         if let Some(gr) = graph_run {

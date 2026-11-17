@@ -340,7 +340,7 @@ pub(crate) enum Edge<S> {
 }
 
 impl<S> Edge<S> {
-    fn targets(&self) -> Vec<&str> {
+    pub(crate) fn targets(&self) -> Vec<&str> {
         match self {
             Edge::Static(t) | Edge::Router { targets: t, .. } | Edge::Send { targets: t, .. } => {
                 t.iter().map(String::as_str).collect()
@@ -366,6 +366,8 @@ pub(crate) struct NodeSpec<S> {
     pub(crate) retry: Option<RetryPolicy>,
     pub(crate) cache: Option<CachePolicy>,
     pub(crate) timeout: Option<Duration>,
+    /// Shape of the compiled graph behind a subgraph node, for diagrams.
+    pub(crate) subgraph: Option<crate::viz::GraphView>,
 }
 
 type PlainReducer<S> = Arc<dyn Fn(S, S) -> S + Send + Sync>;
@@ -493,6 +495,8 @@ impl<S: State> StateGraph<S> {
         In: Fn(&S) -> C + Send + Sync + 'static,
         Out: Fn(S, C) -> S + Send + Sync + 'static,
     {
+        let name = name.into();
+        let view = graph.view();
         let input = Arc::new(input);
         let output = Arc::new(output);
         let f: NodeFn<S> = Arc::new(move |s: S, ctx: NodeContext| {
@@ -509,7 +513,11 @@ impl<S: State> StateGraph<S> {
                 }
             })
         });
-        self.insert(name.into(), f, false, Vec::new())
+        self.insert(name.clone(), f, false, Vec::new());
+        if let Some(n) = self.nodes.get_mut(&name) {
+            n.subgraph = Some(view);
+        }
+        self
     }
 
     fn insert(
@@ -534,6 +542,7 @@ impl<S: State> StateGraph<S> {
                     retry: None,
                     cache: None,
                     timeout: None,
+                    subgraph: None,
                 },
             );
             self.order.push(name);
@@ -840,6 +849,7 @@ impl<S: State> StateGraph<S> {
             nodes: Arc::new(nodes.into_iter().map(|(k, v)| (k, Arc::new(v))).collect()),
             edges: Arc::new(self.edges),
             entry: Arc::new(self.entry.unwrap()),
+            order: Arc::new(self.order),
             reducer: self.reducer,
             recursion_limit: 25,
             checkpointer: None,
@@ -891,6 +901,8 @@ pub struct CompiledGraph<S> {
     pub(crate) nodes: Arc<HashMap<String, Arc<NodeSpec<S>>>>,
     pub(crate) edges: Arc<HashMap<String, Edge<S>>>,
     pub(crate) entry: Arc<Edge<S>>,
+    /// Node names in the order they were added (for diagrams).
+    pub(crate) order: Arc<Vec<String>>,
     pub(crate) reducer: Option<Reducer<S>>,
     pub(crate) recursion_limit: usize,
     pub(crate) checkpointer: Option<Arc<dyn Checkpointer>>,
@@ -907,6 +919,7 @@ impl<S> Clone for CompiledGraph<S> {
             nodes: self.nodes.clone(),
             edges: self.edges.clone(),
             entry: self.entry.clone(),
+            order: self.order.clone(),
             reducer: self.reducer.clone(),
             recursion_limit: self.recursion_limit,
             checkpointer: self.checkpointer.clone(),
