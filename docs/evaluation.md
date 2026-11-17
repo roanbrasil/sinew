@@ -184,6 +184,145 @@ ScopeClient::new(url).upload_pairwise(&pairwise).await?;
 
 In the UI, pairwise reports are listed on the Experiments page and open at `#/pairwise/<id>`.
 
+## Evaluating agent trajectories
+
+For an agent, the answer is not the whole story: the right tools, called in the right order,
+without wasted calls, matter too. The `trajectory` module scores that path.
+
+### `Trajectory`
+
+A `Trajectory` holds the ordered `tool_calls` (each a `ToolStep` with `name`, `arguments` and, when
+known, `result` or `error`), `model_calls`, `input_tokens` / `output_tokens` and `cost_usd` (`None`
+when unknown) and the `final_answer`. Build one:
+
+- **From messages**: `Trajectory::from_messages(&state.messages)` for `AgentState.messages` or the
+  harness thread messages. Every assistant message counts as one model call; tool results are paired
+  by call id (results starting with `error: ` become `error`). The final answer is the last assistant
+  message when it has no tool calls. `Trajectory::from_last_turn` starts after the last user message,
+  for multi-turn threads. Messages carry no usage; add it with `.with_usage(input, output)` and
+  `.with_cost(usd)`.
+- **From a trace**: `Trajectory::from_runs(&runs)` over the runs of one trace (for example
+  `MemorySink::runs()`). `tool` runs become steps, `llm` runs are model calls with their tokens. The
+  cost is `metadata.cost_usd` or the built-in price table applied to the tokens and the model, and
+  stays `None` if any model call has no known cost.
+- **By hand**: `Trajectory::new().tool("search", json!({"q": "rust"})).with_final_answer("...")`.
+
+```rust
+use sinew_eval::Trajectory;
+
+let state = agent.invoke(AgentState::new(vec![Message::user("What is 37 times 3?")])).await?;
+let trajectory = Trajectory::from_messages(&state.messages);
+assert_eq!(trajectory.tool_names(), vec!["multiply"]);
+```
+
+With the harness, `RunResult.usage` has the tokens and cost of the turn:
+
+```rust
+let AgentOutcome::Completed(r) = agent.run("t1", "When is the launch?").await? else { todo!() };
+let state = agent.state("t1").await?.unwrap();
+let trajectory = Trajectory::from_last_turn(&state.messages)
+    .with_usage(r.usage.input_tokens, r.usage.output_tokens)
+    .with_cost(r.usage.cost_usd);
+```
+
+### Expected trajectories in datasets
+
+`Example` has an optional `expected_trajectory` (omitted from JSONL when absent, so existing files
+load unchanged):
+
+```json
+{"inputs": {"city": "Paris"}, "reference": "sunny",
+ "expected_trajectory": {"tool_calls": [{"name": "get_weather", "arguments": {"city": "Paris"}}]}}
+```
+
+In Rust: `Example::new(inputs).with_expected_trajectory(Trajectory::new().tool("get_weather", args))`.
+In an expected step, `"arguments": null` (or omitted) matches any arguments.
+
+### Trajectory evaluators
+
+```rust
+#[async_trait]
+pub trait TrajectoryEvaluator: Send + Sync {
+    fn name(&self) -> &str;
+    async fn evaluate(&self, input: TrajectoryInput<'_>) -> Score; // trajectory, expected, inputs, output, reference
+}
+```
+
+| Evaluator | Key | Passes when |
+|---|---|---|
+| `TrajectoryMatch::exact()` | `trajectory_exact` | same calls in the same order, nothing extra |
+| `TrajectoryMatch::unordered()` | `trajectory_unordered` | same calls (as a multiset) in any order |
+| `TrajectoryMatch::subsequence()` | `trajectory_subsequence` | the expected calls appear in order; extra calls before, between and after are allowed |
+| `TrajectoryMatch::superset()` | `trajectory_superset` | every expected call was made, any order; a call listed twice must be made twice |
+| `TrajectoryMatch::subset()` | `trajectory_subset` | every call made matches an expected call |
+| `ToolUsage::new().require("search").forbid("shell")` | `tool_usage` | required tools were called, forbidden tools were not |
+| `TrajectoryBudget::new().max_steps(n).max_tool_calls(n).max_tokens(n).max_cost(usd)` | `trajectory_budget` | every limit that is set holds; a token or cost limit fails when the value is unknown |
+| `RelativeEfficiency::new()` (+ `.metric(EfficiencyMetric::Steps \| ToolCalls \| Tokens \| Cost)`) | `trajectory_efficiency` | score `min(1, reference / actual)` against the expected trajectory (default metric: tool calls) |
+| `NoRepeatedCalls::new()` (+ `.allowed(n)`) | `no_repeated_calls` | no identical call (same name, equal arguments) is made more than once (or `n` times) |
+| `TrajectoryJudge::new(model, rubric)` | `trajectory_judge` | graded by any `ChatModel` |
+
+All evaluators except `RelativeEfficiency` and `TrajectoryJudge` give 1 or 0, with a reason on
+failure (for example `missing calls: search; expected [search, answer], got [answer]`). Every
+evaluator has `.named(key)`. `TrajectoryMatch` and `RelativeEfficiency` use the example's expected
+trajectory, or a fixed one given with `.expecting(trajectory)`; without either they score 0 with
+the reason "example has no expected trajectory".
+
+**Arguments.** `TrajectoryMatch` compares tool names by default. `.arguments(ArgumentMatch::Subset)`
+also requires the expected arguments to be a JSON subset of the actual ones: every expected key
+must be present with a matching value, extra keys are allowed (recursively), arrays must have the
+same length, and numbers compare by value (`1` matches `1.0`). `ArgumentMatch::Exact` requires
+equal arguments. Arguments sent as a JSON string are parsed first. `json_subset(expected, actual)`
+is public for your own evaluators.
+
+**LLM judge.** `TrajectoryJudge` sends the rubric, the example inputs, the expected trajectory and
+the actual one (rendered with `Trajectory::to_text`, tool results cut at 500 characters,
+`.max_result_chars(n)`) at temperature 0, and reads `{"score": 0..1, "reasoning": "..."}` through
+`StructuredOutput` (a forced tool call by default; `.mode(StructuredMode::Json)` for models without
+forced tool choice). Scores on a 0–10 or 0–100 scale are scaled down. An invalid reply (after one
+retry) or a model error scores 0 with the reason.
+
+```rust
+let judge = TrajectoryJudge::new(
+    judge_model,
+    "Score 1 if every tool call was needed and in a sensible order, 0.5 if one call was \
+     redundant, 0 if the agent looped or used the wrong tools.",
+)
+.named("path_quality");
+```
+
+### In an experiment
+
+The target returns `trajectory.into_output()`, an object `{"answer": ..., "trajectory": {...}}`, and
+trajectory evaluators are added with `Experiment::trajectory_evaluator`. Their scores land in the
+same `scores` list as the output evaluators, so aggregates, summary evaluators, pairwise
+comparisons and the scope UI work unchanged. An output without a trajectory scores 0 with a reason.
+The short form `evaluate` runs output evaluators only.
+
+```rust
+use sinew_eval::*;
+
+let report = Experiment::new(&dataset)
+    .trajectory_evaluator(TrajectoryMatch::subsequence().arguments(ArgumentMatch::Subset))
+    .trajectory_evaluator(ToolUsage::new().require("multiply").forbid("shell"))
+    .trajectory_evaluator(NoRepeatedCalls::new())
+    .trajectory_evaluator(TrajectoryBudget::new().max_steps(4))
+    .summary_evaluator(PassRate::new("trajectory_subsequence", 1.0))
+    .run(|inputs: Value| async move {
+        let state = run_agent(inputs).await?;
+        Ok::<_, BoxError>(Trajectory::from_messages(&state.messages).into_output())
+    })
+    .await;
+println!("{}", report.summary());
+```
+
+Output evaluators still see the whole output; read the answer with
+`JsonFieldEquals::expecting("answer", value)` or a custom evaluator.
+
+`crates/sinew-harness/tests/trajectory.rs` grades three scripted harness agents (direct, looping,
+and one that searches before reading) with every trajectory evaluator, and checks that
+`Trajectory::from_runs` on the harness trace agrees with the messages. Sample 13 runs a trajectory
+experiment next to the answer experiment.
+
 ## Uploading to sinew-scope
 
 ```rust

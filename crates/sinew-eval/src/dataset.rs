@@ -9,7 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::EvalError;
+use crate::{EvalError, Trajectory};
 
 /// One test case: the inputs passed to the target and, optionally, the
 /// reference ("expected") output evaluators compare against.
@@ -22,6 +22,10 @@ pub struct Example {
     pub reference: Option<Value>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub metadata: Value,
+    /// The expected agent trajectory, read by trajectory evaluators
+    /// (`expected_trajectory` in JSONL).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_trajectory: Option<Trajectory>,
 }
 
 fn new_id() -> String {
@@ -35,11 +39,27 @@ impl Example {
             inputs,
             reference: None,
             metadata: Value::Null,
+            expected_trajectory: None,
         }
     }
 
     pub fn with_reference(mut self, reference: Value) -> Self {
         self.reference = Some(reference);
+        self
+    }
+
+    /// Sets the expected agent trajectory.
+    ///
+    /// ```
+    /// use serde_json::json;
+    /// use sinew_eval::{Example, Trajectory};
+    ///
+    /// let ex = Example::new(json!({"question": "Weather in Paris?"}))
+    ///     .with_expected_trajectory(Trajectory::new().tool("get_weather", json!({"city": "Paris"})));
+    /// assert_eq!(ex.expected_trajectory.unwrap().tool_names(), vec!["get_weather"]);
+    /// ```
+    pub fn with_expected_trajectory(mut self, trajectory: Trajectory) -> Self {
+        self.expected_trajectory = Some(trajectory);
         self
     }
 
@@ -167,5 +187,20 @@ mod tests {
         assert_ne!(ds.examples[0].id, ds.examples[1].id);
         let err = Dataset::from_jsonl_str("d", "{\"inputs\": 1}\nnot json\n").unwrap_err();
         assert!(matches!(err, EvalError::Parse { line: 2, .. }));
+    }
+
+    #[test]
+    fn expected_trajectory_is_optional_in_jsonl() {
+        let text = r#"{"inputs": 1}
+{"inputs": 2, "expected_trajectory": {"tool_calls": [{"name": "search", "arguments": {"q": "x"}}]}}
+"#;
+        let ds = Dataset::from_jsonl_str("d", text).unwrap();
+        assert!(ds.examples[0].expected_trajectory.is_none());
+        let t = ds.examples[1].expected_trajectory.as_ref().unwrap();
+        assert_eq!(t.tool_names(), vec!["search"]);
+        let line = serde_json::to_string(&ds.examples[0]).unwrap();
+        assert!(!line.contains("expected_trajectory"));
+        let back = Dataset::from_jsonl_str("d", &ds.to_jsonl_string()).unwrap();
+        assert_eq!(back, ds);
     }
 }
