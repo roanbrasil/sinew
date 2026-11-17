@@ -39,10 +39,10 @@ async fn chain_with_parallel_branches_retry_and_fallback() {
     .pipe(llm.clone())
     .pipe(ListOutputParser::comma());
     let (city, flag) = parallel((capital, colours))
-        .invoke(vars([("country", "Brazil")]))
+        .invoke(vars([("country", "France")]))
         .await
         .unwrap();
-    assert!(city.to_lowercase().contains("bras"), "{city}");
+    assert!(city.to_lowercase().contains("paris"), "{city}");
     assert!(flag.len() >= 2, "{flag:?}");
 }
 

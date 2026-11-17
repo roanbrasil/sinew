@@ -49,7 +49,7 @@ async fn check(spec: &str) -> Result<(), String> {
     let r = model
         .chat(
             ChatRequest::new(vec![Message::user("Reply with the single word: pong")])
-                .with_max_tokens(20),
+                .with_max_tokens(64),
         )
         .await
         .map_err(|e| format!("chat: {e}"))?;
