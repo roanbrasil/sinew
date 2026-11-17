@@ -8,7 +8,9 @@
 - **online evaluation rules**: `sinew-eval` evaluators (including an LLM judge) run on sampled
   incoming runs, in the background, with results stored as feedback;
 - **alerts**: thresholds on error rate, latency, time to first token, cost or volume, notified
-  through a webhook.
+  through a webhook;
+- **Prometheus**: `GET /metrics` on `sinew-serve` and `sinew-scope`, with a Grafana dashboard (see
+  [Prometheus metrics](#prometheus-metrics)).
 
 ## Metrics API
 
@@ -62,6 +64,165 @@ same window.
 - feedback means per key.
 
 The project picker in the top bar scopes the dashboard like every other page.
+
+## Prometheus metrics
+
+`sinew-serve` and `sinew-scope` expose `GET /metrics` in the Prometheus text exposition format
+(0.0.4), for alerting and dashboards in an existing Prometheus / Grafana stack. The `/api/metrics`
+API above answers ad-hoc questions over stored runs; `/metrics` gives counters and histograms that
+Prometheus scrapes and keeps.
+
+Both endpoints are built on `sinew_trace::metrics::MetricsSink`, a `TraceSink` that aggregates
+every finished run. It has no dependencies beyond the standard library and can be used in any
+application:
+
+```rust
+use std::sync::Arc;
+use sinew_trace::{MetricsSink, Tracer};
+
+let metrics = Arc::new(MetricsSink::new().project("support-bot"));
+let tracer = Tracer::new().with_shared_sink(metrics.clone());
+// ... run graphs with `tracer`, then serve `metrics.render()` with
+// Content-Type `sinew_trace::metrics::CONTENT_TYPE`.
+```
+
+### Run metrics
+
+| Metric | Type | Labels |
+|---|---|---|
+| `sinew_runs_total` | counter | `project`, `kind`, `name`, `status` |
+| `sinew_run_duration_seconds` | histogram | `project`, `kind`, `name` |
+| `sinew_errors_total` | counter | `project`, `kind`, `name` |
+| `sinew_tool_calls_total` | counter | `project`, `tool`, `status` |
+| `sinew_llm_tokens_total` | counter | `project`, `model`, `direction` (`input`, `output`, `cached`) |
+| `sinew_llm_cost_usd_total` | counter | `project`, `model` |
+| `sinew_llm_time_to_first_token_seconds` | histogram | `project`, `model` |
+| `sinew_metrics_label_values_folded_total` | counter | none |
+
+- `kind` is the run kind (`graph`, `node`, `llm`, `tool`, `chain`); `status` is `ok` or `error`.
+- `name` is the graph, node, tool or chain name; for `llm` runs it is the model
+  (`metadata.model`, else the run name), the same value as `model` on the LLM metrics.
+- `project` is the ingest project in `sinew-scope`, else `metadata.project`, else the sink's
+  default (`MetricsSink::project`, `default` if unset).
+- `cached` tokens are prompt tokens read from the provider's cache, a subset of `input`.
+  `traced_chat` and `traced_chat_stream` record them as `metadata.cached_input_tokens`.
+- Cost: `metadata.cost_usd` if present, else the token usage priced with the `sinew-core` price
+  table (`sinew_core::pricing`). `sinew-scope` uses its own pricing table instead, so the value
+  matches the UI. Unknown models produce no cost series.
+- Time to first token comes from `metadata.ttft_ms`, recorded for streamed calls only.
+- Duration buckets (seconds): 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120,
+  300. Time-to-first-token buckets: 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5, 10.
+
+**Cardinality.** Each label (`project`, `model`, `tool`, and `name` per kind) keeps at most 100
+distinct values (`MetricsSink::max_label_values`); later values are reported as `other` and counted
+in `sinew_metrics_label_values_folded_total`. Values are truncated to 128 characters. Run names
+should therefore be stable identifiers (node and tool names, routes), not user input.
+
+### sinew-serve
+
+```rust
+use sinew_serve::Server;
+use sinew_trace::MetricsSink;
+
+let server = Server::builder()
+    // .assistant(...)
+    .metrics(MetricsSink::new())
+    .build();
+```
+
+`ServerBuilder::metrics` adds the sink to the server's tracer (creating one if `.tracer()` was
+not called), so it sees graph, node, LLM and tool runs plus one `chain` run per HTTP request
+(`name` is `METHOD /route`; 5xx responses count as errors). `GET /metrics` is always routed and also
+reports, with or without a sink:
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `sinew_serve_queued_runs` | gauge | runs waiting for an earlier run on their thread |
+| `sinew_serve_running_runs` | gauge | runs executing |
+| `sinew_serve_active_streams` | gauge | open SSE responses |
+| `sinew_serve_assistants` | gauge | registered assistants |
+| `sinew_serve_build_info` | gauge | `1`, with a `version` label |
+
+Scrapes of `/metrics` are not traced.
+
+### sinew-scope
+
+`sinew-scope serve` aggregates every run accepted by `POST /api/runs` and `POST /v1/traces` with the
+labels above (unfinished runs are skipped; a re-ingested run is counted again) and adds:
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `sinew_scope_ingested_runs_total` | counter | runs accepted, by `endpoint` (`runs`, `otlp`) |
+| `sinew_scope_store_runs` | gauge | runs in the database |
+| `sinew_scope_store_traces` | gauge | traces in the database |
+| `sinew_scope_store_size_bytes` | gauge | SQLite page count times page size (WAL excluded) |
+| `sinew_scope_build_info` | gauge | `1`, with a `version` label |
+
+The counters start at zero when the server starts; the store gauges cover all stored data.
+
+### Authentication
+
+`/metrics` does not require the API key or bearer token by default, because scrapers usually run
+inside the same network. It exposes counts, durations and the names of graphs, nodes, tools,
+models and projects, but no inputs or outputs. To require the same credential as the rest of the
+API, use `ServerBuilder::metrics_auth(true)` in `sinew-serve`, and `--metrics-auth` (or
+`ServerConfig::metrics_auth`) in `sinew-scope`. Without configured keys / token the endpoint stays
+open either way.
+
+### Scrape configuration
+
+```yaml
+scrape_configs:
+  - job_name: sinew-serve
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["agents.internal:8000"]
+  - job_name: sinew-scope
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["scope.internal:7878"]
+    # With --metrics-auth:
+    # authorization:
+    #   type: Bearer
+    #   credentials_file: /etc/prometheus/sinew-scope-token
+```
+
+If an application traces to both a local `MetricsSink` and `sinew-scope` (through `HttpSink`),
+the same runs appear in both jobs; filter by `job` in queries to avoid counting them twice.
+
+Example queries:
+
+```promql
+# p95 graph latency over 5 minutes
+histogram_quantile(0.95, sum by (le) (rate(sinew_run_duration_seconds_bucket{kind="graph"}[5m])))
+# time to first token p95 by model
+histogram_quantile(0.95, sum by (le, model) (rate(sinew_llm_time_to_first_token_seconds_bucket[5m])))
+# cost per hour by model
+sum by (model) (rate(sinew_llm_cost_usd_total[1h])) * 3600
+# tool error ratio
+sum by (tool) (rate(sinew_tool_calls_total{status="error"}[5m]))
+  / sum by (tool) (rate(sinew_tool_calls_total[5m]))
+```
+
+### Grafana dashboard
+
+[`deploy/grafana/sinew.json`](../deploy/grafana/sinew.json) charts run rate and error rate by kind,
+graph and LLM latency p50/p95/p99, time to first token, tokens per second, cost per hour, error rate
+by model and by tool, node and tool latency, HTTP latency per route, the serve gauges, and the
+scope ingest and store gauges. It has `datasource`, `project`, `graph` and `model` variables.
+
+Import it with **Dashboards → New → Import → Upload JSON file** and pick a Prometheus data source,
+or provision it:
+
+```yaml
+# /etc/grafana/provisioning/dashboards/sinew.yaml
+apiVersion: 1
+providers:
+  - name: sinew
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards/sinew   # copy sinew.json here
+```
 
 ## Online evaluation rules
 

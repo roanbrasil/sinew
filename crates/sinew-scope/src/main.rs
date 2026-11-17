@@ -3,6 +3,7 @@
 //! ```text
 //! sinew-scope serve  [--db scope.db] [--addr 127.0.0.1:7878] [--token T]
 //!                    [--pricing prices.json] [--retention-days N] [--no-engine]
+//!                    [--metrics-auth]
 //! sinew-scope import <traces.jsonl> [--db scope.db] [--project P]
 //! sinew-scope view   <traces.jsonl> [--trace <id-prefix>] [--io]
 //! sinew-scope <traces.jsonl> [--trace <id-prefix>] [--io]   # same as `view`
@@ -15,6 +16,7 @@ use sinew_scope::{store::Store, view};
 const USAGE: &str = "usage:
   sinew-scope serve  [--db scope.db] [--addr 127.0.0.1:7878] [--token T]
                      [--pricing prices.json] [--retention-days N] [--no-engine]
+                     [--metrics-auth]   (require the token on GET /metrics)
                      (token also read from SINEW_SCOPE_TOKEN)
   sinew-scope import <traces.jsonl> [--db scope.db] [--project default]
   sinew-scope view   <traces.jsonl> [--trace <id-prefix>] [--io]
@@ -28,6 +30,7 @@ enum Cmd {
         pricing: Option<String>,
         retention_days: Option<u32>,
         no_engine: bool,
+        metrics_auth: bool,
     },
     Import {
         path: String,
@@ -62,6 +65,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Cmd, String> {
     );
     let (mut path, mut trace, mut io) = (None, None, false);
     let (mut pricing, mut retention_days, mut no_engine) = (None, None, false);
+    let mut metrics_auth = false;
     while let Some(a) = it.next() {
         let mut value = |flag: &str| it.next().ok_or(format!("{flag} needs a value"));
         match a.as_str() {
@@ -82,6 +86,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Cmd, String> {
                 );
             }
             "--no-engine" => no_engine = true,
+            "--metrics-auth" => metrics_auth = true,
             "-h" | "--help" => return Err(String::new()),
             _ if !a.starts_with("--") && path.is_none() => path = Some(a),
             _ => return Err(format!("unexpected argument `{a}`")),
@@ -95,6 +100,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Cmd, String> {
             pricing,
             retention_days,
             no_engine,
+            metrics_auth,
         },
         "import" => Cmd::Import {
             path: path.ok_or("missing trace file")?,
@@ -138,6 +144,7 @@ fn main() -> ExitCode {
             pricing,
             retention_days,
             no_engine,
+            metrics_auth,
         } => run_async(async move {
             let addr: SocketAddr = addr
                 .parse()
@@ -175,6 +182,7 @@ fn main() -> ExitCode {
                 sinew_scope::ServerConfig {
                     token,
                     disable_engine: no_engine,
+                    metrics_auth,
                     ..Default::default()
                 },
             )

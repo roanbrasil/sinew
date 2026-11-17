@@ -1,7 +1,14 @@
 //! HTTP server: ingest, query API, datasets/experiments, prompt hub,
 //! feedback, annotation queues, monitoring, rules, alerts and the embedded UI.
 
-use std::{collections::HashMap, net::SocketAddr};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 use axum::{
     body::Bytes,
@@ -15,12 +22,16 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sinew_eval::{Dataset, ExperimentReport};
-use sinew_trace::Run;
+use sinew_trace::{
+    metrics::{MetricType, RunContext, TextEncoder, CONTENT_TYPE},
+    MetricsSink, Run,
+};
 
 use crate::{
     api,
     engine::{Engine, EngineConfig},
     otlp,
+    pricing::{run_cost, run_model},
     store::{Store, StoreError, TraceQuery},
 };
 
@@ -38,6 +49,44 @@ pub(crate) struct AppState {
     pub(crate) store: Store,
     pub(crate) token: Option<String>,
     pub(crate) engine: Option<Engine>,
+    pub(crate) metrics: Arc<IngestMetrics>,
+}
+
+/// Run metrics of ingested runs plus ingest counters, for `GET /metrics`.
+pub(crate) struct IngestMetrics {
+    runs: MetricsSink,
+    /// Runs accepted through `POST /api/runs` and `POST /v1/traces`.
+    ingested_api: AtomicU64,
+    ingested_otlp: AtomicU64,
+}
+
+impl IngestMetrics {
+    fn new() -> Self {
+        Self {
+            runs: MetricsSink::new(),
+            ingested_api: AtomicU64::new(0),
+            ingested_otlp: AtomicU64::new(0),
+        }
+    }
+
+    /// Aggregates stored runs, priced with the store's pricing table so the
+    /// cost matches the UI.
+    fn observe(&self, store: &Store, runs: &[(String, Run)], otlp: bool) {
+        let pricing = store.pricing();
+        for (project, run) in runs {
+            let cost = run_cost(&pricing, run, run_model(run).as_deref());
+            self.runs.record_with(
+                run,
+                &RunContext::new().project(project.clone()).cost_usd(cost),
+            );
+        }
+        let counter = if otlp {
+            &self.ingested_otlp
+        } else {
+            &self.ingested_api
+        };
+        counter.fetch_add(runs.len() as u64, Ordering::Relaxed);
+    }
 }
 
 /// Options for [`router_with`].
@@ -50,6 +99,9 @@ pub struct ServerConfig {
     pub engine: Option<EngineConfig>,
     /// Do not start the background engine.
     pub disable_engine: bool,
+    /// Require the bearer token on `GET /metrics` (default: open, for an
+    /// internal Prometheus scraper).
+    pub metrics_auth: bool,
 }
 
 /// JSON error response: `{"error": "..."}` with a status code.
@@ -83,7 +135,8 @@ impl IntoResponse for ApiError {
 pub(crate) type ApiResult<T> = Result<Json<T>, ApiError>;
 
 /// Builds the full router. `token` enables bearer auth on `/api/*` and
-/// `/v1/*` (the UI assets and `/api/health` stay public). When called inside
+/// `/v1/*` (the UI assets, `/api/health` and `/metrics` stay public; see
+/// [`ServerConfig::metrics_auth`]). When called inside
 /// a Tokio runtime, the background engine (online rules, alerts, retention)
 /// is started with default settings; use [`router_with`] to configure it.
 pub fn router(store: Store, token: Option<String>) -> Router {
@@ -104,6 +157,7 @@ pub fn router_with(store: Store, config: ServerConfig) -> Router {
         store,
         token: config.token.filter(|t| !t.is_empty()),
         engine,
+        metrics: Arc::new(IngestMetrics::new()),
     };
     let protected = Router::new()
         .route("/api/runs", post(ingest_runs).get(api::search_runs))
@@ -191,9 +245,14 @@ pub fn router_with(store: Store, config: ServerConfig) -> Router {
         )
         .route("/api/experiments/{id}", get(get_experiment))
         .route("/api/compare", get(compare_experiments))
-        .route("/v1/traces", post(ingest_otlp))
-        .route_layer(middleware::from_fn_with_state(state.clone(), auth));
-    Router::new()
+        .route("/v1/traces", post(ingest_otlp));
+    let (public, protected) = if config.metrics_auth {
+        (Router::new(), protected.route("/metrics", get(metrics)))
+    } else {
+        (Router::new().route("/metrics", get(metrics)), protected)
+    };
+    let protected = protected.route_layer(middleware::from_fn_with_state(state.clone(), auth));
+    public
         .route("/", get(index))
         .route("/app.js", get(app_js))
         .route("/pages.js", get(pages_js))
@@ -335,6 +394,57 @@ async fn health(State(state): State<AppState>) -> Json<Value> {
     }))
 }
 
+/// `GET /metrics`: Prometheus text exposition of ingested runs (see
+/// [`sinew_trace::metrics`]), ingest counters and store size.
+async fn metrics(State(state): State<AppState>) -> Result<Response, ApiError> {
+    let stats = state.store.stats().await?;
+    let mut enc = TextEncoder::new();
+    state.metrics.runs.encode(&mut enc);
+    let name = "sinew_scope_ingested_runs_total";
+    enc.header(
+        name,
+        "Runs accepted by an ingest endpoint since the server started.",
+        MetricType::Counter,
+    );
+    for (endpoint, n) in [
+        ("runs", &state.metrics.ingested_api),
+        ("otlp", &state.metrics.ingested_otlp),
+    ] {
+        enc.sample(
+            name,
+            &[("endpoint", endpoint)],
+            n.load(Ordering::Relaxed) as f64,
+        );
+    }
+    for (name, help, value) in [
+        ("sinew_scope_store_runs", "Runs in the store.", stats.runs),
+        (
+            "sinew_scope_store_traces",
+            "Traces in the store.",
+            stats.traces,
+        ),
+        (
+            "sinew_scope_store_size_bytes",
+            "Size of the SQLite database (page count times page size).",
+            stats.size_bytes,
+        ),
+    ] {
+        enc.header(name, help, MetricType::Gauge);
+        enc.sample(name, &[], value as f64);
+    }
+    enc.header(
+        "sinew_scope_build_info",
+        "Constant 1, labelled with the sinew-scope version.",
+        MetricType::Gauge,
+    );
+    enc.sample(
+        "sinew_scope_build_info",
+        &[("version", env!("CARGO_PKG_VERSION"))],
+        1.0,
+    );
+    Ok(([(header::CONTENT_TYPE, CONTENT_TYPE)], enc.finish()).into_response())
+}
+
 pub(crate) fn header_project(headers: &HeaderMap) -> Option<String> {
     headers
         .get(PROJECT_HEADER)
@@ -382,6 +492,7 @@ async fn ingest_runs(
         runs.push((project.clone(), run));
     }
     let result = state.store.ingest(&runs).await?;
+    state.metrics.observe(&state.store, &runs, false);
     if let Some(engine) = &state.engine {
         engine.submit(runs);
     }
@@ -406,6 +517,7 @@ async fn ingest_otlp(
     let runs = otlp::otlp_to_runs(&body, header_project(&headers).as_deref())
         .map_err(ApiError::bad_request)?;
     state.store.ingest(&runs).await?;
+    state.metrics.observe(&state.store, &runs, true);
     if let Some(engine) = &state.engine {
         engine.submit(runs);
     }

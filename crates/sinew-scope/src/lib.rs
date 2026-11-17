@@ -2,7 +2,7 @@
 //!
 //! - [`server`]: axum HTTP server with run ingest (`POST /api/runs`), OTLP/HTTP
 //!   JSON ingest (`POST /v1/traces`), a query API, datasets and experiments,
-//!   and an embedded web UI at `/`.
+//!   Prometheus metrics at `GET /metrics`, and an embedded web UI at `/`.
 //! - [`store`]: SQLite storage (sqlx).
 //! - [`otlp`]: OpenTelemetry span → [`sinew_trace::Run`] mapping (GenAI
 //!   semantic conventions); protobuf ingest with the `otlp-proto` feature.
@@ -41,4 +41,4 @@ pub mod view;
 pub use engine::{Engine, EngineConfig, ModelFactory};
 pub use pricing::{ModelPrice, Pricing};
 pub use server::{router, router_with, ServerConfig};
-pub use store::{MetricsQuery, RunQuery, Store, StoreError, TraceQuery};
+pub use store::{MetricsQuery, RunQuery, Store, StoreError, StoreStats, TraceQuery};

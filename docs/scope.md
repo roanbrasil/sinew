@@ -23,6 +23,7 @@ Storage is a single SQLite file (sqlx, WAL mode). Older databases are migrated f
 ```text
 sinew-scope serve  [--db scope.db] [--addr 127.0.0.1:7878] [--token T]
                    [--pricing prices.json] [--retention-days N] [--no-engine]
+                   [--metrics-auth]
 sinew-scope import <traces.jsonl> [--db scope.db] [--project default]
 sinew-scope view   <traces.jsonl> [--trace <id-prefix>] [--io]
 sinew-scope <traces.jsonl> [--trace <id-prefix>] [--io]     # same as `view`
@@ -34,6 +35,8 @@ sinew-scope <traces.jsonl> [--trace <id-prefix>] [--io]     # same as `view`
   bare array, see [Cost](#cost)); the table is stored in the database, so it survives restarts.
 - `--retention-days` sets the retention period (also settable in the UI and API).
 - `--no-engine` disables the background engine (online rules, alerts, retention).
+- `--metrics-auth` requires the token on `GET /metrics` (open by default, see
+  [monitoring.md](monitoring.md#prometheus-metrics)).
 - `import` loads a JSONL file written by `JsonlSink` into the database. Runs are upserted, so
   importing the same file twice is safe.
 - `view` is the original terminal viewer; a bare path keeps working.
@@ -226,6 +229,7 @@ From Rust: `ScopeClient::create_feedback(&Feedback::score(run_id, "thumbs", 1.0)
 | `GET` | `/api/prompts/{name}/{ref}`, `/api/prompts/{name}/diff?from=&to=` | [prompt-hub.md](prompt-hub.md) |
 | `PUT`, `DELETE` | `/api/prompts/{name}/tags/{tag}` | [prompt-hub.md](prompt-hub.md) |
 | `GET` | `/api/metrics` | [monitoring.md](monitoring.md) |
+| `GET` | `/metrics` (Prometheus text format; outside `/api`, public unless `--metrics-auth`) | [monitoring.md](monitoring.md#prometheus-metrics) |
 | `GET`, `POST`, `GET`/`PUT`/`DELETE` `{id}`, `POST {id}/run` | `/api/rules` | [monitoring.md](monitoring.md) |
 | `GET`, `POST`, `GET`/`PUT`/`DELETE` `{id}`, `POST {id}/check` | `/api/alerts` | [monitoring.md](monitoring.md) |
 | `GET`, `PUT`, `DELETE` | `/api/pricing` | [Cost](#cost) |
@@ -354,6 +358,8 @@ See `crates/sinew-scope/examples/traced_agent.rs` and `eval_agent.rs`, and the i
 
 - The server binds to loopback by default. If you expose it, use `--token` and put TLS in front.
 - The token check is constant-time over equal-length inputs.
+- `GET /metrics` is public unless `--metrics-auth` is set. It exposes counts and the names of
+  projects, graphs, nodes, tools and models, not run inputs or outputs.
 - Request bodies are limited to 64 MiB.
 - Alert webhooks are called from the server; only `http(s)` URLs are accepted. Anyone with the
   token can create alerts, so treat the token as an admin credential.

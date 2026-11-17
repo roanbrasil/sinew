@@ -231,6 +231,20 @@ impl Runs {
         v
     }
 
+    /// `(pending, running)` runs right now.
+    pub(crate) fn live_counts(&self) -> (usize, usize) {
+        let runs = self.runs.lock().unwrap();
+        let (mut pending, mut running) = (0, 0);
+        for e in runs.values() {
+            match e.status() {
+                RunStatus::Pending => pending += 1,
+                RunStatus::Running => running += 1,
+                _ => {}
+            }
+        }
+        (pending, running)
+    }
+
     /// Whether the thread has a run executing or queued.
     pub(crate) fn thread_busy(&self, thread_id: &str) -> bool {
         self.threads
