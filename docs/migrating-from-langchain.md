@@ -66,7 +66,7 @@ in `sinew::prelude`.
 | node with `config` / `runtime` argument | `add_node_with_context(name, \|s, ctx: NodeContext\| ...)` | `ctx` gives `interrupt`, `emit`, `emit_token`, `store()`. |
 | `add_conditional_edges(src, router, path_map)` | `add_conditional_edges(src, router, targets)`; `add_conditional_edges_multi` for several targets | The target list is checked by `compile()`. |
 | `Send("node", arg)` (map-reduce) | `SendTo::new("node", state)` with `add_send_edges` | Also `add_fan_out` for static parallel branches. See [fan-out.md](fan-out.md). |
-| `Annotated[list, operator.add]` reducers | `StateGraph::with_reducer` / `with_reducer_from_base` | A `#[derive(State)]` with per-field reducers is planned ([#5](https://github.com/roanbrasil/sinew/issues/5)). |
+| `Annotated[list, add_messages]` / `Annotated[list, operator.add]` / `Annotated[int, operator.add]` reducers | `#[derive(State)]` with `#[state(append)]` / `#[state(add)]` per field, then `StateGraph::with_derived_reducer()` (`sinew-graph`, feature `macros`) | Other strategies: `replace` (default), `overwrite`, `keep`, `merge` (maps), `reducer = "path"`. Manual alternative: `with_reducer` / `with_reducer_from_base`. See [fan-out.md](fan-out.md#deriving-the-reducer). |
 | `Command(update=..., goto=...)` | `Command::goto(..).with_update(state)`, `with_json_update`, `to_parent()`, via `add_command_node` | See [commands-and-interrupts.md](commands-and-interrupts.md). |
 | `interrupt(value)` | `ctx.interrupt::<T>(value)?` inside `add_node_with_context` | Returns the resume value on the second run. |
 | `Command(resume=...)` | `Command::resume(value)` with `run_with`, or `graph.resume(thread, value)` | |
@@ -410,6 +410,72 @@ Nodes take and return the whole state. The router returns the name of the next n
 name that is not in the target list is a runtime error, and a target that is not a node is a
 `compile()` error.
 
+**Parallel branches and reducers.** LangGraph merges concurrent updates with `Annotated` reducers.
+In Sinew the state derives `State` and each field picks a strategy; the graph uses it through
+`with_derived_reducer()`.
+
+```python
+import operator
+from typing import Annotated, TypedDict
+
+class Research(TypedDict):
+    notes: Annotated[list[str], operator.add]
+    sources: Annotated[int, operator.add]
+
+g = StateGraph(Research)
+g.add_node("plan", lambda s: {})
+g.add_node("web", lambda s: {"notes": ["web"], "sources": 2})
+g.add_node("docs", lambda s: {"notes": ["docs"], "sources": 1})
+g.add_edge(START, "plan")
+g.add_edge("plan", "web")
+g.add_edge("plan", "docs")
+```
+
+```rust
+use serde::{Deserialize, Serialize};
+use sinew::prelude::*;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, State)]
+struct Research {
+    #[state(append)]
+    notes: Vec<String>,
+    #[state(add)]
+    sources: u32,
+    answer: Option<String>, // `replace` (default): the branch that changed it wins
+}
+
+#[tokio::main]
+async fn main() -> Result<(), BoxError> {
+    let mut g = StateGraph::<Research>::new();
+    g.add_node("plan", |s: Research| async move { Ok(s) });
+    g.add_node("web", |mut s: Research| async move {
+        s.notes.push("web".into());
+        s.sources += 2;
+        Ok(s)
+    });
+    g.add_node("docs", |mut s: Research| async move {
+        s.notes.push("docs".into());
+        s.sources += 1;
+        Ok(s)
+    });
+    g.set_entry_point("plan");
+    g.add_fan_out("plan", ["web", "docs"]);
+    g.add_edge("web", END);
+    g.add_edge("docs", END);
+    g.with_derived_reducer(); // or `with_reducer(|acc, branch| ...)` by hand
+
+    let out = g.compile()?.invoke(Research::default()).await?;
+    println!("{:?} from {} sources", out.notes, out.sources); // ["web", "docs"] from 3 sources
+    Ok(())
+}
+```
+
+Branches return whole states, so `append` keeps only the items a branch added and `add` sums
+`branch - base`; the result is the same for full-clone branches and for `SendTo` branches with
+minimal inputs. A message list with `add_messages` maps to `#[state(append)]` on a
+`Vec<Message>` (`add_messages` also replaces messages by id; write that as `reducer = "path"` if
+you rely on it).
+
 ### 7. Human-in-the-loop: interrupt and resume
 
 ```python
@@ -652,8 +718,10 @@ JSON updates and subgraph events serialize the state.
 the state. A Sinew node receives the state by value and returns the new state. For sequential
 steps this is the whole story: there is nothing to merge and no implicit reducer to remember.
 Merging only matters when branches run in parallel (`add_fan_out`, `add_send_edges`,
-`add_conditional_edges_multi`); there you register one reducer with `with_reducer`, and
-`compile()` refuses a graph that can fan out without one. Without a checkpointer the state is
+`add_conditional_edges_multi`); there the reducer is declared on the state type with
+`#[derive(State)]` and `#[state(append | add | merge | ...)]` and enabled with
+`with_derived_reducer()`, or written by hand with `with_reducer`. `compile()` refuses a graph that
+can fan out without one. Without a checkpointer the state is
 moved between nodes, not cloned. When a partial update is the natural shape (for example from a
 human), `Command::with_json_update` merges a JSON patch.
 
