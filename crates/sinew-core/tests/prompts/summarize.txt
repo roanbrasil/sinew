@@ -1,0 +1,5 @@
+Summarize the text below in {lang}.
+
+{text}
+
+Answer as JSON: {{"summary": "..."}}

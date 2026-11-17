@@ -1,0 +1,5 @@
+error: invalid prompt template: variable name `1` is valid for PromptTemplate but is not a Rust identifier, so prompt! cannot generate a setter for it; rename it or use PromptTemplate::new at runtime
+ --> tests/ui_prompt/not_an_identifier.rs:2:33
+  |
+2 |     let _ = sinew_core::prompt!("Item {1}").format();
+  |                                 ^^^^^^^^^^

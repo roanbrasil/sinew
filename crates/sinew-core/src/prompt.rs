@@ -62,6 +62,16 @@ impl PromptTemplate {
         Ok(out)
     }
 
+    /// The template source text.
+    ///
+    /// ```
+    /// let t = sinew_core::PromptTemplate::new("Hi {name}").unwrap();
+    /// assert_eq!(t.as_str(), "Hi {name}");
+    /// ```
+    pub fn as_str(&self) -> &str {
+        &self.template
+    }
+
     /// Variable names in order of first appearance.
     pub fn variables(&self) -> Vec<String> {
         let mut seen = Vec::new();

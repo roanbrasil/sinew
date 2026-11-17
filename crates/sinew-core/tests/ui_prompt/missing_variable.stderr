@@ -1,0 +1,14 @@
+error[E0277]: prompt variable `lang` is not set
+ --> tests/ui_prompt/missing_variable.rs:2:75
+  |
+2 |     let _ = sinew_core::prompt!("Summarize {text} in {lang}").text("doc").format();
+  |                                                                           ^^^^^^ call `.lang(...)` before this
+  |
+  = help: the trait `Var_lang` is not implemented for `sinew_core::__private::prompt::Unset`
+  = note: the template uses `text`, `lang`; each needs a value
+note: required by a bound in `Prompt::<__T0, __T1>::format`
+ --> tests/ui_prompt/missing_variable.rs:2:13
+  |
+2 |     let _ = sinew_core::prompt!("Summarize {text} in {lang}").text("doc").format();
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Prompt::<__T0, __T1>::format`
+  = note: this error originates in the macro `sinew_core::prompt` (in Nightly builds, run with -Z macro-backtrace for more info)

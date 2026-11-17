@@ -1,0 +1,5 @@
+error: unknown role `tool` in chat_prompt!; expected `system`, `user` or `assistant`
+ --> tests/ui_prompt/chat_bad_role.rs:2:59
+  |
+2 |     let _ = sinew_core::chat_prompt!(system: "Be brief.", tool: "{x}").format();
+  |                                                           ^^^^

@@ -13,7 +13,19 @@
 //! let tools = sinew::core::tools![get_order];
 //! ```
 //!
-//! See the `tool` attribute in `sinew-core` for the full reference.
+//! `prompt!` and `chat_prompt!` check prompt templates at compile time:
+//!
+//! ```ignore
+//! let text = sinew::core::prompt!("Summarize {text} in {lang}")
+//!     .text(doc)
+//!     .lang("pt-BR")
+//!     .format();
+//! ```
+//!
+//! See the `tool` attribute and the `prompt!` macro in `sinew-core` for the
+//! full reference.
+
+mod prompt;
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
@@ -81,7 +93,26 @@ fn doc_text(attrs: &[Attribute]) -> String {
     lines.join("\n").trim().to_string()
 }
 
-fn core_path() -> syn::Result<TokenStream2> {
+/// Checks a prompt template at compile time. See `sinew_core::prompt!` for docs.
+#[proc_macro]
+pub fn prompt(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as prompt::PromptInput);
+    prompt::expand_prompt(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Checks a chat prompt at compile time. See `sinew_core::chat_prompt!` for docs.
+#[proc_macro]
+pub fn chat_prompt(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as prompt::ChatInput);
+    prompt::expand_chat(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Path to `sinew_core` in the calling crate; `what` names the macro in the error.
+fn core_path(what: &str) -> syn::Result<TokenStream2> {
     use proc_macro_crate::{crate_name, FoundCrate};
     match crate_name("sinew-core") {
         Ok(FoundCrate::Itself) => return Ok(quote!(::sinew_core)),
@@ -99,8 +130,10 @@ fn core_path() -> syn::Result<TokenStream2> {
         }
         Err(_) => Err(syn::Error::new(
             Span::call_site(),
-            "#[tool] needs `sinew` or `sinew-core` (feature `macros`) as a dependency; \
-             or point to it with #[tool(crate = \"path::to::sinew_core\")]",
+            format!(
+                "{what} needs `sinew` or `sinew-core` (feature `macros`) as a dependency; \
+                 or point to it with a `crate = \"path::to::sinew_core\"` argument"
+            ),
         )),
     }
 }
@@ -134,7 +167,7 @@ fn expand(args: ToolArgs, mut func: ItemFn) -> syn::Result<TokenStream2> {
     let side_effects = args.side_effects;
     let krate = match args.krate {
         Some(p) => quote!(#p),
-        None => core_path()?,
+        None => core_path("#[tool]")?,
     };
     let fn_name = sig.ident.clone();
     let tool_name = args

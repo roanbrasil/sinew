@@ -46,3 +46,7 @@ workspace = true
 [[test]]
 name = "tool_macro"
 required-features = ["macros"]
+
+[[test]]
+name = "prompt_macro"
+required-features = ["macros"]

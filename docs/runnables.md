@@ -36,6 +36,27 @@ everything on this page in one program.
 Each type has one generic `Runnable` impl, so the compiler can always infer
 the input and output types along a chain.
 
+### Compile-time checked prompts
+
+`prompt!` and `chat_prompt!` (feature `macros`) check a template's variables
+at compile time and convert into `PromptTemplate` / `ChatPromptTemplate`, so
+they slot into the same chains:
+
+```rust
+use sinew::prelude::*;
+
+// Render directly: a missing `.lang(...)` is a compile error.
+let text = prompt!("Summarize {text} in {lang}").text(doc).lang("pt-BR").format();
+
+// Or convert and compose like any PromptTemplate.
+let chain = PromptTemplate::from(prompt!("Tell me a joke about {topic}"))
+    .pipe(model.clone())
+    .pipe(StrOutputParser);
+```
+
+See [Prompt templates](prompts.md) for the builder, file templates and chat
+prompts.
+
 ## Composing
 
 `RunnableExt` adds combinators to every runnable:

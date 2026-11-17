@@ -12,7 +12,7 @@
 //! | `eval` | `eval`: datasets, evaluators, experiments, prompt hub client |
 //! | `http-trace` | `trace::HttpSink` for `sinew-scope serve` |
 //! | `otlp` / `otlp-proto` | `trace::OtlpSink` for any OpenTelemetry collector |
-//! | `macros` (default) | `#[sinew::tool]` and `tools!`: plain functions become tools |
+//! | `macros` (default) | `#[sinew::tool]` and `tools!`: plain functions become tools; `prompt!` / `chat_prompt!`: templates checked at compile time |
 //! | `sqlite-cache`, `schemars` | persistent response cache; schemas from Rust types |
 //! | `full` | all of the above except Postgres-backed features |
 #![doc(
@@ -24,6 +24,8 @@ pub use sinew_core as core;
 #[cfg(feature = "macros")]
 pub use sinew_core::tool;
 pub use sinew_core::tools;
+#[cfg(feature = "macros")]
+pub use sinew_core::{chat_prompt, prompt};
 pub use sinew_graph as graph;
 pub use sinew_trace as trace;
 
@@ -46,6 +48,8 @@ pub mod prelude {
     #[cfg(feature = "macros")]
     pub use sinew_core::tool;
     pub use sinew_core::tools;
+    #[cfg(feature = "macros")]
+    pub use sinew_core::{chat_prompt, prompt};
     pub use sinew_core::{
         providers::{from_spec, Anthropic, Gemini, OpenAiCompat},
         AsyncFnTool, ChatModel, ChatModelExt, ChatPromptTemplate, ChatRequest, ChatResponse,

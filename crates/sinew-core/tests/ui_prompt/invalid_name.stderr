@@ -1,0 +1,5 @@
+error: invalid prompt template: invalid variable name `"a": 1`; use letters, digits and `_`, or write `{{` / `}}` for literal braces
+ --> tests/ui_prompt/invalid_name.rs:2:33
+  |
+2 |     let _ = sinew_core::prompt!("Return JSON: {\"a\": 1}").format();
+  |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^
