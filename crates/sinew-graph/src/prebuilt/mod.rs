@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use sinew_core::{
     ChatModel, ChatRequest, Message, Role, StreamEvent, StructuredOutput, ToolBox, ToolSpec,
 };
-use sinew_trace::{traced_chat, traced_chat_stream, traced_tool};
+use sinew_trace::{traced_chat, traced_chat_stream};
 
 pub use handoff::{create_handoff_tool, Handoff};
 pub use loop_guard::{LoopAction, LoopCheck, LoopGuard, RepeatedCall, LOOP_STOP_REPLY};
@@ -80,6 +80,7 @@ pub struct ReactAgent {
     max_iterations: Option<usize>,
     handoffs: Vec<Handoff>,
     loop_guard: Option<LoopGuard>,
+    unknown_outcome: crate::durable::UnknownOutcome,
 }
 
 impl ReactAgent {
@@ -94,6 +95,7 @@ impl ReactAgent {
             max_iterations: None,
             handoffs: Vec::new(),
             loop_guard: None,
+            unknown_outcome: crate::durable::UnknownOutcome::default(),
         }
     }
 
@@ -149,6 +151,17 @@ impl ReactAgent {
     /// with a `loop_detected` field.
     pub fn loop_guard(mut self, guard: LoopGuard) -> Self {
         self.loop_guard = Some(guard);
+        self
+    }
+
+    /// With a checkpointer that keeps a tool ledger (the in-memory, SQLite
+    /// and Postgres ones do), tool calls are durable: after a crash or an
+    /// error mid-turn, calls that already finished are not run again on
+    /// resume. This sets what happens to a side-effecting call
+    /// (`Tool::side_effects`) that started but has no recorded result
+    /// (default [`UnknownOutcome::Fail`](crate::durable::UnknownOutcome::Fail)).
+    pub fn unknown_tool_outcome(mut self, policy: crate::durable::UnknownOutcome) -> Self {
+        self.unknown_outcome = policy;
         self
     }
 
@@ -216,12 +229,15 @@ impl ReactAgent {
         let tools = self.tools.clone();
         let handoffs = self.handoffs.clone();
         let guard = self.loop_guard.clone();
+        let unknown = self.unknown_outcome;
         g.add_command_node("tools", ["agent", END], move |mut s: AgentState, ctx| {
             let tools = tools.clone();
             let handoffs = handoffs.clone();
             let guard = guard.clone();
             async move {
                 let calls = s.last().map(|m| m.tool_calls.clone()).unwrap_or_default();
+                // Where these calls were requested, for durable ledger keys.
+                let position = s.messages.len().saturating_sub(1).to_string();
                 let mut nudged: Vec<RepeatedCall> = Vec::new();
                 if let Some(g) = &guard {
                     let check = g.check(&s.messages);
@@ -276,7 +292,8 @@ impl ReactAgent {
                         continue;
                     }
                     let result =
-                        traced_tool(&tools, call, ctx.tracer.as_ref(), ctx.run.as_ref()).await;
+                        crate::durable::durable_tool_call(&tools, call, &ctx, &position, unknown)
+                            .await?;
                     s.messages.push(result);
                 }
                 Ok(match target {

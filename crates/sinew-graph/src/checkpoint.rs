@@ -171,6 +171,21 @@ pub(crate) fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
+/// The durable record of one tool call (see [`Checkpointer::get_tool_entry`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ToolEntry {
+    /// The call started; its outcome is unknown until `Done` is written.
+    Pending {
+        name: String,
+        arguments: Value,
+        started_ms: u64,
+    },
+    /// The call finished; `content` is the tool message sent to the model
+    /// (errors included, as `"error: ..."`).
+    Done { content: String },
+}
+
 /// Storage for checkpoints.
 ///
 /// Only `put`, `latest` and `history` are required. The namespace- and
@@ -183,6 +198,36 @@ pub trait Checkpointer: Send + Sync {
     async fn latest(&self, thread_id: &str) -> Result<Option<Checkpoint>, String>;
     /// Every checkpoint of the thread (all namespaces), oldest first.
     async fn history(&self, thread_id: &str) -> Result<Vec<Checkpoint>, String>;
+
+    /// True when this checkpointer keeps a tool-call ledger
+    /// ([`get_tool_entry`](Self::get_tool_entry) /
+    /// [`put_tool_entry`](Self::put_tool_entry)), which makes tool calls in
+    /// prebuilt agents durable: a call that finished before a crash is not
+    /// run again on resume. The default is `false` (no ledger).
+    fn supports_tool_ledger(&self) -> bool {
+        false
+    }
+
+    /// The ledger entry stored under `key` for `thread_id`.
+    async fn get_tool_entry(
+        &self,
+        thread_id: &str,
+        key: &str,
+    ) -> Result<Option<ToolEntry>, String> {
+        let _ = (thread_id, key);
+        Ok(None)
+    }
+
+    /// Writes (or replaces) the ledger entry under `key` for `thread_id`.
+    async fn put_tool_entry(
+        &self,
+        thread_id: &str,
+        key: &str,
+        entry: &ToolEntry,
+    ) -> Result<(), String> {
+        let _ = (thread_id, key, entry);
+        Ok(())
+    }
 
     /// Most recently written checkpoint of a namespace (`""` = root graph).
     async fn latest_in(&self, thread_id: &str, ns: &str) -> Result<Option<Checkpoint>, String> {
@@ -229,6 +274,7 @@ pub trait Checkpointer: Send + Sync {
 #[derive(Default)]
 pub struct MemoryCheckpointer {
     threads: Mutex<HashMap<String, Vec<Checkpoint>>>,
+    ledger: Mutex<HashMap<(String, String), ToolEntry>>,
 }
 
 impl MemoryCheckpointer {
@@ -239,6 +285,36 @@ impl MemoryCheckpointer {
 
 #[async_trait]
 impl Checkpointer for MemoryCheckpointer {
+    fn supports_tool_ledger(&self) -> bool {
+        true
+    }
+
+    async fn get_tool_entry(
+        &self,
+        thread_id: &str,
+        key: &str,
+    ) -> Result<Option<ToolEntry>, String> {
+        Ok(self
+            .ledger
+            .lock()
+            .unwrap()
+            .get(&(thread_id.to_string(), key.to_string()))
+            .cloned())
+    }
+
+    async fn put_tool_entry(
+        &self,
+        thread_id: &str,
+        key: &str,
+        entry: &ToolEntry,
+    ) -> Result<(), String> {
+        self.ledger
+            .lock()
+            .unwrap()
+            .insert((thread_id.to_string(), key.to_string()), entry.clone());
+        Ok(())
+    }
+
     async fn put(&self, checkpoint: Checkpoint) -> Result<(), String> {
         self.threads
             .lock()

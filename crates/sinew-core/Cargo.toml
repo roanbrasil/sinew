@@ -19,7 +19,7 @@ thiserror.workspace = true
 reqwest.workspace = true
 futures-core.workspace = true
 futures-util.workspace = true
-tokio = { version = "1", default-features = false, features = ["time", "sync"] }
+tokio = { version = "1", default-features = false, features = ["time", "sync", "rt"] }
 schemars = { workspace = true, optional = true }
 sinew-macros = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true, features = ["sqlite"] }

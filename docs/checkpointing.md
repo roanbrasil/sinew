@@ -193,3 +193,7 @@ The same scenarios (`tests/common/mod.rs`) run against both backends: round
 trip, ordering, several threads, pruning, retention, and concurrent writers.
 `tests/resume.rs` runs a graph with `interrupt_before` on a SQLite file, drops
 everything, re-opens the file in a new graph instance and resumes the thread.
+
+## Tool calls
+
+Checkpoints are written per superstep; tool calls inside a superstep are recorded in the checkpointer's tool ledger, so a resumed run does not repeat tools that already finished. See [Durable execution](durable-execution.md).

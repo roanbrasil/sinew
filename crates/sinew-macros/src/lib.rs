@@ -38,9 +38,13 @@ pub fn tool(attr: TokenStream, item: TokenStream) -> TokenStream {
             let lit: LitStr = meta.value()?.parse()?;
             args.krate = Some(lit.parse::<Path>()?);
             Ok(())
+        } else if meta.path.is_ident("side_effects") {
+            args.side_effects = true;
+            Ok(())
         } else {
-            Err(meta
-                .error("unsupported #[tool] argument; expected `name`, `description` or `crate`"))
+            Err(meta.error(
+                "unsupported #[tool] argument; expected `name`, `description`, `side_effects` or `crate`",
+            ))
         }
     });
     parse_macro_input!(attr with parser);
@@ -55,6 +59,7 @@ struct ToolArgs {
     name: Option<LitStr>,
     description: Option<LitStr>,
     krate: Option<Path>,
+    side_effects: bool,
 }
 
 /// Joins `#[doc = "..."]` lines the way rustdoc renders them.
@@ -126,6 +131,7 @@ fn expand(args: ToolArgs, mut func: ItemFn) -> syn::Result<TokenStream2> {
         ));
     }
 
+    let side_effects = args.side_effects;
     let krate = match args.krate {
         Some(p) => quote!(#p),
         None => core_path()?,
@@ -287,6 +293,9 @@ fn expand(args: ToolArgs, mut func: ItemFn) -> syn::Result<TokenStream2> {
                         description: ::std::string::String::from(#description),
                         parameters: #krate::__private::schema_for::<__SinewToolArgs>(),
                     }
+                }
+                fn side_effects(&self) -> bool {
+                    #side_effects
                 }
                 async fn call(&self, arguments: #krate::__private::serde_json::Value)
                     -> #krate::Result<#krate::__private::serde_json::Value>
