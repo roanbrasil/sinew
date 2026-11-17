@@ -1,0 +1,5 @@
+error: #[tool] works on free functions; pass shared state (a pool, a client) as an argument marked #[state] instead of `self`
+ --> tests/ui/method.rs:5:13
+  |
+5 |     fn echo(&self, x: String) -> String { x }
+  |             ^

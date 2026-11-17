@@ -6,7 +6,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-sinew = { path = "../../crates/sinew", features = ["mcp-http", "schemars"] }
+sinew = { path = "../../crates/sinew", features = ["mcp-http"] }
 sample-common = { path = "../common" }
 tokio = { workspace = true, features = ["net", "signal"] }
 serde_json.workspace = true

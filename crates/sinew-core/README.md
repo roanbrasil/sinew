@@ -35,7 +35,7 @@ let reply = model.chat(ChatRequest::new(vec![Message::user("Hi")])).await?;
 
 - `Message`, `Role`, `ToolCall`, `ChatRequest`, `ChatResponse`, `Usage`
 - `ChatModel` trait with `chat` and `chat_stream` (`StreamEvent`, `StreamAccumulator`)
-- `Tool`, `FnTool`, `ToolBox` (JSON Schema tools)
+- `Tool`, `ToolBox`, the `#[tool]` attribute (feature `macros`: functions become tools, schema from argument types) and `tools![...]`; `TypedTool`, `AsyncFnTool`, `FnTool` ([tools guide](https://github.com/roanbrasil/sinew/blob/main/docs/tools.md))
 - `PromptTemplate`
 - `StructuredOutput` (tool or JSON mode, with retries; `schemars` feature derives the schema from a Rust type)
 - `mock::ScriptedModel` for offline tests
@@ -44,7 +44,8 @@ let reply = model.chat(ChatRequest::new(vec![Message::user("Hi")])).await?;
 
 | Feature | Adds |
 |---|---|
-| `schemars` | `StructuredOutput::for_type::<T>()` |
+| `schemars` | `StructuredOutput::for_type::<T>()`, `TypedTool` |
+| `macros` | `#[tool]` attribute (implies `schemars`) |
 
 ## License
 

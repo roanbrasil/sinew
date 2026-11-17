@@ -1,0 +1,5 @@
+error: #[tool] functions cannot be generic: the model needs one concrete schema
+ --> tests/ui/generic.rs:3:8
+  |
+3 | fn echo<T: serde::Serialize>(x: T) -> T { x }
+  |        ^

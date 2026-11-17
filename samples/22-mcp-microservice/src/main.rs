@@ -2,8 +2,9 @@
 //!
 //! The service keeps its normal REST route (`GET /orders`) and mounts an MCP
 //! endpoint (`/mcp`, Streamable HTTP) with bearer auth next to it. Its tools
-//! are typed: the JSON Schema comes from the argument structs, and arguments
-//! are deserialized before the handler runs. Any MCP client can use them:
+//! are plain functions with `#[sinew::tool]`: the JSON Schema comes from the
+//! arguments, the description from the doc comment, and the database handle
+//! is injected with `#[state]` (the model never sees it). Any MCP client can use them:
 //! Claude Code, Cursor, another service, or a Sinew agent.
 //!
 //! ```bash
@@ -23,9 +24,9 @@ use sample_common::{is_live, pick_model, BoxError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinew::core::{Error as CoreError, TypedTool};
 use sinew::mcp::{McpClient, McpHttpConfig, McpServer};
 use sinew::prelude::*;
+use sinew::tool;
 
 const TOKEN: &str = "dev-token";
 
@@ -40,62 +41,52 @@ struct Order {
 /// The service's own state (a database in a real service).
 type Db = Arc<Mutex<BTreeMap<String, Order>>>;
 
-#[derive(Deserialize, JsonSchema)]
-struct GetOrder {
+/// Look up an order by id.
+#[tool]
+fn get_order(
+    #[state] db: Db,
     /// Order id, e.g. "A-1001".
     id: String,
+) -> Result<Order, String> {
+    db.lock()
+        .unwrap()
+        .get(&id)
+        .cloned()
+        .ok_or(format!("no order {id}"))
 }
 
 #[derive(Deserialize, JsonSchema)]
-struct UpdateStatus {
+#[serde(rename_all = "lowercase")]
+enum Status {
+    Paid,
+    Shipped,
+    Cancelled,
+}
+
+/// Change an order's status.
+#[tool]
+fn update_order_status(
+    #[state] db: Db,
+    /// Order id, e.g. "A-1001".
     id: String,
-    /// New status: "paid", "shipped" or "cancelled".
-    status: String,
+    /// New status.
+    status: Status,
+) -> Result<Order, String> {
+    let mut db = db.lock().unwrap();
+    let o = db.get_mut(&id).ok_or(format!("no order {id}"))?;
+    o.status = match status {
+        Status::Paid => "paid",
+        Status::Shipped => "shipped",
+        Status::Cancelled => "cancelled",
+    }
+    .into();
+    Ok(o.clone())
 }
 
 fn tools(db: Db) -> ToolBox {
-    let read = db.clone();
-    let write = db;
     ToolBox::new()
-        .with(TypedTool::new(
-            "get_order",
-            "Look up an order by id",
-            move |a: GetOrder| {
-                let db = read.clone();
-                async move {
-                    db.lock()
-                        .unwrap()
-                        .get(&a.id)
-                        .cloned()
-                        .ok_or(CoreError::Tool {
-                            name: "get_order".into(),
-                            message: format!("no order {}", a.id),
-                        })
-                }
-            },
-        ))
-        .with(TypedTool::new(
-            "update_order_status",
-            "Change an order's status",
-            move |a: UpdateStatus| {
-                let db = write.clone();
-                async move {
-                    if !["paid", "shipped", "cancelled"].contains(&a.status.as_str()) {
-                        return Err(CoreError::Tool {
-                            name: "update_order_status".into(),
-                            message: format!("invalid status {}", a.status),
-                        });
-                    }
-                    let mut db = db.lock().unwrap();
-                    let o = db.get_mut(&a.id).ok_or(CoreError::Tool {
-                        name: "update_order_status".into(),
-                        message: format!("no order {}", a.id),
-                    })?;
-                    o.status = a.status;
-                    Ok(o.clone())
-                }
-            },
-        ))
+        .with(get_order::tool(db.clone()))
+        .with(update_order_status::tool(db))
 }
 
 /// REST routes + the MCP endpoint in one axum app.

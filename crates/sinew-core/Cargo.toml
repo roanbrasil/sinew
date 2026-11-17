@@ -21,12 +21,15 @@ futures-core.workspace = true
 futures-util.workspace = true
 tokio = { version = "1", default-features = false, features = ["time", "sync"] }
 schemars = { workspace = true, optional = true }
+sinew-macros = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true, features = ["sqlite"] }
 
 [features]
 default = ["http2"]
 # `StructuredOutput::for_type::<T>()`: derive the JSON Schema from a Rust type.
 schemars = ["dep:schemars"]
+# `#[tool]` attribute macro and `tools!`: functions become tools, schema from argument types.
+macros = ["schemars", "dep:sinew-macros"]
 # Negotiate HTTP/2 (ALPN) with providers that support it.
 http2 = ["reqwest/http2"]
 # `cache::SqliteCache`: persistent response cache.
@@ -35,6 +38,11 @@ sqlite-cache = ["dep:sqlx"]
 [dev-dependencies]
 tokio.workspace = true
 tempfile.workspace = true
+trybuild = "1"
 
 [lints]
 workspace = true
+
+[[test]]
+name = "tool_macro"
+required-features = ["macros"]

@@ -1,0 +1,5 @@
+error: #[tool] arguments are deserialized from JSON and must be owned: use `String` instead of `&str`, `Vec<T>` instead of `&[T]`
+ --> tests/ui/borrowed.rs:3:12
+  |
+3 | fn echo(x: &str) -> String { x.to_string() }
+  |            ^

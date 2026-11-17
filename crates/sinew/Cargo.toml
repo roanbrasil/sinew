@@ -12,7 +12,9 @@ keywords = ["llm", "agents", "langchain", "ai", "rag"]
 categories = ["api-bindings", "asynchronous", "science"]
 
 [features]
-default = []
+default = ["macros"]
+# `#[sinew::tool]` and `tools!`: plain functions become tools (schemas via schemars).
+macros = ["sinew-core/macros"]
 # Durable checkpointers (`sinew::checkpoint`).
 sqlite = ["dep:sinew-checkpoint", "sinew-checkpoint/sqlite"]
 postgres = ["dep:sinew-checkpoint", "sinew-checkpoint/postgres"]
@@ -43,7 +45,7 @@ sqlite-cache = ["sinew-core/sqlite-cache"]
 # Derive structured-output schemas from Rust types.
 schemars = ["sinew-core/schemars"]
 # Everything above except Postgres-backed features.
-full = ["sqlite", "mcp", "mcp-http", "eval", "http-trace", "otlp", "rag", "qdrant", "pdf", "a2a", "harness", "serve", "sqlite-cache", "schemars"]
+full = ["sqlite", "mcp", "mcp-http", "eval", "http-trace", "otlp", "rag", "qdrant", "pdf", "a2a", "harness", "serve", "sqlite-cache", "schemars", "macros"]
 
 [dependencies]
 sinew-core.workspace = true

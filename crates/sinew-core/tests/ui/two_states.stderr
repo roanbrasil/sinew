@@ -1,0 +1,5 @@
+error: #[tool] supports one #[state] argument; group shared state in a struct
+ --> tests/ui/two_states.rs:3:25
+  |
+3 | fn echo(#[state] a: u8, #[state] b: u8, x: String) -> String { let _ = (a, b); x }
+  |                         ^

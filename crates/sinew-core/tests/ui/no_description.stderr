@@ -1,0 +1,5 @@
+error: #[tool] needs a description: add a doc comment (`/// ...`) to the function or use #[tool(description = "...")]
+ --> tests/ui/no_description.rs:2:4
+  |
+2 | fn echo(x: String) -> String { x }
+  |    ^^^^
