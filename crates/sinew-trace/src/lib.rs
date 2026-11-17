@@ -7,6 +7,10 @@
 //! feature, [`OtlpSink`] exports them as OpenTelemetry spans (GenAI semantic
 //! conventions) to any OTLP/HTTP collector; `otlp-proto` adds the protobuf
 //! encoding. See [`otlp`] for the mapping.
+//!
+//! [`Tracer::with_redactor`] masks API keys, tokens, e-mail addresses, card
+//! numbers, sensitive fields and custom patterns in every run before any sink
+//! sees it; see [`redact`].
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png",
     html_favicon_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png"
@@ -18,11 +22,13 @@ mod cassette;
 #[cfg(feature = "http")]
 mod http;
 pub mod otlp;
+pub mod redact;
 pub use cassette::cassette_from_runs;
 #[cfg(feature = "http")]
 pub use http::{HttpSink, HttpSinkConfig};
 #[cfg(feature = "otlp")]
 pub use otlp::{OtlpProtocol, OtlpSink, OtlpSinkConfig};
+pub use redact::Redactor;
 
 use std::{
     fmt::Display,
@@ -146,6 +152,7 @@ fn now_ms() -> u64 {
 #[derive(Clone, Default)]
 pub struct Tracer {
     sinks: Vec<Arc<dyn TraceSink>>,
+    redactor: Option<Arc<Redactor>>,
 }
 
 impl Tracer {
@@ -161,6 +168,31 @@ impl Tracer {
     pub fn with_shared_sink(mut self, sink: Arc<dyn TraceSink>) -> Self {
         self.sinks.push(sink);
         self
+    }
+
+    /// Redacts every finished run's `inputs`, `outputs`, `error` and
+    /// `metadata` with `redactor` before it reaches any sink (JSONL, memory,
+    /// HTTP, OTLP or your own). Replaces a previously set redactor.
+    ///
+    /// ```
+    /// use sinew_trace::{JsonlSink, Redactor, Tracer};
+    ///
+    /// # fn main() -> std::io::Result<()> {
+    /// # let dir = std::env::temp_dir().join("sinew-redact-doc.jsonl");
+    /// let tracer = Tracer::new()
+    ///     .with_redactor(Redactor::new().phones(true).field("session_id"))
+    ///     .with_sink(JsonlSink::open(&dir)?);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_redactor(mut self, redactor: Redactor) -> Self {
+        self.redactor = Some(Arc::new(redactor));
+        self
+    }
+
+    /// The redactor set with [`Tracer::with_redactor`], if any.
+    pub fn redactor(&self) -> Option<&Redactor> {
+        self.redactor.as_deref()
     }
 
     pub fn start(
@@ -202,9 +234,15 @@ impl Tracer {
         }
     }
 
-    fn emit(&self, run: &Run) {
+    fn emit(&self, mut run: Run) {
+        if self.sinks.is_empty() {
+            return;
+        }
+        if let Some(r) = &self.redactor {
+            r.redact_run(&mut run);
+        }
         for s in &self.sinks {
-            s.record(run);
+            s.record(&run);
         }
     }
 }
@@ -243,7 +281,7 @@ impl RunHandle {
         if let Some(mut r) = self.run.take() {
             r.end_ms = Some(now_ms());
             r.outputs = Some(outputs);
-            self.tracer.emit(&r);
+            self.tracer.emit(r);
         }
     }
 
@@ -251,7 +289,7 @@ impl RunHandle {
         if let Some(mut r) = self.run.take() {
             r.end_ms = Some(now_ms());
             r.error = Some(error.to_string());
-            self.tracer.emit(&r);
+            self.tracer.emit(r);
         }
     }
 }
@@ -262,7 +300,7 @@ impl Drop for RunHandle {
             r.end_ms = Some(now_ms());
             r.error
                 .get_or_insert_with(|| "run dropped before finishing".into());
-            self.tracer.emit(&r);
+            self.tracer.emit(r);
         }
     }
 }
@@ -409,5 +447,67 @@ mod tests {
         let tracer = Tracer::new().with_shared_sink(sink.clone());
         drop(tracer.start("x", RunKind::Node, None, json!(null)));
         assert!(sink.runs()[0].error.is_some());
+    }
+
+    #[tokio::test]
+    async fn sinks_receive_redacted_runs() {
+        let memory = Arc::new(MemorySink::new());
+        let dir = std::env::temp_dir().join(format!("sinew-redact-{}.jsonl", uuid::Uuid::new_v4()));
+        let tracer = Tracer::new()
+            .with_redactor(Redactor::new().allow("metadata.owner"))
+            .with_shared_sink(memory.clone())
+            .with_sink(JsonlSink::open(&dir).unwrap());
+        assert!(tracer.redactor().is_some());
+
+        let model = ScriptedModel::new([Message::assistant("write to bob@example.com")]);
+        traced_chat(
+            &model,
+            ChatRequest::new(vec![Message::user(
+                "my key is sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz",
+            )]),
+            Some(&tracer),
+            None,
+        )
+        .await
+        .unwrap();
+        let mut run = tracer.start(
+            "login",
+            RunKind::Tool,
+            None,
+            json!({ "password": "hunter2" }),
+        );
+        run.set_metadata("owner", json!("ops@example.com"));
+        run.fail("bad card 4111 1111 1111 1111");
+        tracer.flush();
+
+        let runs = memory.runs();
+        let llm = serde_json::to_string(&runs[0]).unwrap();
+        assert!(!llm.contains("sk-proj-"), "{llm}");
+        assert!(!llm.contains("bob@example.com"), "{llm}");
+        assert!(llm.contains("[REDACTED:secret]") && llm.contains("[REDACTED:email]"));
+        assert_eq!(runs[1].inputs["password"], "[REDACTED:field]");
+        assert_eq!(runs[1].metadata["owner"], "ops@example.com");
+        assert_eq!(runs[1].error.as_deref(), Some("bad card [REDACTED:card]"));
+
+        let file = std::fs::read_to_string(&dir).unwrap();
+        let _ = std::fs::remove_file(&dir);
+        assert!(
+            !file.contains("hunter2") && !file.contains("sk-proj-"),
+            "{file}"
+        );
+        assert!(file.contains("[REDACTED:field]"));
+    }
+
+    #[test]
+    fn tracing_without_redactor_is_unchanged() {
+        let sink = Arc::new(MemorySink::new());
+        let tracer = Tracer::new().with_shared_sink(sink.clone());
+        assert!(tracer.redactor().is_none());
+        tracer
+            .start("x", RunKind::Tool, None, json!({ "password": "hunter2" }))
+            .finish(json!("ana@example.com"));
+        let run = &sink.runs()[0];
+        assert_eq!(run.inputs["password"], "hunter2");
+        assert_eq!(run.outputs, Some(json!("ana@example.com")));
     }
 }

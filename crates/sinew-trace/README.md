@@ -16,6 +16,7 @@ Part of [Sinew](https://github.com/roanbrasil/sinew): LLM chains, agent graphs, 
 - `Tracer` and `RunHandle` to open and close runs
 - Sinks: `MemorySink`, `JsonlSink`, and `HttpSink` (feature `http`) which batches runs to a [`sinew-scope`](../sinew-scope) server in the background
 - Helpers: `traced_chat`, `traced_chat_stream`, `traced_tool`
+- `Redactor` (`Tracer::with_redactor`): masks API keys, tokens, e-mail addresses, card numbers, sensitive fields and custom patterns before any sink sees a run ([guide](https://github.com/roanbrasil/sinew/blob/main/docs/redaction.md))
 
 ## Cargo features
 

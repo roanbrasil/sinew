@@ -16,6 +16,7 @@ sinew-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
+regex.workspace = true
 reqwest = { workspace = true, features = ["blocking"], optional = true }
 
 [features]

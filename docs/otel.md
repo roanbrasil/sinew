@@ -8,6 +8,10 @@ Sinew speaks OTLP in both directions:
 - **ingest**: `sinew-scope` accepts OTLP/HTTP traces from any GenAI-instrumented app (see
   [scope.md](scope.md#sending-traces-with-opentelemetry)).
 
+Spans carry the run's inputs, outputs and error messages. To mask API keys, tokens, e-mail
+addresses and card numbers before they leave the process, set a `Redactor` on the `Tracer`;
+`OtlpSink` then receives the redacted runs. See [redaction.md](redaction.md).
+
 ## Features
 
 ```toml

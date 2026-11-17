@@ -142,7 +142,7 @@ Sinew is built for low latency and high throughput:
 - **Agents and retrieval:** [Harness](docs/harness.md) · [RAG](docs/rag.md)
 - **Deployment and protocols:** [Serve](docs/serve.md) · [MCP](docs/mcp.md) · [A2A](docs/a2a.md)
 - **Testing:** [Testing agents and record/replay](docs/testing.md)
-- **Observability:** [Scope](docs/scope.md) · [Monitoring](docs/monitoring.md) · [Prompt hub](docs/prompt-hub.md) · [Evaluation](docs/evaluation.md) · [OpenTelemetry](docs/otel.md)
+- **Observability:** [Scope](docs/scope.md) · [Monitoring](docs/monitoring.md) · [Prompt hub](docs/prompt-hub.md) · [Evaluation](docs/evaluation.md) · [OpenTelemetry](docs/otel.md) · [Redaction](docs/redaction.md)
 - **Help and contributing:** [Troubleshooting](docs/troubleshooting.md) · [Contributor guides](docs/contributing/README.md)
 
 ## Design choices

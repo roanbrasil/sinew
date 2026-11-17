@@ -358,6 +358,9 @@ See `crates/sinew-scope/examples/traced_agent.rs` and `eval_agent.rs`, and the i
 - Alert webhooks are called from the server; only `http(s)` URLs are accepted. Anyone with the
   token can create alerts, so treat the token as an admin credential.
 - LLM-judge rules use the provider API keys found in the server's environment.
+- The server stores runs as received. To keep API keys, tokens, e-mail addresses and card
+  numbers out of it, set a `Redactor` on the application's `Tracer`; see
+  [redaction.md](redaction.md).
 
 ## Trace to test
 
