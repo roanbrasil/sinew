@@ -6,6 +6,10 @@
 
 use std::{
     pin::Pin,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     task::{Context, Poll},
     time::Duration,
 };
@@ -120,6 +124,8 @@ pub(crate) struct SseBody {
     ping: Option<Interval>,
     on_drop: Option<Box<dyn FnOnce() + Send + Sync>>,
     done: bool,
+    /// Open-stream gauge, decremented on drop.
+    counter: Option<Arc<AtomicUsize>>,
 }
 
 impl SseBody {
@@ -138,12 +144,23 @@ impl SseBody {
             ping,
             on_drop,
             done: false,
+            counter: None,
         }
+    }
+
+    /// Counts this body in `counter` while it is alive.
+    pub(crate) fn counted(mut self, counter: Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::Relaxed);
+        self.counter = Some(counter);
+        self
     }
 }
 
 impl Drop for SseBody {
     fn drop(&mut self) {
+        if let Some(c) = &self.counter {
+            c.fetch_sub(1, Ordering::Relaxed);
+        }
         if !self.done {
             if let Some(f) = self.on_drop.take() {
                 f();

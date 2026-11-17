@@ -8,6 +8,10 @@
 //! conventions) to any OTLP/HTTP collector; `otlp-proto` adds the protobuf
 //! encoding. See [`otlp`] for the mapping.
 //!
+//! [`metrics::MetricsSink`] aggregates finished runs into Prometheus counters
+//! and histograms (runs, latency, time to first token, tokens, cost, tool
+//! calls, errors) and renders the text exposition format.
+//!
 //! [`Tracer::with_redactor`] masks API keys, tokens, e-mail addresses, card
 //! numbers, sensitive fields and custom patterns in every run before any sink
 //! sees it; see [`redact`].
@@ -21,11 +25,13 @@ mod batch;
 mod cassette;
 #[cfg(feature = "http")]
 mod http;
+pub mod metrics;
 pub mod otlp;
 pub mod redact;
 pub use cassette::cassette_from_runs;
 #[cfg(feature = "http")]
 pub use http::{HttpSink, HttpSinkConfig};
+pub use metrics::MetricsSink;
 #[cfg(feature = "otlp")]
 pub use otlp::{OtlpProtocol, OtlpSink, OtlpSinkConfig};
 pub use redact::Redactor;
@@ -319,6 +325,7 @@ pub async fn traced_chat<M: ChatModel + ?Sized>(
     match model.chat(request).await {
         Ok(resp) => {
             run.set_usage(resp.usage.input_tokens, resp.usage.output_tokens);
+            set_cache_usage(&mut run, &resp.usage);
             run.set_metadata("model", json!(resp.model));
             run.finish(json!(resp.message));
             Ok(resp)
@@ -370,6 +377,7 @@ where
     match result {
         Ok(resp) => {
             run.set_usage(resp.usage.input_tokens, resp.usage.output_tokens);
+            set_cache_usage(&mut run, &resp.usage);
             run.set_metadata("model", json!(resp.model));
             run.set_metadata("streamed_chunks", json!(chunks));
             if let Some(t) = ttft_ms {
@@ -382,6 +390,20 @@ where
             run.fail(&e);
             Err(e)
         }
+    }
+}
+
+/// Records prompt-cache token counts the provider reported (read by
+/// [`metrics::MetricsSink`] and cost estimates).
+fn set_cache_usage(run: &mut RunHandle, usage: &sinew_core::Usage) {
+    if usage.cached_input_tokens > 0 {
+        run.set_metadata("cached_input_tokens", json!(usage.cached_input_tokens));
+    }
+    if usage.cache_creation_input_tokens > 0 {
+        run.set_metadata(
+            "cache_creation_input_tokens",
+            json!(usage.cache_creation_input_tokens),
+        );
     }
 }
 

@@ -633,6 +633,16 @@ fn filtered<'a>(prefix: &str, q: &TraceQuery, fts: bool) -> QueryBuilder<'a, Sql
     qb
 }
 
+/// Row counts and size of a [`Store`]; see [`Store::stats`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct StoreStats {
+    pub runs: u64,
+    pub traces: u64,
+    /// `PRAGMA page_count` times `PRAGMA page_size`; the WAL file is not
+    /// included.
+    pub size_bytes: u64,
+}
+
 /// Handle to the database. Cheap to clone.
 #[derive(Clone)]
 pub struct Store {
@@ -742,6 +752,27 @@ impl Store {
 
     pub(crate) fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    /// Row counts and database size, for monitoring.
+    pub async fn stats(&self) -> Result<StoreStats> {
+        let runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs")
+            .fetch_one(&self.pool)
+            .await?;
+        let traces: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM traces")
+            .fetch_one(&self.pool)
+            .await?;
+        let pages: i64 = sqlx::query_scalar("PRAGMA page_count")
+            .fetch_one(&self.pool)
+            .await?;
+        let page_size: i64 = sqlx::query_scalar("PRAGMA page_size")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(StoreStats {
+            runs: runs.max(0) as u64,
+            traces: traces.max(0) as u64,
+            size_bytes: (pages.max(0) as u64).saturating_mul(page_size.max(0) as u64),
+        })
     }
 
     /// The pricing table in use.

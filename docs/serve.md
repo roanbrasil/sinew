@@ -75,6 +75,7 @@ All bodies are JSON. Timestamps are Unix epoch milliseconds. Errors are
 | `GET /ok`, `GET /health` | Liveness, always public. |
 | `GET /ready` | Store reachable and not shutting down (503 otherwise). Public. |
 | `GET /info` | Version, assistant ids, chat model ids. |
+| `GET /metrics` | Prometheus metrics; public unless `.metrics_auth(true)`. See [monitoring.md](monitoring.md#prometheus-metrics). |
 
 ### Assistants
 
@@ -240,13 +241,18 @@ decode into your state type.
 ## Operations
 
 - **Auth**: `.api_key(k)` (repeatable) requires `Authorization: Bearer k` or
-  `x-api-key: k` on everything but `/ok`, `/health`, `/ready` and CORS
-  preflights. Keys are compared in constant time.
+  `x-api-key: k` on everything but `/ok`, `/health`, `/ready`, `/metrics`
+  (unless `.metrics_auth(true)`) and CORS preflights. Keys are compared in
+  constant time.
 - **CORS**: `.cors(CorsConfig::permissive())` or `CorsConfig::origins([...])`.
 - **Tracing**: `.tracer(tracer)` records one `chain` run per request
   (`POST /threads/{tid}/runs/wait`, with `http.status` and `latency_us`
   metadata) and attaches the tracer to every graph, so graph, node, model and
   tool runs are recorded too. Use an `HttpSink` to ship them to Sinew Scope.
+- **Metrics**: `.metrics(MetricsSink::new())` aggregates the same runs into
+  Prometheus counters and histograms at `GET /metrics`, next to queue and
+  stream gauges; see [monitoring.md](monitoring.md#prometheus-metrics) and
+  the Grafana dashboard in `deploy/grafana/sinew.json`.
 - **Shutdown**: `serve(listener, signal)` / `serve_addr(addr)` (Ctrl-C). On the
   signal the server stops accepting, new runs get 503, running runs have
   `shutdown_grace` (10 s) to finish, the rest are cancelled, and the call

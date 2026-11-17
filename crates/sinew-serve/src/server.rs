@@ -4,7 +4,10 @@ use std::{
     collections::BTreeMap,
     future::Future,
     net::SocketAddr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -23,7 +26,10 @@ use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::{json, Value};
 use sinew_core::ChatModel;
 use sinew_graph::{Checkpoint, Checkpointer};
-use sinew_trace::{RunKind, Tracer};
+use sinew_trace::{
+    metrics::{MetricType, TextEncoder, CONTENT_TYPE},
+    MetricsSink, RunKind, Tracer,
+};
 use tokio::{net::TcpListener, sync::oneshot};
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
@@ -106,7 +112,8 @@ impl CorsConfig {
 }
 
 /// Server settings. Defaults: no auth, no CORS, no tracing, webhooks off,
-/// 15 s SSE keep-alive, 10 s shutdown grace, 10 000 finished runs kept.
+/// 15 s SSE keep-alive, 10 s shutdown grace, 10 000 finished runs kept,
+/// no run metrics, `/metrics` without auth.
 #[derive(Clone)]
 pub struct ServeConfig {
     pub api_keys: Vec<String>,
@@ -117,6 +124,11 @@ pub struct ServeConfig {
     pub shutdown_grace: Duration,
     pub max_finished_runs: usize,
     pub body_limit: usize,
+    /// Run metrics rendered by `GET /metrics`; registered on the tracer
+    /// (one is created if `tracer` is `None`) when the server is built.
+    pub metrics: Option<Arc<MetricsSink>>,
+    /// Require the API keys on `GET /metrics` too.
+    pub metrics_auth: bool,
 }
 
 impl Default for ServeConfig {
@@ -130,6 +142,8 @@ impl Default for ServeConfig {
             shutdown_grace: Duration::from_secs(10),
             max_finished_runs: 10_000,
             body_limit: 16 * 1024 * 1024,
+            metrics: None,
+            metrics_auth: false,
         }
     }
 }
@@ -169,7 +183,8 @@ impl ServerBuilder {
     }
 
     /// Requires `Authorization: Bearer <key>` (or `x-api-key: <key>`) on
-    /// everything except `/ok`, `/health` and `/ready`. Can be called
+    /// everything except `/ok`, `/health`, `/ready` and (unless
+    /// [`ServerBuilder::metrics_auth`] is set) `/metrics`. Can be called
     /// several times to accept several keys.
     pub fn api_key(mut self, key: impl Into<String>) -> Self {
         let key = key.into();
@@ -209,13 +224,55 @@ impl ServerBuilder {
         self
     }
 
+    /// Aggregates graph, node, model, tool and HTTP request runs into
+    /// Prometheus metrics served at `GET /metrics`. The sink is added to the
+    /// tracer set with [`ServerBuilder::tracer`], or to a new tracer if none
+    /// is set (which also records one `chain` run per HTTP request).
+    ///
+    /// `GET /metrics` is always available and also reports
+    /// `sinew_serve_queued_runs`, `sinew_serve_running_runs` and
+    /// `sinew_serve_active_streams`. It does not require an API key unless
+    /// [`ServerBuilder::metrics_auth`] is set.
+    ///
+    /// ```
+    /// use sinew_serve::Server;
+    /// use sinew_trace::MetricsSink;
+    ///
+    /// let server = Server::builder()
+    ///     .metrics(MetricsSink::new().project("support-bot"))
+    ///     .api_key("secret")
+    ///     .metrics_auth(true)
+    ///     .build();
+    /// # let _ = server;
+    /// ```
+    pub fn metrics(self, sink: MetricsSink) -> Self {
+        self.shared_metrics(Arc::new(sink))
+    }
+
+    /// Like [`ServerBuilder::metrics`], with a sink shared with other code.
+    pub fn shared_metrics(mut self, sink: Arc<MetricsSink>) -> Self {
+        self.config.metrics = Some(sink);
+        self
+    }
+
+    /// Requires the API keys on `GET /metrics` (default: open, for an
+    /// internal Prometheus scraper). No effect without API keys.
+    pub fn metrics_auth(mut self, required: bool) -> Self {
+        self.config.metrics_auth = required;
+        self
+    }
+
     /// Replaces the whole configuration.
     pub fn config(mut self, config: ServeConfig) -> Self {
         self.config = config;
         self
     }
 
-    pub fn build(self) -> Server {
+    pub fn build(mut self) -> Server {
+        if let Some(sink) = self.config.metrics.clone() {
+            let tracer = self.config.tracer.take().unwrap_or_default();
+            self.config.tracer = Some(tracer.with_shared_sink(sink));
+        }
         let store = self.store.unwrap_or_else(|| Arc::new(MemoryStore::new()));
         let cp = store.checkpointer();
         let mut assistants = BTreeMap::new();
@@ -242,6 +299,7 @@ impl ServerBuilder {
                     .build()
                     .unwrap_or_default(),
                 config: self.config,
+                streams: Arc::new(AtomicUsize::new(0)),
             })),
         }
     }
@@ -255,6 +313,8 @@ pub(crate) struct AppInner {
     pub runs: Arc<Runs>,
     pub config: ServeConfig,
     http: reqwest::Client,
+    /// Open SSE responses.
+    streams: Arc<AtomicUsize>,
 }
 
 #[derive(Clone)]
@@ -467,12 +527,23 @@ fn router(app: App) -> Router {
         .route("/runs/{rid}/join", get(join_run))
         .route("/runs/{rid}/stream", get(join_stream))
         .route("/v1/models", get(openai::list_models))
-        .route("/v1/chat/completions", post(openai::chat_completions))
-        .route_layer(middleware::from_fn_with_state(app.clone(), auth));
-    let mut r = Router::new()
+        .route("/v1/chat/completions", post(openai::chat_completions));
+    let protected = if app.config.metrics_auth {
+        protected.route("/metrics", get(metrics))
+    } else {
+        protected
+    }
+    .route_layer(middleware::from_fn_with_state(app.clone(), auth));
+    let public = Router::new()
         .route("/ok", get(health))
         .route("/health", get(health))
-        .route("/ready", get(ready))
+        .route("/ready", get(ready));
+    let public = if app.config.metrics_auth {
+        public
+    } else {
+        public.route("/metrics", get(metrics))
+    };
+    let mut r = public
         .merge(protected)
         .layer(DefaultBodyLimit::max(app.config.body_limit));
     if app.config.tracer.is_some() {
@@ -523,7 +594,7 @@ async fn trace_requests(State(app): State<App>, req: Request, next: Next) -> Res
         return next.run(req).await;
     };
     let path = req.uri().path().to_string();
-    if matches!(path.as_str(), "/ok" | "/health" | "/ready") {
+    if matches!(path.as_str(), "/ok" | "/health" | "/ready" | "/metrics") {
         return next.run(req).await;
     }
     let route = req
@@ -565,6 +636,52 @@ async fn ready(State(app): State<App>) -> Response {
         Ok(()) => Json(json!({"ok": true})).into_response(),
         Err(e) => ApiError::new(StatusCode::SERVICE_UNAVAILABLE, e.to_string()).into_response(),
     }
+}
+
+/// `GET /metrics`: Prometheus text exposition of the run metrics (when a
+/// [`MetricsSink`] is configured) and the server gauges.
+async fn metrics(State(app): State<App>) -> Response {
+    let mut enc = TextEncoder::new();
+    if let Some(sink) = &app.config.metrics {
+        sink.encode(&mut enc);
+    }
+    let (queued, running) = app.runs.live_counts();
+    for (name, help, value) in [
+        (
+            "sinew_serve_queued_runs",
+            "Runs waiting for an earlier run on the same thread.",
+            queued,
+        ),
+        (
+            "sinew_serve_running_runs",
+            "Runs currently executing.",
+            running,
+        ),
+        (
+            "sinew_serve_active_streams",
+            "Open server-sent event streams.",
+            app.streams.load(Ordering::Relaxed),
+        ),
+        (
+            "sinew_serve_assistants",
+            "Registered assistants.",
+            app.assistants.len(),
+        ),
+    ] {
+        enc.header(name, help, MetricType::Gauge);
+        enc.sample(name, &[], value as f64);
+    }
+    enc.header(
+        "sinew_serve_build_info",
+        "Constant 1, labelled with the sinew-serve version.",
+        MetricType::Gauge,
+    );
+    enc.sample(
+        "sinew_serve_build_info",
+        &[("version", env!("CARGO_PKG_VERSION"))],
+        1.0,
+    );
+    ([(header::CONTENT_TYPE, CONTENT_TYPE)], enc.finish()).into_response()
 }
 
 async fn info(State(app): State<App>) -> Json<Value> {
@@ -1028,7 +1145,7 @@ fn sse(
         let token = e.cancel.clone();
         Box::new(move || token.cancel()) as Box<dyn FnOnce() + Send + Sync>
     });
-    let body = SseBody::new(rx, app.config.keep_alive, on_drop);
+    let body = SseBody::new(rx, app.config.keep_alive, on_drop).counted(app.streams.clone());
     Response::builder()
         .header(header::CONTENT_TYPE, "text/event-stream")
         .header(header::CACHE_CONTROL, "no-cache")
