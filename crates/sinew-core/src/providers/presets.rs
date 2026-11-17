@@ -5,7 +5,30 @@
 use std::sync::Arc;
 
 use super::{Anthropic, Gemini, OpenAiCompat};
-use crate::{ChatModel, Error, Result};
+use crate::{Capabilities, ChatModel, Error, Result};
+
+/// Builds a preset's capabilities. Conservative: a feature is only listed
+/// when the provider documents it for its OpenAI-compatible endpoint.
+const fn caps(
+    tools: bool,
+    vision: bool,
+    pdf: bool,
+    audio: bool,
+    json_schema: bool,
+    cached_tokens: bool,
+    forced_tool_choice: bool,
+) -> Capabilities {
+    Capabilities::none()
+        .with_streaming(true)
+        .with_sampling(true)
+        .with_tools(tools)
+        .with_vision(vision)
+        .with_pdf(pdf)
+        .with_audio(audio)
+        .with_json_schema(json_schema)
+        .with_cached_tokens(cached_tokens)
+        .with_forced_tool_choice(forced_tool_choice)
+}
 
 /// A hosted, OpenAI-compatible service.
 struct Hosted {
@@ -13,6 +36,7 @@ struct Hosted {
     aliases: &'static [&'static str],
     base_url: &'static str,
     key_var: &'static str,
+    caps: Capabilities,
 }
 
 const HOSTED: &[Hosted] = &[
@@ -21,72 +45,84 @@ const HOSTED: &[Hosted] = &[
         aliases: &[],
         base_url: "https://api.openai.com/v1",
         key_var: "OPENAI_API_KEY",
+        caps: caps(true, true, true, true, true, true, true),
     },
     Hosted {
         name: "xai",
         aliases: &["grok"],
         base_url: "https://api.x.ai/v1",
         key_var: "XAI_API_KEY",
+        caps: caps(true, true, false, false, true, true, true),
     },
     Hosted {
         name: "groq",
         aliases: &[],
         base_url: "https://api.groq.com/openai/v1",
         key_var: "GROQ_API_KEY",
+        caps: caps(true, true, false, false, true, false, true),
     },
     Hosted {
         name: "mistral",
         aliases: &[],
         base_url: "https://api.mistral.ai/v1",
         key_var: "MISTRAL_API_KEY",
+        caps: caps(true, true, false, false, true, false, true),
     },
     Hosted {
         name: "deepseek",
         aliases: &[],
         base_url: "https://api.deepseek.com/v1",
         key_var: "DEEPSEEK_API_KEY",
+        caps: caps(true, false, false, false, false, false, true),
     },
     Hosted {
         name: "openrouter",
         aliases: &[],
         base_url: "https://openrouter.ai/api/v1",
         key_var: "OPENROUTER_API_KEY",
+        caps: caps(true, true, true, true, true, true, true),
     },
     Hosted {
         name: "together",
         aliases: &[],
         base_url: "https://api.together.xyz/v1",
         key_var: "TOGETHER_API_KEY",
+        caps: caps(true, true, false, false, true, false, true),
     },
     Hosted {
         name: "fireworks",
         aliases: &[],
         base_url: "https://api.fireworks.ai/inference/v1",
         key_var: "FIREWORKS_API_KEY",
+        caps: caps(true, true, false, false, true, false, true),
     },
     Hosted {
         name: "perplexity",
         aliases: &[],
         base_url: "https://api.perplexity.ai",
         key_var: "PERPLEXITY_API_KEY",
+        caps: caps(false, true, false, false, true, false, false),
     },
     Hosted {
         name: "cerebras",
         aliases: &[],
         base_url: "https://api.cerebras.ai/v1",
         key_var: "CEREBRAS_API_KEY",
+        caps: caps(true, false, false, false, true, false, true),
     },
     Hosted {
         name: "nvidia",
         aliases: &["nim"],
         base_url: "https://integrate.api.nvidia.com/v1",
         key_var: "NVIDIA_API_KEY",
+        caps: caps(true, true, false, false, true, false, true),
     },
     Hosted {
         name: "huggingface",
         aliases: &["hf"],
         base_url: "https://router.huggingface.co/v1",
         key_var: "HF_TOKEN",
+        caps: caps(true, true, false, false, true, false, false),
     },
 ];
 
@@ -96,6 +132,7 @@ struct Local {
     aliases: &'static [&'static str],
     default_host: &'static str,
     host_var: &'static str,
+    caps: Capabilities,
 }
 
 const LOCAL: &[Local] = &[
@@ -104,54 +141,63 @@ const LOCAL: &[Local] = &[
         aliases: &[],
         default_host: "http://127.0.0.1:11434",
         host_var: "OLLAMA_HOST",
+        caps: caps(true, true, false, false, true, false, false),
     },
     Local {
         name: "lmstudio",
         aliases: &["lm-studio", "lm_studio"],
         default_host: "http://127.0.0.1:1234",
         host_var: "LMSTUDIO_HOST",
+        caps: caps(true, true, false, false, true, false, false),
     },
     Local {
         name: "llamacpp",
         aliases: &["llama.cpp", "llama-cpp", "llama_cpp"],
         default_host: "http://127.0.0.1:8080",
         host_var: "LLAMACPP_HOST",
+        caps: caps(true, true, false, false, true, false, false),
     },
     Local {
         name: "vllm",
         aliases: &[],
         default_host: "http://127.0.0.1:8000",
         host_var: "VLLM_HOST",
+        caps: caps(true, true, false, false, true, false, true),
     },
     Local {
         name: "sglang",
         aliases: &[],
         default_host: "http://127.0.0.1:30000",
         host_var: "SGLANG_HOST",
+        caps: caps(true, true, false, false, true, false, true),
     },
     Local {
         name: "localai",
         aliases: &[],
         default_host: "http://127.0.0.1:8080",
         host_var: "LOCALAI_HOST",
+        caps: caps(true, true, false, false, false, false, false),
     },
     Local {
         name: "jan",
         aliases: &[],
         default_host: "http://127.0.0.1:1337",
         host_var: "JAN_HOST",
+        caps: caps(true, false, false, false, false, false, false),
     },
     Local {
         name: "llamafile",
         aliases: &[],
         default_host: "http://127.0.0.1:8080",
         host_var: "LLAMAFILE_HOST",
+        caps: caps(false, true, false, false, false, false, false),
     },
     Local {
         name: "tgi",
         aliases: &[],
         default_host: "http://127.0.0.1:8080",
         host_var: "TGI_HOST",
+        caps: caps(true, true, false, false, true, false, false),
     },
 ];
 
@@ -180,13 +226,15 @@ fn hosted(name: &str, model: impl Into<String>) -> Result<OpenAiCompat> {
         .expect("known preset");
     let key =
         std::env::var(h.key_var).map_err(|_| Error::Config(format!("{} not set", h.key_var)))?;
-    Ok(OpenAiCompat::new(h.base_url, model).with_api_key(key))
+    Ok(OpenAiCompat::new(h.base_url, model)
+        .with_api_key(key)
+        .with_capabilities(h.caps))
 }
 
 fn local(name: &str, model: impl Into<String>) -> OpenAiCompat {
     let l = LOCAL.iter().find(|l| l.name == name).expect("known preset");
     let host = std::env::var(l.host_var).unwrap_or_else(|_| l.default_host.to_string());
-    let mut m = OpenAiCompat::new(local_url(host), model);
+    let mut m = OpenAiCompat::new(local_url(host), model).with_capabilities(l.caps);
     // Most local servers ignore the key; send one when the user set it.
     if let Ok(k) = std::env::var("LOCAL_API_KEY") {
         m = m.with_api_key(k);
@@ -317,6 +365,79 @@ impl OpenAiCompat {
     }
 }
 
+/// How a provider is reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderKind {
+    /// A dedicated client ([`Anthropic`], [`Gemini`], Azure OpenAI).
+    Native,
+    /// A hosted OpenAI-compatible API.
+    Hosted,
+    /// A server on your machine or network.
+    Local,
+}
+
+/// One entry of [`catalog`]: what `from_spec` knows about a provider.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ProviderInfo {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub kind: ProviderKind,
+    /// API base URL (hosted) or default host (local).
+    pub url: &'static str,
+    /// Environment variable with the API key (native, hosted) or host (local).
+    pub env_var: &'static str,
+    /// Capabilities for a typical current model.
+    pub capabilities: Capabilities,
+}
+
+/// Every provider [`from_spec`] understands, in [`provider_names`] order.
+pub fn catalog() -> Vec<ProviderInfo> {
+    let mut v = vec![
+        ProviderInfo {
+            name: "anthropic",
+            aliases: &["claude"],
+            kind: ProviderKind::Native,
+            url: "https://api.anthropic.com",
+            env_var: "ANTHROPIC_API_KEY",
+            capabilities: super::anthropic::anthropic_capabilities("claude-sonnet-4-5"),
+        },
+        ProviderInfo {
+            name: "gemini",
+            aliases: &["google"],
+            kind: ProviderKind::Native,
+            url: "https://generativelanguage.googleapis.com",
+            env_var: "GEMINI_API_KEY",
+            capabilities: Capabilities::all(),
+        },
+        ProviderInfo {
+            name: "azure",
+            aliases: &["azure-openai", "azure_openai"],
+            kind: ProviderKind::Native,
+            url: "$AZURE_OPENAI_ENDPOINT",
+            env_var: "AZURE_OPENAI_API_KEY",
+            capabilities: Capabilities::all(),
+        },
+    ];
+    v.extend(HOSTED.iter().map(|h| ProviderInfo {
+        name: h.name,
+        aliases: h.aliases,
+        kind: ProviderKind::Hosted,
+        url: h.base_url,
+        env_var: h.key_var,
+        capabilities: h.caps,
+    }));
+    v.extend(LOCAL.iter().map(|l| ProviderInfo {
+        name: l.name,
+        aliases: l.aliases,
+        kind: ProviderKind::Local,
+        url: l.default_host,
+        env_var: l.host_var,
+        capabilities: l.caps,
+    }));
+    v
+}
+
 /// Every provider name [`from_spec`] understands (aliases not included).
 pub fn provider_names() -> Vec<&'static str> {
     let mut v = vec!["anthropic", "gemini", "azure"];
@@ -367,6 +488,27 @@ pub fn from_spec(spec: &str) -> Result<Arc<dyn ChatModel>> {
         "unknown provider `{provider}`; known: {}",
         provider_names().join(", ")
     )))
+}
+
+/// Capabilities of a `from_spec` provider for `model`, without building the
+/// client (no API key needed): `capabilities_for("anthropic",
+/// "claude-sonnet-5-5")`. `None` for unknown providers.
+pub fn capabilities_for(provider: &str, model: &str) -> Option<Capabilities> {
+    match provider {
+        "anthropic" | "claude" => Some(super::anthropic::anthropic_capabilities(model)),
+        "gemini" | "google" => Some(Capabilities::all()),
+        "azure" | "azure-openai" | "azure_openai" => Some(Capabilities::all()),
+        p => HOSTED
+            .iter()
+            .find(|h| matches(p, h.name, h.aliases))
+            .map(|h| h.caps)
+            .or_else(|| {
+                LOCAL
+                    .iter()
+                    .find(|l| matches(p, l.name, l.aliases))
+                    .map(|l| l.caps)
+            }),
+    }
 }
 
 #[cfg(test)]

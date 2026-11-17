@@ -8,7 +8,9 @@ use std::{sync::OnceLock, time::Duration};
 pub use anthropic::Anthropic;
 pub use gemini::Gemini;
 pub use openai::OpenAiCompat;
-pub use presets::{from_spec, provider_names};
+pub use presets::{
+    capabilities_for, catalog, from_spec, provider_names, ProviderInfo, ProviderKind,
+};
 
 /// Builds a [`reqwest::Client`] tuned for LLM APIs: connection pooling with
 /// keep-alive, `TCP_NODELAY` (no Nagle delay on small streaming writes),

@@ -196,6 +196,9 @@ impl<M: ChatModel, C: ResponseCache + 'static> ChatModel for CachedModel<M, C> {
     fn name(&self) -> &str {
         self.inner.name()
     }
+    fn capabilities(&self) -> crate::Capabilities {
+        self.inner.capabilities()
+    }
 
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
         let key = cache_key(self.inner.name(), &request);

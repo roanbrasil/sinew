@@ -194,6 +194,106 @@ pub struct ChatResponse {
     pub model: String,
 }
 
+/// What a model (and the way Sinew talks to it) supports. `false` means
+/// unsupported *or unknown*: custom models report nothing unless they
+/// override [`ChatModel::capabilities`].
+///
+/// Hosted and local OpenAI-compatible servers vary by model (a text-only
+/// model behind an endpoint that accepts images still cannot see them), so
+/// treat these as what the provider's API accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct Capabilities {
+    /// Calls tools.
+    pub tools: bool,
+    /// Streams incrementally (not the default whole-response fallback).
+    pub streaming: bool,
+    /// Accepts images.
+    pub vision: bool,
+    /// Accepts PDF documents.
+    pub pdf: bool,
+    /// Accepts audio input.
+    pub audio: bool,
+    /// Native schema-constrained output for [`ResponseFormat::JsonSchema`]
+    /// (otherwise `StructuredOutput` falls back to a tool call or prompt).
+    pub json_schema: bool,
+    /// Reports cached prompt tokens in [`Usage::cached_input_tokens`].
+    pub cached_tokens: bool,
+    /// Honors sampling parameters such as `temperature`.
+    pub sampling: bool,
+    /// Honors [`ToolChoice::Tool`] (forcing one specific tool).
+    pub forced_tool_choice: bool,
+}
+
+impl Capabilities {
+    /// Nothing known.
+    pub const fn none() -> Self {
+        Self {
+            tools: false,
+            streaming: false,
+            vision: false,
+            pdf: false,
+            audio: false,
+            json_schema: false,
+            cached_tokens: false,
+            sampling: false,
+            forced_tool_choice: false,
+        }
+    }
+
+    /// Everything supported (e.g. test models).
+    pub const fn all() -> Self {
+        Self {
+            tools: true,
+            streaming: true,
+            vision: true,
+            pdf: true,
+            audio: true,
+            json_schema: true,
+            cached_tokens: true,
+            sampling: true,
+            forced_tool_choice: true,
+        }
+    }
+
+    pub const fn with_tools(mut self, v: bool) -> Self {
+        self.tools = v;
+        self
+    }
+    pub const fn with_streaming(mut self, v: bool) -> Self {
+        self.streaming = v;
+        self
+    }
+    pub const fn with_vision(mut self, v: bool) -> Self {
+        self.vision = v;
+        self
+    }
+    pub const fn with_pdf(mut self, v: bool) -> Self {
+        self.pdf = v;
+        self
+    }
+    pub const fn with_audio(mut self, v: bool) -> Self {
+        self.audio = v;
+        self
+    }
+    pub const fn with_json_schema(mut self, v: bool) -> Self {
+        self.json_schema = v;
+        self
+    }
+    pub const fn with_cached_tokens(mut self, v: bool) -> Self {
+        self.cached_tokens = v;
+        self
+    }
+    pub const fn with_sampling(mut self, v: bool) -> Self {
+        self.sampling = v;
+        self
+    }
+    pub const fn with_forced_tool_choice(mut self, v: bool) -> Self {
+        self.forced_tool_choice = v;
+        self
+    }
+}
+
 /// Anything that can answer a chat request.
 #[async_trait]
 pub trait ChatModel: Send + Sync {
@@ -213,6 +313,12 @@ pub trait ChatModel: Send + Sync {
         let events = events_from_response(resp).into_iter().map(Ok);
         Ok(Box::pin(futures_util::stream::iter(events)))
     }
+
+    /// What this model supports; see [`Capabilities`]. The default reports
+    /// nothing; providers and wrappers override it.
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::none()
+    }
 }
 
 #[async_trait]
@@ -225,5 +331,8 @@ impl<T: ChatModel + ?Sized> ChatModel for Arc<T> {
     }
     async fn chat_stream(&self, request: ChatRequest) -> Result<ChatStream> {
         (**self).chat_stream(request).await
+    }
+    fn capabilities(&self) -> Capabilities {
+        (**self).capabilities()
     }
 }

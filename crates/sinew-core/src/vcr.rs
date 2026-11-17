@@ -381,6 +381,9 @@ impl ChatModel for VcrModel {
     fn name(&self) -> &str {
         self.inner.name()
     }
+    fn capabilities(&self) -> crate::Capabilities {
+        self.inner.capabilities()
+    }
 
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
         match self.vcr.mode() {
