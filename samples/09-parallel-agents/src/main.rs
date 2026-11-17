@@ -18,10 +18,13 @@ use sample_common::{pick_model, BoxError};
 use serde::{Deserialize, Serialize};
 use sinew::prelude::*;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// Field-wise merge of the parallel reviewers, derived: `reviews` appends what
+/// each branch added; the other fields keep whichever branch changed them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, State)]
 struct Review {
     proposal: String,
     /// (reviewer, verdict). Each branch returns only its own entry.
+    #[state(append)]
     reviews: Vec<(String, String)>,
     decision: String,
 }
@@ -117,10 +120,7 @@ async fn main() -> Result<(), BoxError> {
     }
     g.add_edge("decide", END);
     g.set_entry_point("intake");
-    g.with_reducer(|mut acc: Review, branch: Review| {
-        acc.reviews.extend(branch.reviews);
-        acc
-    });
+    g.with_derived_reducer();
 
     let graph = g.compile()?;
     let t0 = Instant::now();

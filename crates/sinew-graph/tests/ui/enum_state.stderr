@@ -1,0 +1,5 @@
+error: #[derive(State)] works on structs; wrap enums in a struct field
+ --> tests/ui/enum_state.rs:2:6
+  |
+2 | enum E { A, B }
+  |      ^

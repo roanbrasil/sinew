@@ -12,6 +12,7 @@ keywords = ["llm", "agents", "langgraph", "state-machine", "workflow"]
 categories = ["asynchronous", "science"]
 
 [dependencies]
+sinew-macros = { workspace = true, optional = true }
 sinew-core.workspace = true
 sinew-trace.workspace = true
 serde.workspace = true
@@ -22,7 +23,12 @@ uuid.workspace = true
 tokio.workspace = true
 futures-core.workspace = true
 
+[features]
+# `#[derive(State)]`: field-wise reducers for parallel branches.
+macros = ["dep:sinew-macros"]
+
 [dev-dependencies]
+trybuild = "1"
 tempfile.workspace = true
 futures-util.workspace = true
 criterion.workspace = true
@@ -33,3 +39,7 @@ harness = false
 
 [lints]
 workspace = true
+
+[[test]]
+name = "derive_state"
+required-features = ["macros"]

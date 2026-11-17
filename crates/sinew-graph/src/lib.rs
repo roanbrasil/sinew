@@ -43,6 +43,7 @@ mod graph;
 mod policy;
 pub mod prebuilt;
 mod pregel;
+mod reduce;
 pub mod store;
 mod viz;
 
@@ -59,5 +60,11 @@ pub use graph::{
     StateGraph, StateSnapshot, END, START,
 };
 pub use policy::{CachePolicy, RetryPolicy};
+#[doc(hidden)]
+pub use reduce::__private;
+pub use reduce::Reduce;
+/// Derives [`Reduce`] with a strategy per field (feature `macros`).
+#[cfg(feature = "macros")]
+pub use sinew_macros::State;
 pub use store::{InMemoryStore, Store};
 pub use viz::{EdgeKind, GraphEdge, GraphNode, GraphView, NodeKind};

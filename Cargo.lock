@@ -2302,10 +2302,12 @@ dependencies = [
  "serde",
  "serde_json",
  "sinew-core",
+ "sinew-macros",
  "sinew-trace",
  "tempfile",
  "thiserror",
  "tokio",
+ "trybuild",
  "uuid",
 ]
 

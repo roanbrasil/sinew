@@ -64,7 +64,40 @@ in superstep 3. This is the same behavior as Pregel and LangGraph. If `join`
 must wait for every branch, make the branches the same length, or have
 `join` check a counter or flag in the state and route to itself or `END`.
 
-## Writing reducers
+## Deriving the reducer
+
+Most states merge field by field. Derive it and pick a strategy per field:
+
+```rust
+use sinew::graph::State;   // also in sinew::prelude
+
+#[derive(Clone, Default, Serialize, Deserialize, State)]
+struct Research {
+    #[state(append)]  notes: Vec<String>,           // what each branch added
+    #[state(add)]     sources: u32,                 // counters summed across branches
+    #[state(merge)]   scores: HashMap<String, f32>, // entries added or changed
+                      answer: Option<String>,       // replace (default): the branch that changed it wins
+    #[state(reducer = "pick_best")] draft: String,  // fn(&base, acc, branch) -> value
+}
+
+g.with_derived_reducer();
+```
+
+| Strategy | Field types | Result |
+|---|---|---|
+| `replace` (default) | any `PartialEq` | the branch value if the branch changed it, else the value merged so far |
+| `overwrite` | any | always the branch value (the last branch in task order wins) |
+| `keep` | any | ignore branch values |
+| `append` | `Vec<T: PartialEq>` | the items a branch added; works both for branches that got a clone of the state and for `SendTo` branches with minimal inputs |
+| `add` | numbers | `acc + (branch - base)` |
+| `merge` | `HashMap`, `BTreeMap` | the entries a branch added or changed |
+| `reducer = "path"` | any | `path(&base_field, acc_field, branch_field)` |
+
+Every strategy compares against the state *before* the superstep, so it gives the same result whether a branch
+received a full clone of the state or a minimal `SendTo` input. The derive needs the `macros` feature (on by
+default in `sinew`; `features = ["macros"]` on `sinew-graph`).
+
+## Writing reducers by hand
 
 Nodes return **whole states**, not partial updates. A reducer receives
 `acc`, the state merged so far, and `branch`, one branch's complete output,
@@ -89,7 +122,7 @@ and decides what to take from the branch.
   ```
 
 There is one reducer per graph. To handle several fields, write one function
-that merges each field the way it needs.
+that merges each field the way it needs, or derive it (above).
 
 ## Recursion limit
 

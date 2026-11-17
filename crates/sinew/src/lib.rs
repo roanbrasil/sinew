@@ -52,6 +52,8 @@ pub mod prelude {
         ContentPart, FnTool, Message, PromptTemplate, Role, Runnable, RunnableExt, StrOutputParser,
         StreamEvent, StructuredMode, StructuredOutput, Tool, ToolBox, ToolCall, ToolSpec, Usage,
     };
+    #[cfg(feature = "macros")]
+    pub use sinew_graph::State;
     pub use sinew_graph::{
         prebuilt::{create_supervisor, react_agent, AgentState},
         BoxError, Command, GraphEvent, MemoryCheckpointer, NodeContext, RunOutcome, SendTo,

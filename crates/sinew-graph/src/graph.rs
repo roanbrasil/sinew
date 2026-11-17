@@ -708,6 +708,15 @@ impl<S: State> StateGraph<S> {
     /// value). Use it when branches receive a clone of the shared state and
     /// you need to keep only what each branch added, e.g.
     /// `acc.log.extend(branch.log.into_iter().skip(base.log.len()))`.
+    /// Uses the state's [`Reduce`](crate::Reduce) implementation, usually
+    /// from `#[derive(State)]`, as the reducer.
+    pub fn with_derived_reducer(&mut self) -> &mut Self
+    where
+        S: crate::Reduce,
+    {
+        self.with_reducer_from_base(|base: &S, acc: S, branch: S| S::reduce(base, acc, branch))
+    }
+
     pub fn with_reducer_from_base<F>(&mut self, reducer: F) -> &mut Self
     where
         F: Fn(&S, S, S) -> S + Send + Sync + 'static,
