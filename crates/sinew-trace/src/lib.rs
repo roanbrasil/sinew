@@ -14,9 +14,11 @@
 
 #[cfg(any(feature = "http", feature = "otlp"))]
 mod batch;
+mod cassette;
 #[cfg(feature = "http")]
 mod http;
 pub mod otlp;
+pub use cassette::cassette_from_runs;
 #[cfg(feature = "http")]
 pub use http::{HttpSink, HttpSinkConfig};
 #[cfg(feature = "otlp")]

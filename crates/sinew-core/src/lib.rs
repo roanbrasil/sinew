@@ -28,6 +28,7 @@ pub mod runnable;
 pub mod stream;
 pub mod structured;
 pub mod tool;
+pub mod vcr;
 
 pub use cache::{CachedModel, InMemoryCache, ResponseCache};
 pub use error::{Error, Result};

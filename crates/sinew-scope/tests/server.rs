@@ -462,6 +462,36 @@ async fn react_agent_traces_arrive_through_http_sink() {
         .collect();
     assert_eq!(kinds.iter().filter(|k| **k == "llm").count(), 2);
     assert_eq!(kinds.iter().filter(|k| **k == "tool").count(), 1);
+
+    // The trace becomes a cassette that replays the run offline.
+    let cassette: sinew_core::vcr::Cassette = serde_json::from_value(
+        get(
+            &c,
+            format!(
+                "{}/api/traces/{}/cassette",
+                s.url,
+                t["trace_id"].as_str().unwrap()
+            ),
+        )
+        .await,
+    )
+    .unwrap();
+    assert_eq!(cassette.interactions.len(), 2);
+    assert_eq!(cassette.tool_calls.len(), 1);
+    assert_eq!(cassette.tool_calls[0].result, Some(json!(111.0)));
+    let vcr = sinew_core::vcr::Vcr::from_cassette(cassette)
+        .matching(sinew_core::vcr::MatchRequests::Messages);
+    let replay = react_agent(
+        vcr.model(Arc::new(ScriptedModel::new([]))),
+        vcr.toolbox(&ToolBox::new().with(calculator())),
+    )
+    .unwrap();
+    let out = replay
+        .invoke(AgentState::new(vec![Message::user("What is 37 times 3?")]))
+        .await
+        .unwrap();
+    assert_eq!(out.last().unwrap().content, "37 × 3 = 111.");
+    vcr.assert_all_played().unwrap();
 }
 
 #[tokio::test]

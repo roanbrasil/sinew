@@ -217,6 +217,16 @@ impl ToolBox {
         self.tools.insert(tool.spec().name, tool);
     }
 
+    /// Registers an already shared tool.
+    pub fn register_arc(&mut self, tool: Arc<dyn Tool>) {
+        self.tools.insert(tool.spec().name, tool);
+    }
+
+    /// The registered tools, by name.
+    pub fn tools(&self) -> impl Iterator<Item = &Arc<dyn Tool>> {
+        self.tools.values()
+    }
+
     pub fn specs(&self) -> Vec<ToolSpec> {
         self.tools.values().map(|t| t.spec()).collect()
     }

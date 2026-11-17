@@ -181,6 +181,7 @@ pub fn router_with(store: Store, config: ServerConfig) -> Router {
         .route("/api/alerts/{id}/check", post(api::check_alert))
         .route("/api/traces", get(list_traces))
         .route("/api/traces/{trace_id}", get(get_trace))
+        .route("/api/traces/{trace_id}/cassette", get(get_trace_cassette))
         .route("/api/projects", get(list_projects))
         .route("/api/datasets", get(list_datasets).post(put_dataset))
         .route("/api/datasets/{name}", get(get_dataset))
@@ -452,6 +453,21 @@ async fn get_trace(
         .await?
         .ok_or_else(|| ApiError::not_found("trace"))?;
     Ok(Json(json!(t)))
+}
+
+/// The trace as a record/replay cassette (`sinew_core::vcr`), to turn a
+/// production run into an offline regression test.
+async fn get_trace_cassette(
+    State(state): State<AppState>,
+    Path(trace_id): Path<String>,
+) -> ApiResult<Value> {
+    let t = state
+        .store
+        .trace(&trace_id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("trace"))?;
+    let runs: Vec<Run> = t.runs.into_iter().map(|r| r.run).collect();
+    Ok(Json(json!(sinew_trace::cassette_from_runs(&runs))))
 }
 
 async fn list_projects(State(state): State<AppState>) -> ApiResult<Value> {

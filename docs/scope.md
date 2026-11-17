@@ -358,3 +358,7 @@ See `crates/sinew-scope/examples/traced_agent.rs` and `eval_agent.rs`, and the i
 - Alert webhooks are called from the server; only `http(s)` URLs are accepted. Anyone with the
   token can create alerts, so treat the token as an admin credential.
 - LLM-judge rules use the provider API keys found in the server's environment.
+
+## Trace to test
+
+`GET /api/traces/{trace_id}/cassette` returns the trace as a record/replay cassette (`sinew_core::vcr`), so a production run becomes an offline regression test. See [Testing agents](testing.md#turning-a-production-trace-into-a-test).
