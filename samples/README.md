@@ -48,6 +48,10 @@ cargo run -p sample-03-tools-agent -- --ollama  # real model
 | 21 | [prompt-hub-and-feedback](21-prompt-hub-and-feedback/src/main.rs) | Versioned prompts in the hub, feedback and annotation queues, cost and monitoring in `sinew-scope` |
 | 22 | [mcp-microservice](22-mcp-microservice/src/main.rs) | A microservice with REST routes plus an MCP endpoint (Streamable HTTP, bearer auth); typed async tools; an agent using them over HTTP (feature `mcp-http`) |
 
+Coming from LangChain or LangGraph? [docs/migrating-from-langchain.md](../docs/migrating-from-langchain.md)
+maps Python concepts to Sinew types and shows the common patterns side by side, with pointers to
+these samples.
+
 `common/` holds the helper that picks the model from the command line.
 
 All samples are built by CI, and each was run both offline and against a local Ollama model before
