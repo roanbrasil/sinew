@@ -159,7 +159,11 @@ let agent = ReactAgent::new(model.clone(), tools)
     .compile()?;
 ```
 
-- The policy runs before every model call, after `pre_model_hook` if there is one.
+- The policy runs before every model call, after `pre_model_hook` and `system_context` if set.
+- Text from `system_context` (for example recalled [long-term memories](memory.md)) is added before the
+  policy runs, so it counts against the budget and is kept like any system message. It is merged into the
+  system prompt when the prompt is added, otherwise inserted as its own system message, and it is never
+  stored in the state, even with `.persist_context(true)`.
 - The system prompt is part of the messages the policy sees (system messages are always kept); it is added
   unless a system message with the same text is already there. The budget is reduced by the estimated size
   of the tool schemas.

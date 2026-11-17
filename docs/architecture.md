@@ -24,6 +24,7 @@ flowchart BT
     n_a2a["sinew-a2a<br/>A2A client + server"]
     n_harness["sinew-harness<br/>Agent, sinew-agent CLI"]
     n_serve["sinew-serve<br/>HTTP deployment"]
+    n_memory["sinew-memory<br/>long-term memory"]
     n_scope["sinew-scope<br/>trace server + UI"]
     n_umbrella["sinew<br/>umbrella + prelude"]
 
@@ -43,6 +44,10 @@ flowchart BT
     n_harness --> n_graph
     n_harness --> n_trace
     n_harness -. feature mcp .-> n_mcp
+    n_memory --> n_core
+    n_memory --> n_graph
+    n_memory --> n_rag
+    n_memory -. feature harness .-> n_harness
     n_serve --> n_core
     n_serve --> n_graph
     n_serve --> n_trace
@@ -60,6 +65,7 @@ flowchart BT
     n_umbrella -. features .-> n_a2a
     n_umbrella -. features .-> n_harness
     n_umbrella -. features .-> n_serve
+    n_umbrella -. features .-> n_memory
 ```
 
 Read bottom to top:
@@ -70,7 +76,8 @@ Read bottom to top:
    `sinew-rag` and `sinew-eval` (both only on `sinew-core`).
 4. **Persistence:** `sinew-checkpoint`, a set of `Checkpointer` / `Store` backends for
    `sinew-graph`.
-5. **Applications and protocols:** `sinew-harness`, `sinew-serve`, `sinew-mcp`, `sinew-a2a`.
+5. **Applications and protocols:** `sinew-harness`, `sinew-serve`, `sinew-mcp`, `sinew-a2a`,
+   and `sinew-memory` (long-term memory over a `Store`, with embeddings from `sinew-rag`).
 6. **Tooling:** `sinew-scope` (trace server and UI); it reads traces produced by
    `sinew-trace` and runs evaluations from `sinew-eval`, and does not depend on `sinew-graph`.
 7. **Umbrella:** `sinew` re-exports `core`, `graph` and `trace` always, and every other crate
@@ -93,6 +100,7 @@ about graphs, and graphs carry an optional `Tracer`.
 | `sinew-mcp` | MCP client and server (stdio, Streamable HTTP), `sinew-mcp` binary, `McpError` | `sinew-core`, `sinew-graph`, `sinew-trace` | [crates/sinew-mcp/src/lib.rs](../crates/sinew-mcp/src/lib.rs) |
 | `sinew-a2a` | A2A 0.3 server and client, `AgentExecutor`, `TaskStore`, `A2aError` | `sinew-core`, `sinew-graph` | [crates/sinew-a2a/src/lib.rs](../crates/sinew-a2a/src/lib.rs) |
 | `sinew-harness` | `Agent` / `AgentBuilder`, built-in tools, `Hook`, `Guardrail`, permissions, budgets, compaction, `sinew-agent` binary, `HarnessError` | `sinew-core`, `sinew-graph`, `sinew-trace`, `sinew-mcp` (optional, feature `mcp`) | [crates/sinew-harness/src/lib.rs](../crates/sinew-harness/src/lib.rs) |
+| `sinew-memory` | `MemoryManager` (extract, consolidate, recall, forget over a `Store`), `Memory`, `MemoryAgent` (prebuilt ReAct with memory), `MemoryHook` (feature `harness`), `MemoryError` | `sinew-core`, `sinew-graph`, `sinew-rag`, `sinew-harness` (optional, feature `harness`) | [crates/sinew-memory/src/lib.rs](../crates/sinew-memory/src/lib.rs) |
 | `sinew-serve` | assistants, threads, runs, SSE, OpenAI-compatible endpoint, `ThreadStore`, `ServeClient` | `sinew-core`, `sinew-graph`, `sinew-trace`, `sinew-checkpoint` | [crates/sinew-serve/src/lib.rs](../crates/sinew-serve/src/lib.rs) |
 | `sinew-scope` | trace ingest (`POST /api/runs`, `POST /v1/traces`), SQLite store, web UI, prompt hub, feedback, datasets, monitoring, online evaluators, `sinew-scope` binary | `sinew-core`, `sinew-trace`, `sinew-eval` | [crates/sinew-scope/src/lib.rs](../crates/sinew-scope/src/lib.rs), [server.rs](../crates/sinew-scope/src/server.rs) |
 | `sinew` | re-exports and `prelude` | `sinew-core`, `sinew-graph`, `sinew-trace`; the rest optional | [crates/sinew/src/lib.rs](../crates/sinew/src/lib.rs) |
@@ -254,7 +262,8 @@ crate features they turn on:
 | `qdrant` | `rag` + `sinew-rag/qdrant` |
 | `pdf` | `rag` + `sinew-rag/pdf` (`pdf-extract`) |
 | `a2a` | `sinew-a2a` |
-| `harness` | `sinew-harness` without its `cli` feature |
+| `harness` | `sinew-harness` without its `cli` feature; with `memory`, also `sinew-memory/harness` |
+| `memory` | `sinew-memory` |
 | `serve` | `sinew-serve` with `sqlite` |
 | `sqlite-cache` | `sinew-core/sqlite-cache` (`SqliteCache`) |
 | `schemars` | `sinew-core/schemars` |

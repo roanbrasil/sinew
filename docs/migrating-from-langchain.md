@@ -75,6 +75,7 @@ in `sinew::prelude`.
 | `SqliteSaver`, `PostgresSaver` | `SqliteCheckpointer::connect`, `PostgresCheckpointer::connect` (`sinew-checkpoint`, features `sqlite` / `postgres`) | See [checkpointing.md](checkpointing.md). |
 | `config={"configurable": {"thread_id": ...}}` | the `thread_id` argument of `run`, `stream`, `get_state`, or `RunConfig::new(thread)` | |
 | `InMemoryStore`, `PostgresStore`, `store.search` | `InMemoryStore`, `SqliteStore` (`sinew-checkpoint`), `Store` trait with `put` / `get` / `search(SearchQuery)` | Attach with `with_store`; see [store.md](store.md). |
+| LangMem `create_memory_manager`, Mem0 `add` / `search` | `MemoryManager::remember` / `recall` / `forget`, `MemoryAgent`, `MemoryHook` (`sinew-memory`) | Memories per user namespace on any `Store`; see [memory.md](memory.md). |
 | subgraphs (compiled graph as a node) | `add_subgraph(name, compiled)`; `add_subgraph_mapped` for a different state type | See [subgraphs.md](subgraphs.md). |
 | `get_state`, `get_state_history`, `update_state` | `get_state`, `get_state_history`, `get_state_at`, `update_state`, `update_state_with` | |
 | replay / fork from a checkpoint | `run_with(RunConfig::new(t).at_checkpoint(id), RunInput::Continue)`; fork with `update_state_with(RunConfig .. at_checkpoint(id), state, None)` | See [time-travel.md](time-travel.md). |

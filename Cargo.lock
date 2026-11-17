@@ -2218,6 +2218,7 @@ dependencies = [
  "sinew-graph",
  "sinew-harness",
  "sinew-mcp",
+ "sinew-memory",
  "sinew-rag",
  "sinew-serve",
  "sinew-trace",
@@ -2359,6 +2360,23 @@ dependencies = [
  "sinew-graph",
  "sinew-rag",
  "sinew-trace",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "sinew-memory"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "sinew-checkpoint",
+ "sinew-core",
+ "sinew-graph",
+ "sinew-harness",
+ "sinew-rag",
  "thiserror",
  "tokio",
  "uuid",

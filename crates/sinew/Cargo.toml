@@ -37,7 +37,9 @@ pdf = ["rag", "sinew-rag/pdf"]
 # Agent2Agent protocol client and server (`sinew::a2a`).
 a2a = ["dep:sinew-a2a"]
 # Agent harness: built-in tools, subagents, permissions, compaction (`sinew::harness`).
-harness = ["dep:sinew-harness"]
+harness = ["dep:sinew-harness", "sinew-memory?/harness"]
+# Long-term memory across threads: extraction, dedup, recall (`sinew::memory`).
+memory = ["dep:sinew-memory"]
 # Deployment server and client with an OpenAI-compatible endpoint (`sinew::serve`).
 serve = ["dep:sinew-serve", "sinew-serve/sqlite"]
 # Persistent response cache for chat models.
@@ -45,7 +47,7 @@ sqlite-cache = ["sinew-core/sqlite-cache"]
 # Derive structured-output schemas from Rust types.
 schemars = ["sinew-core/schemars"]
 # Everything above except Postgres-backed features.
-full = ["sqlite", "mcp", "mcp-http", "eval", "http-trace", "otlp", "rag", "qdrant", "pdf", "a2a", "harness", "serve", "sqlite-cache", "schemars", "macros"]
+full = ["sqlite", "mcp", "mcp-http", "eval", "http-trace", "otlp", "rag", "qdrant", "pdf", "a2a", "harness", "serve", "sqlite-cache", "schemars", "macros", "memory"]
 
 [dependencies]
 sinew-core.workspace = true
@@ -58,6 +60,7 @@ sinew-rag = { workspace = true, optional = true }
 sinew-a2a = { path = "../sinew-a2a", version = "0.1.0", optional = true }
 sinew-harness = { workspace = true, optional = true, default-features = false }
 sinew-serve = { workspace = true, optional = true, default-features = false }
+sinew-memory = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio.workspace = true

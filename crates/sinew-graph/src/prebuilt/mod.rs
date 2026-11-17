@@ -63,6 +63,7 @@ pub fn react_agent(
 
 type InputHook = Arc<dyn Fn(&AgentState) -> Vec<Message> + Send + Sync>;
 type HookNode = Arc<dyn Fn(AgentState, NodeContext) -> BoxFut<AgentState> + Send + Sync>;
+type ContextHook = Arc<dyn Fn(AgentState, NodeContext) -> BoxFut<Option<String>> + Send + Sync>;
 
 /// What an agent answers when it runs out of iterations.
 pub const MAX_ITERATIONS_REPLY: &str = "Sorry, need more steps to process this request.";
@@ -78,6 +79,7 @@ pub struct ReactAgent {
     system_prompt: Option<String>,
     pre_model_hook: Option<InputHook>,
     post_model_hook: Option<HookNode>,
+    system_context: Option<ContextHook>,
     response_format: Option<StructuredOutput>,
     max_iterations: Option<usize>,
     handoffs: Vec<Handoff>,
@@ -96,6 +98,7 @@ impl ReactAgent {
             system_prompt: None,
             pre_model_hook: None,
             post_model_hook: None,
+            system_context: None,
             response_format: None,
             max_iterations: None,
             handoffs: Vec::new(),
@@ -176,6 +179,31 @@ impl ReactAgent {
         Fut: Future<Output = NodeResult<AgentState>> + Send + 'static,
     {
         self.post_model_hook = Some(Arc::new(move |s, ctx| Box::pin(f(s, ctx))));
+        self
+    }
+
+    /// Computes extra system text before every model call, e.g. long-term
+    /// memories recalled for the current user (see the `sinew-memory`
+    /// crate) or facts looked up from the [`Store`](crate::Store) through
+    /// [`NodeContext::store`]. The text is appended to the system prompt (a
+    /// system message is added when there is none) for that call only; the
+    /// state is not changed. Returning `None` or an empty string adds
+    /// nothing; an error fails the `agent` node.
+    ///
+    /// Order in the `agent` node: [`pre_model_hook`](Self::pre_model_hook),
+    /// then this callback, then the [`context_policy`](Self::context_policy).
+    /// With a policy, the text goes in before the policy runs, so it counts
+    /// against the token budget and is kept like any system message: it is
+    /// merged into the system prompt when the prompt is added, otherwise
+    /// inserted as its own system message after the leading ones. It is
+    /// removed again before [`persist_context`](Self::persist_context)
+    /// stores the policy's output, so it never reaches the state.
+    pub fn system_context<F, Fut>(mut self, f: F) -> Self
+    where
+        F: Fn(AgentState, NodeContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = NodeResult<Option<String>>> + Send + 'static,
+    {
+        self.system_context = Some(Arc::new(move |s, ctx| Box::pin(f(s, ctx))));
         self
     }
 
@@ -268,6 +296,7 @@ impl ReactAgent {
                 })
                 .sum()
         });
+        let context_hook = self.system_context.clone();
         let max = self.max_iterations;
         // Supersteps per loop round: agent, [post_model_hook], tools.
         let cycle = if self.post_model_hook.is_some() { 3 } else { 2 };
@@ -282,6 +311,7 @@ impl ReactAgent {
             let system = system.clone();
             let specs = specs.clone();
             let policy = policy.clone();
+            let context_hook = context_hook.clone();
             // `ctx.step` restarts at 0 for every run (and every subgraph
             // invocation), so this counts this run's model calls.
             let exhausted = max.is_some_and(|max| ctx.step / cycle >= max);
@@ -291,6 +321,14 @@ impl ReactAgent {
                     return Ok(s);
                 }
                 let mut messages = messages;
+                // System context (e.g. recalled memories) is computed first
+                // so a context policy counts it against the budget.
+                let extra = match &context_hook {
+                    Some(h) => h(s.clone(), ctx.clone())
+                        .await?
+                        .filter(|e| !e.trim().is_empty()),
+                    None => None,
+                };
                 match &policy {
                     None => {
                         if let Some(p) = &system {
@@ -298,23 +336,40 @@ impl ReactAgent {
                                 messages.insert(0, Message::system(p.clone()));
                             }
                         }
+                        if let Some(extra) = &extra {
+                            append_system(&mut messages, extra);
+                        }
                     }
                     Some(policy) => {
-                        // The prompt goes in before the policy runs, so it is
-                        // counted and kept like any system message. A summary
-                        // message may lead the history, so the prompt is
-                        // added unless it is already there.
-                        let added = match &system {
-                            Some(p)
-                                if !messages
+                        // The prompt and the system context go in before the
+                        // policy runs, so they are counted and kept like any
+                        // system message. A summary message may lead the
+                        // history, so the prompt is added unless it is
+                        // already there. Inserted messages are tracked so
+                        // they never reach the state with `persist_context`.
+                        let mut added: Vec<String> = Vec::new();
+                        let missing_prompt = system.as_ref().filter(|p| {
+                            !messages
+                                .iter()
+                                .any(|m| m.role == Role::System && m.content == **p)
+                        });
+                        match (missing_prompt, &extra) {
+                            (Some(p), Some(e)) => added.push(format!("{p}\n\n{e}")),
+                            (Some(p), None) => added.push(p.clone()),
+                            (None, Some(e)) => {
+                                // After the leading system messages.
+                                let at = messages
                                     .iter()
-                                    .any(|m| m.role == Role::System && m.content == *p) =>
-                            {
-                                messages.insert(0, Message::system(p.clone()));
-                                true
+                                    .position(|m| m.role != Role::System)
+                                    .unwrap_or(messages.len());
+                                messages.insert(at, Message::system(e.clone()));
+                                added.push(e.clone());
                             }
-                            _ => false,
-                        };
+                            (None, None) => {}
+                        }
+                        if missing_prompt.is_some() {
+                            messages.insert(0, Message::system(added[0].clone()));
+                        }
                         let report = policy.apply_with_report(messages, reserved).await?;
                         if report.changed() {
                             ctx.emit(json!({ "context_policy": {
@@ -325,11 +380,10 @@ impl ReactAgent {
                             }}));
                             if persist {
                                 let mut stored = report.messages.clone();
-                                if added {
-                                    let p = system.as_deref().unwrap_or_default();
+                                for text in &added {
                                     if let Some(i) = stored
                                         .iter()
-                                        .position(|m| m.role == Role::System && m.content == p)
+                                        .position(|m| m.role == Role::System && m.content == *text)
                                     {
                                         stored.remove(i);
                                     }
@@ -525,6 +579,22 @@ async fn check_tool_result(
     })
 }
 
+/// Appends `extra` to the leading system message, or inserts one.
+fn append_system(messages: &mut Vec<Message>, extra: &str) {
+    if extra.trim().is_empty() {
+        return;
+    }
+    match messages.first_mut() {
+        Some(m) if m.role == Role::System => {
+            if !m.content.is_empty() {
+                m.content.push_str("\n\n");
+            }
+            m.content.push_str(extra);
+        }
+        _ => messages.insert(0, Message::system(extra)),
+    }
+}
+
 /// A tool spec with no parameters (used by handoff tools).
 pub(crate) fn empty_tool(name: String, description: String) -> ToolSpec {
     ToolSpec {
@@ -640,6 +710,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn system_context_is_appended_per_call_and_not_stored() {
+        let model = Arc::new(ScriptedModel::new([
+            Message::assistant("one"),
+            Message::assistant("two"),
+        ]));
+        let with_prompt = ReactAgent::new(model.clone(), ToolBox::new())
+            .system_prompt("Be brief.")
+            .system_context(|s: AgentState, ctx: NodeContext| async move {
+                Ok(Some(format!(
+                    "Known: {} message(s), node {}",
+                    s.messages.len(),
+                    ctx.node
+                )))
+            })
+            .compile()
+            .unwrap();
+        let out = with_prompt
+            .invoke(AgentState::new(vec![Message::user("hi")]))
+            .await
+            .unwrap();
+        assert_eq!(out.messages.len(), 2);
+        assert!(out.messages.iter().all(|m| m.role != Role::System));
+        let req = &model.requests()[0];
+        assert_eq!(req.messages[0].role, Role::System);
+        assert_eq!(
+            req.messages[0].content,
+            "Be brief.\n\nKnown: 1 message(s), node agent"
+        );
+
+        // Without a system prompt a system message is inserted; `None` adds nothing.
+        let bare = ReactAgent::new(model.clone(), ToolBox::new())
+            .system_context(|_s: AgentState, _ctx: NodeContext| async move {
+                Ok(Some("Only context.".to_string()))
+            })
+            .compile()
+            .unwrap();
+        bare.invoke(AgentState::new(vec![Message::user("hi")]))
+            .await
+            .unwrap();
+        let req = &model.requests()[1];
+        assert_eq!(req.messages[0].content, "Only context.");
+        assert_eq!(req.messages.len(), 2);
+    }
+
+    #[tokio::test]
     async fn streams_model_tokens_through_the_graph() {
         use crate::GraphEvent;
         use futures_util::StreamExt;
@@ -739,6 +854,54 @@ mod tests {
         check_tool_pairing(sent).unwrap();
         assert_eq!(sent[0].content, "Be brief.");
         assert_eq!(sent.last().unwrap().content, "latest question");
+    }
+
+    #[tokio::test]
+    async fn system_context_counts_against_the_policy_and_is_never_persisted() {
+        use sinew_core::context::{ContextPolicy, EstimateCounter, TokenCounter};
+        let memory = format!("Remembered: {}", "fact ".repeat(400));
+        let model = Arc::new(ScriptedModel::new([
+            Message::assistant("one"),
+            Message::assistant("two"),
+        ]));
+        let mem = memory.clone();
+        let build = |prompt: bool| {
+            let mem = mem.clone();
+            let agent = ReactAgent::new(model.clone(), ToolBox::new())
+                .system_context(move |_s: AgentState, _ctx: NodeContext| {
+                    let mem = mem.clone();
+                    async move { Ok(Some(mem)) }
+                })
+                .context_policy(ContextPolicy::trimming(1_500))
+                .persist_context(true);
+            if prompt {
+                agent.system_prompt("Be brief.")
+            } else {
+                agent
+            }
+            .compile()
+            .unwrap()
+        };
+        for (i, prompt) in [true, false].into_iter().enumerate() {
+            let out = build(prompt)
+                .invoke(AgentState::new(long_history(40)))
+                .await
+                .unwrap();
+            let sent = &model.requests()[i].messages;
+            // The memory was sent, and the policy fit it into the budget.
+            assert!(sent.iter().any(|m| m.content.contains("Remembered:")));
+            assert!(EstimateCounter.count_messages(sent) <= 1_500);
+            if prompt {
+                assert!(sent[0].content.starts_with("Be brief.\n\nRemembered:"));
+            }
+            // The persisted history shrank but holds neither prompt nor memory.
+            assert!(out.messages.len() < 40 * 4);
+            assert!(out
+                .messages
+                .iter()
+                .all(|m| m.role != Role::System || !m.content.contains("Remembered:")));
+            assert!(out.messages.iter().all(|m| m.content != "Be brief."));
+        }
     }
 
     #[tokio::test]

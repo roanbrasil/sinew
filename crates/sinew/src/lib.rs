@@ -6,6 +6,7 @@
 //! | `sqlite` / `postgres` | `checkpoint`: durable checkpointers |
 //! | `rag` (`pgvector`, `qdrant`, `pdf`) | `rag`: embeddings, loaders, splitters, vector stores, retrievers |
 //! | `harness` | `harness`: agent harness with built-in tools, subagents, permissions |
+//! | `memory` | `memory`: long-term memory across threads (extraction, dedup, recall; `MemoryHook` with `harness`) |
 //! | `serve` | `serve`: deployment server, client and OpenAI-compatible endpoint |
 //! | `a2a` | `a2a`: Agent2Agent protocol client and server |
 //! | `mcp` / `mcp-http` | `mcp`: Model Context Protocol client and server (stdio; `mcp-http` adds Streamable HTTP for microservices) |
@@ -39,6 +40,8 @@ pub use sinew_eval as eval;
 pub use sinew_harness as harness;
 #[cfg(feature = "mcp")]
 pub use sinew_mcp as mcp;
+#[cfg(feature = "memory")]
+pub use sinew_memory as memory;
 #[cfg(feature = "rag")]
 pub use sinew_rag as rag;
 #[cfg(feature = "serve")]
