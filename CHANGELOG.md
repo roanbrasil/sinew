@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+
 ### Added
 
 - `#[sinew::tool]` attribute (new crate `sinew-macros`, feature `macros`, on by default in `sinew`): a plain sync or async function becomes a `Tool`; name from the function, description from the doc comment, JSON Schema from the argument types (argument doc comments, `Option`, enums, `#[serde]`/`#[schemars]` attributes), `#[state]` for injected application state, helpful compile errors. `tools![...]` builds a `ToolBox` (#4).
@@ -27,6 +28,8 @@ All notable changes to this project are documented here. The format follows
 - `sinew-scope`: opening a database that needs schema migrations could panic in sqlx (`index out of bounds`) when a pooled connection had cached a statement prepared before the `ALTER TABLE`; migrations now run on a separate connection.
 
 ### Changed
+
+- Breaking: minimum supported Rust version is now 1.94 (required by `sqlx` 0.9). RUSTSEC-2026-0459 stays ignored: `sqlx-sqlite` 0.9.0 still caps `libsqlite3-sys` below the fixed 0.39. Code that names `sqlx::QueryBuilder<'_, DB>` (for example through `SqliteVectorStore::pool()` users) must drop the lifetime, and dynamic SQL passed to sqlx needs `sqlx::AssertSqlSafe` (#9).
 
 - CONTRIBUTING.md documents the protected-branch workflow and commit signing; `.github/CODEOWNERS` added (#104).
 - Releases are automated with release-plz and crates.io trusted publishing; see [RELEASING.md](RELEASING.md) (#101).

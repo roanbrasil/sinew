@@ -32,7 +32,7 @@ impl Fixture {
             .await
             .expect("connect to SINEW_TEST_PG_URL");
         admin
-            .execute(format!("CREATE SCHEMA {schema}").as_str())
+            .execute(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
             .await
             .unwrap();
         let opts: PgConnectOptions = url.parse().unwrap();
@@ -52,7 +52,7 @@ impl Fixture {
     async fn cleanup(self) {
         self.store.pool().close().await;
         self.admin
-            .execute(format!("DROP SCHEMA {} CASCADE", self.schema).as_str())
+            .execute(sqlx::AssertSqlSafe(format!("DROP SCHEMA {} CASCADE", self.schema)))
             .await
             .unwrap();
     }

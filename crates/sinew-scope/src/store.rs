@@ -502,9 +502,12 @@ async fn add_column(
             .fetch_one(&mut *tx)
             .await?;
     if exists == 0 {
-        sqlx::raw_sql(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"))
-            .execute(&mut *tx)
-            .await?;
+        // Table, column and type come from constants in this file.
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {decl}"
+        )))
+        .execute(&mut *tx)
+        .await?;
     }
     Ok(())
 }
@@ -564,7 +567,7 @@ pub(crate) fn meta_value(v: &str) -> String {
 }
 
 /// Builds `<prefix> WHERE ...` with the trace filters bound as parameters.
-fn filtered<'a>(prefix: &str, q: &TraceQuery, fts: bool) -> QueryBuilder<'a, Sqlite> {
+fn filtered(prefix: &str, q: &TraceQuery, fts: bool) -> QueryBuilder<Sqlite> {
     let mut qb = QueryBuilder::new(prefix);
     qb.push(" WHERE 1 = 1");
     if let Some(p) = q.project.as_ref().filter(|p| !p.is_empty()) {
@@ -1124,7 +1127,7 @@ impl Store {
     }
 
     pub async fn experiments(&self, dataset: Option<&str>) -> Result<Vec<ExperimentSummary>> {
-        let mut qb: QueryBuilder<'_, Sqlite> =
+        let mut qb: QueryBuilder<Sqlite> =
             QueryBuilder::new("SELECT id, name, dataset, created_ms, aggregates FROM experiments");
         if let Some(d) = dataset.filter(|d| !d.is_empty()) {
             qb.push(" WHERE dataset = ").push_bind(d.to_string());

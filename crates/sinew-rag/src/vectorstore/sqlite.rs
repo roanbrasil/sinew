@@ -74,7 +74,7 @@ impl SqliteVectorStore {
         embeddings: impl Embeddings + 'static,
     ) -> Result<Self> {
         for stmt in SCHEMA {
-            sqlx::query(stmt).execute(&pool).await?;
+            sqlx::query(*stmt).execute(&pool).await?;
         }
         Ok(Self {
             pool,

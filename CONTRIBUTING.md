@@ -37,7 +37,7 @@ Then add the same public key on GitHub under Settings → SSH and GPG keys → *
 Check with `git log --show-signature -1`; GitHub shows a "Verified" badge on the commit.
 
 Required checks (`.github/workflows/ci.yml`): `lint` (rustfmt and clippy with and without all features), `test`
-(Linux and macOS), `docs` (rustdoc with `-D warnings`), `msrv` (Rust 1.88), `deny` (licenses and advisories) and
+(Linux and macOS), `docs` (rustdoc with `-D warnings`), `msrv` (Rust 1.94), `deny` (licenses and advisories) and
 `coverage`. [CODEOWNERS](.github/CODEOWNERS) requests a review from the maintainer automatically.
 
 By contributing you agree that your work is dual-licensed under MIT and Apache-2.0, like the rest of the project.

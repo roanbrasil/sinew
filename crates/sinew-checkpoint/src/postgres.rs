@@ -98,7 +98,7 @@ impl PostgresCheckpointer {
             .execute(&mut *tx)
             .await?;
         for ddl in SCHEMA {
-            sqlx::query(ddl).execute(&mut *tx).await?;
+            sqlx::query(*ddl).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(())

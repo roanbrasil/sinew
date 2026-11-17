@@ -115,7 +115,7 @@ impl SqliteCheckpointer {
     pub async fn ensure_schema(&self) -> Result<(), CheckpointError> {
         let mut tx = self.pool.begin().await?;
         for ddl in SCHEMA {
-            sqlx::query(ddl).execute(&mut *tx).await?;
+            sqlx::query(*ddl).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         let columns: Vec<String> =
@@ -129,7 +129,7 @@ impl SqliteCheckpointer {
             if columns.iter().any(|c| c == column) {
                 continue;
             }
-            match sqlx::query(ddl).execute(&self.pool).await {
+            match sqlx::query(*ddl).execute(&self.pool).await {
                 Ok(_) => {}
                 // Another process migrated first.
                 Err(e) if e.to_string().contains("duplicate column") => {}
@@ -137,7 +137,7 @@ impl SqliteCheckpointer {
             }
         }
         for ddl in LATE_INDEXES {
-            sqlx::query(ddl).execute(&self.pool).await?;
+            sqlx::query(*ddl).execute(&self.pool).await?;
         }
         Ok(())
     }

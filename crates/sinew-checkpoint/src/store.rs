@@ -63,7 +63,7 @@ impl SqliteStore {
 
     pub async fn from_pool(pool: SqlitePool) -> Result<Self, CheckpointError> {
         for ddl in SCHEMA {
-            sqlx::query(ddl).execute(&pool).await?;
+            sqlx::query(*ddl).execute(&pool).await?;
         }
         Ok(Self { pool, index: None })
     }
