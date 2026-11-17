@@ -29,49 +29,25 @@ Priorities: **P0** do next · **P1** this cycle · **P2** planned · **P3** nice
 
 | Priority | Issue |
 |---|---|
-| P0 | [#4](https://github.com/roanbrasil/sinew/issues/4) `#[sinew::tool]` attribute macro |
-| P1 | [#5](https://github.com/roanbrasil/sinew/issues/5) `#[derive(State)]` for graph state with reducers |
 | P1 | [#6](https://github.com/roanbrasil/sinew/issues/6) Examples on every public item in docs.rs |
-| P1 | [#7](https://github.com/roanbrasil/sinew/issues/7) GitHub Release for v0.1.0 |
-| P1 | [#26](https://github.com/roanbrasil/sinew/issues/26) Loop and runaway detection for agents ★ |
-| P1 | [#27](https://github.com/roanbrasil/sinew/issues/27) Record/replay testing (VCR cassettes for models and tools) ★ |
-| P1 | [#51](https://github.com/roanbrasil/sinew/issues/51) Architecture guide: crates, layers and data flow |
-| P1 | [#52](https://github.com/roanbrasil/sinew/issues/52) Migration guide from LangChain / LangGraph (Python) |
-| P1 | [#54](https://github.com/roanbrasil/sinew/issues/54) Provider capability matrix |
-| P1 | [#65](https://github.com/roanbrasil/sinew/issues/65) Graph visualization: Mermaid, DOT and PNG export |
-| P1 | [#101](https://github.com/roanbrasil/sinew/issues/101) Release automation: release-plz and crates.io trusted publishing |
-| P2 | [#56](https://github.com/roanbrasil/sinew/issues/56) Troubleshooting and error reference |
-| P2 | [#58](https://github.com/roanbrasil/sinew/issues/58) Contributor guides: add a provider, vector store, loader, tool or checkpointer |
-| P2 | [#99](https://github.com/roanbrasil/sinew/issues/99) Code coverage reporting |
-| P2 | [#104](https://github.com/roanbrasil/sinew/issues/104) Signed commits and PR-based workflow on main |
 | P2 | [#105](https://github.com/roanbrasil/sinew/issues/105) Community: GitHub Discussions, good first issues and contributor ladder |
 | P2 | [#106](https://github.com/roanbrasil/sinew/issues/106) Launch announcement: r/rust, This Week in Rust, Hacker News, Medium |
 | P3 | [#8](https://github.com/roanbrasil/sinew/issues/8) Social preview image on GitHub |
-| P3 | [#59](https://github.com/roanbrasil/sinew/issues/59) Architecture Decision Records (ADRs) |
 
 ## 0.2.0 — sqlx 0.9 (MSRV 1.94), durable execution, full MCP, memory, guardrails, cost features
 
 | Priority | Issue |
 |---|---|
-| P0 | [#9](https://github.com/roanbrasil/sinew/issues/9) Upgrade to sqlx 0.9 (fixes RUSTSEC-2026-0459) |
-| P0 | [#25](https://github.com/roanbrasil/sinew/issues/25) Durable execution: side-effect ledger and idempotent tool calls ★ |
-| P1 | [#10](https://github.com/roanbrasil/sinew/issues/10) MCP: resources and prompts |
+| P1 | [#9](https://github.com/roanbrasil/sinew/issues/9) Upgrade to sqlx 0.9 (fixes RUSTSEC-2026-0459) |
 | P1 | [#11](https://github.com/roanbrasil/sinew/issues/11) MCP: OAuth 2.1 for the HTTP server and client |
 | P1 | [#13](https://github.com/roanbrasil/sinew/issues/13) Long-term memory |
 | P1 | [#14](https://github.com/roanbrasil/sinew/issues/14) Guardrails as composable runnables |
-| P1 | [#34](https://github.com/roanbrasil/sinew/issues/34) Model router: pick the model per request by cost, latency or difficulty ★ |
-| P1 | [#36](https://github.com/roanbrasil/sinew/issues/36) Automatic prompt caching and batch APIs |
-| P1 | [#45](https://github.com/roanbrasil/sinew/issues/45) Secret and PII redaction in traces |
-| P1 | [#55](https://github.com/roanbrasil/sinew/issues/55) Production deployment guide and security checklist |
-| P1 | [#63](https://github.com/roanbrasil/sinew/issues/63) Compile-time checked prompt templates (`prompt!` macro) ★ |
 | P1 | [#68](https://github.com/roanbrasil/sinew/issues/68) Context engineering toolkit: trimming, summarization and compression |
 | P1 | [#70](https://github.com/roanbrasil/sinew/issues/70) Built-in tool library |
 | P1 | [#79](https://github.com/roanbrasil/sinew/issues/79) RAG evaluation metrics |
-| P1 | [#80](https://github.com/roanbrasil/sinew/issues/80) Prometheus metrics endpoint |
 | P1 | [#84](https://github.com/roanbrasil/sinew/issues/84) Playground in sinew-scope |
-| P1 | [#87](https://github.com/roanbrasil/sinew/issues/87) Agent trajectory evaluation |
 | P1 | [#96](https://github.com/roanbrasil/sinew/issues/96) Fuzz parsers: SSE decoders, JSON-RPC, partial JSON, loaders |
-| P1 | [#98](https://github.com/roanbrasil/sinew/issues/98) Nightly live-provider test matrix |
+| P1 | [#139](https://github.com/roanbrasil/sinew/issues/139) Raise line coverage from 77% to 85% |
 | P2 | [#12](https://github.com/roanbrasil/sinew/issues/12) MCP: sampling and elicitation |
 | P2 | [#35](https://github.com/roanbrasil/sinew/issues/35) Semantic cache |
 | P2 | [#43](https://github.com/roanbrasil/sinew/issues/43) OpenAI Responses API compatibility in sinew-serve |
@@ -89,6 +65,9 @@ Priorities: **P0** do next · **P1** this cycle · **P2** planned · **P3** nice
 | P2 | [#100](https://github.com/roanbrasil/sinew/issues/100) Benchmark regression tracking in CI |
 | P2 | [#102](https://github.com/roanbrasil/sinew/issues/102) Supply chain: SBOM, signed releases, cargo-vet |
 | P2 | [#103](https://github.com/roanbrasil/sinew/issues/103) Reduce compile times and dependency footprint |
+| P2 | [#130](https://github.com/roanbrasil/sinew/issues/130) sinew-scope: draw the graph of a trace and highlight the executed path |
+| P2 | [#144](https://github.com/roanbrasil/sinew/issues/144) Batch API for OpenAI-compatible providers and sinew-eval |
+| P2 | [#149](https://github.com/roanbrasil/sinew/issues/149) MCP: completion, logging and resumable HTTP notifications |
 
 ## 0.3.0 — More providers and stores, eval gate, event-driven agents, enterprise scope
 
@@ -120,6 +99,9 @@ Priorities: **P0** do next · **P1** this cycle · **P2** planned · **P3** nice
 | P2 | [#88](https://github.com/roanbrasil/sinew/issues/88) Checkpointers and stores: Redis, DynamoDB, MySQL, S3 |
 | P2 | [#93](https://github.com/roanbrasil/sinew/issues/93) MCP registry discovery and remote server catalog |
 | P2 | [#94](https://github.com/roanbrasil/sinew/issues/94) OpenAI Agents SDK and Anthropic Agent Skills compatibility |
+| P2 | [#153](https://github.com/roanbrasil/sinew/issues/153) Model router follow-ups: trace decisions, request metadata, cost budgets |
+| P2 | [#157](https://github.com/roanbrasil/sinew/issues/157) Trajectory evaluation follow-ups |
+| P3 | [#158](https://github.com/roanbrasil/sinew/issues/158) Prometheus metrics follow-ups |
 
 ## 0.4.0 — Kubernetes operator and sandbox, distributed execution, Python bindings, Studio
 
@@ -161,6 +143,34 @@ Priorities: **P0** do next · **P1** this cycle · **P2** planned · **P3** nice
 | P3 | [#108](https://github.com/roanbrasil/sinew/issues/108) Vision: Sinew Cloud-free platform (self-hosted control plane) |
 | P3 | [#109](https://github.com/roanbrasil/sinew/issues/109) Vision: Sinew Hub for sharing graphs, tools and prompts |
 | P3 | [#110](https://github.com/roanbrasil/sinew/issues/110) Vision: agent mesh — discovery, routing and policy across A2A/MCP agents ★ |
+
+## Done
+
+- [#4](https://github.com/roanbrasil/sinew/issues/4) `#[sinew::tool]` attribute macro
+- [#5](https://github.com/roanbrasil/sinew/issues/5) `#[derive(State)]` for graph state with reducers
+- [#7](https://github.com/roanbrasil/sinew/issues/7) GitHub Release for v0.1.0
+- [#10](https://github.com/roanbrasil/sinew/issues/10) MCP: resources and prompts
+- [#25](https://github.com/roanbrasil/sinew/issues/25) Durable execution: side-effect ledger and idempotent tool calls ★
+- [#26](https://github.com/roanbrasil/sinew/issues/26) Loop and runaway detection for agents ★
+- [#27](https://github.com/roanbrasil/sinew/issues/27) Record/replay testing (VCR cassettes for models and tools) ★
+- [#34](https://github.com/roanbrasil/sinew/issues/34) Model router: pick the model per request by cost, latency or difficulty ★
+- [#36](https://github.com/roanbrasil/sinew/issues/36) Automatic prompt caching and batch APIs
+- [#45](https://github.com/roanbrasil/sinew/issues/45) Secret and PII redaction in traces
+- [#51](https://github.com/roanbrasil/sinew/issues/51) Architecture guide: crates, layers and data flow
+- [#52](https://github.com/roanbrasil/sinew/issues/52) Migration guide from LangChain / LangGraph (Python)
+- [#54](https://github.com/roanbrasil/sinew/issues/54) Provider capability matrix
+- [#55](https://github.com/roanbrasil/sinew/issues/55) Production deployment guide and security checklist
+- [#56](https://github.com/roanbrasil/sinew/issues/56) Troubleshooting and error reference
+- [#58](https://github.com/roanbrasil/sinew/issues/58) Contributor guides: add a provider, vector store, loader, tool or checkpointer
+- [#59](https://github.com/roanbrasil/sinew/issues/59) Architecture Decision Records (ADRs)
+- [#63](https://github.com/roanbrasil/sinew/issues/63) Compile-time checked prompt templates (`prompt!` macro) ★
+- [#65](https://github.com/roanbrasil/sinew/issues/65) Graph visualization: Mermaid, DOT and PNG export
+- [#80](https://github.com/roanbrasil/sinew/issues/80) Prometheus metrics endpoint
+- [#87](https://github.com/roanbrasil/sinew/issues/87) Agent trajectory evaluation
+- [#98](https://github.com/roanbrasil/sinew/issues/98) Nightly live-provider test matrix
+- [#99](https://github.com/roanbrasil/sinew/issues/99) Code coverage reporting
+- [#101](https://github.com/roanbrasil/sinew/issues/101) Release automation: release-plz and crates.io trusted publishing
+- [#104](https://github.com/roanbrasil/sinew/issues/104) Signed commits and PR-based workflow on main
 
 ## How to help
 
