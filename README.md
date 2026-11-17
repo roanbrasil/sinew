@@ -25,6 +25,7 @@ as one typed, async, low-latency workspace.
 | [`sinew-eval`](crates/sinew-eval) | LangSmith evaluation | Datasets, evaluators (exact, contains, regex, JSON field, numeric, LLM judge), experiments with repetitions and summary metrics, pairwise A/B, prompt hub client |
 | [`sinew-mcp`](crates/sinew-mcp) | MCP adapters | Model Context Protocol client and server over stdio or Streamable HTTP (an axum router to merge into a microservice, with sessions, bearer auth and origin checks); `sinew-mcp --traces` lets coding assistants inspect traces |
 | [`sinew-a2a`](crates/sinew-a2a) | A2A | Agent2Agent protocol (0.3) server and client; serve any model or graph as an A2A agent, delegate to remote agents as a tool |
+| [`sinew-macros`](crates/sinew-macros) | — | `#[sinew::tool]`: functions become tools, with `#[state]` injection |
 | [`sinew`](crates/sinew) | umbrella | Re-exports and a `prelude`, with a feature per optional crate |
 
 ## Quick start
@@ -53,11 +54,22 @@ let reply = model.chat(ChatRequest::new(vec![Message::user("Why Rust for LLM inf
 println!("{}", reply.message.content);
 ```
 
+A plain function becomes a tool: the schema comes from the arguments, the description from the doc comment:
+
+```rust
+/// Look up an order by id.
+#[tool]
+async fn get_order(
+    /// Order id, e.g. "A-1001".
+    id: String,
+) -> Result<Order, String> { /* ... */ }
+```
+
 An agent with tools, a pipeline, and a harness:
 
 ```rust
 // ReAct agent over any tools
-let agent = react_agent(model.clone(), ToolBox::new().with(my_tool))?;
+let agent = react_agent(model.clone(), tools![get_order])?;
 let out = agent.invoke(AgentState::new(vec![Message::user("What is 6 x 7?")])).await?;
 
 // LCEL-style pipeline: prompt -> model -> parser, streamed
@@ -117,12 +129,13 @@ Sinew is built for low latency and high throughput:
 | `eval` | `sinew::eval`: datasets, evaluators, experiments, prompt hub client |
 | `http-trace` | `trace::HttpSink` for `sinew-scope serve` |
 | `otlp` / `otlp-proto` | `trace::OtlpSink` for any OpenTelemetry collector |
+| `macros` (default) | `#[sinew::tool]` and `tools![...]` |
 | `sqlite-cache`, `schemars` | persistent response cache; structured-output schemas from Rust types |
 | `full` | all of the above except Postgres-backed features |
 
 ## Documentation
 
-- **Models:** [Runnables](docs/runnables.md) · [Multimodal](docs/multimodal.md) · [Resilience and cost](docs/resilience.md) · [Streaming](docs/streaming.md)
+- **Models:** [Tools](docs/tools.md) · [Runnables](docs/runnables.md) · [Multimodal](docs/multimodal.md) · [Resilience and cost](docs/resilience.md) · [Streaming](docs/streaming.md)
 - **Graphs:** [Fan-out](docs/fan-out.md) · [Commands and interrupts](docs/commands-and-interrupts.md) · [Subgraphs](docs/subgraphs.md) · [Time travel](docs/time-travel.md) · [Checkpointing](docs/checkpointing.md) · [Store](docs/store.md) · [Multi-agent](docs/multi-agent.md)
 - **Agents and retrieval:** [Harness](docs/harness.md) · [RAG](docs/rag.md)
 - **Deployment and protocols:** [Serve](docs/serve.md) · [MCP](docs/mcp.md) · [A2A](docs/a2a.md)

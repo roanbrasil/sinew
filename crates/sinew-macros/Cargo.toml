@@ -1,0 +1,24 @@
+[package]
+name = "sinew-macros"
+description = "Procedural macros for Sinew: #[sinew::tool] turns a function into an LLM tool"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["llm", "agents", "tools", "macros", "ai"]
+categories = ["development-tools::procedural-macro-helpers"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+proc-macro-crate = "3"
+
+[lints]
+workspace = true

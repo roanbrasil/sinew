@@ -136,11 +136,7 @@ where
     Fut: std::future::Future<Output = Result<R>> + Send,
 {
     pub fn new(name: &str, description: &str, f: F) -> Self {
-        let mut parameters = serde_json::to_value(schemars::schema_for!(A)).unwrap_or_default();
-        if let Some(obj) = parameters.as_object_mut() {
-            obj.remove("$schema");
-            obj.remove("title");
-        }
+        let parameters = tool_schema::<A>();
         Self {
             spec: ToolSpec {
                 name: name.into(),
@@ -173,6 +169,31 @@ where
         let out = (self.f)(args).await?;
         Ok(serde_json::to_value(out)?)
     }
+}
+
+/// JSON Schema for tool parameters: subschemas inlined (no `$ref` / `$defs`,
+/// which several providers reject), without `$schema` and `title`.
+#[cfg(feature = "schemars")]
+pub(crate) fn tool_schema<T: schemars::JsonSchema>() -> Value {
+    let schema = schemars::generate::SchemaSettings::draft2020_12()
+        .with(|s| s.inline_subschemas = true)
+        .into_generator()
+        .into_root_schema_for::<T>();
+    let mut v = serde_json::to_value(schema).unwrap_or_default();
+    if let Some(obj) = v.as_object_mut() {
+        obj.remove("$schema");
+        obj.remove("title");
+    }
+    // Recursive types keep `$ref`s into `$defs`; only drop them when unused.
+    let uses_refs = v
+        .get("properties")
+        .is_some_and(|p| p.to_string().contains("\"$ref\""));
+    if !uses_refs {
+        if let Some(obj) = v.as_object_mut() {
+            obj.remove("$defs");
+        }
+    }
+    v
 }
 
 /// Registry of tools, keyed by name. Cheap to clone.

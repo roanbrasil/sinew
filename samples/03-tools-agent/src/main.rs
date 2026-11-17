@@ -1,5 +1,7 @@
-//! Two ways to define tools — a closure (`FnTool`) and a struct implementing
-//! the async `Tool` trait — then hand them to the prebuilt tool-calling agent.
+//! Two ways to define tools — a plain function with `#[sinew::tool]` (schema
+//! from the arguments, description from the doc comment) and a struct
+//! implementing the async `Tool` trait by hand — then hand them to the
+//! prebuilt tool-calling agent.
 //!
 //! ```bash
 //! cargo run -p sample-03-tools-agent
@@ -48,27 +50,22 @@ impl Tool for Inventory {
     }
 }
 
+/// Returns the unit price in dollars of a product.
+#[tool]
+fn unit_price(
+    /// Product name, e.g. "keyboard".
+    product: String,
+) -> f64 {
+    match product.to_lowercase().as_str() {
+        "keyboard" => 89.0,
+        "mouse" => 35.0,
+        _ => 0.0,
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
-    let price = FnTool::new(
-        "unit_price",
-        "Returns the unit price in dollars of a product",
-        json!({ "type": "object", "properties": { "product": { "type": "string" } }, "required": ["product"] }),
-        |args: Value| {
-            let p = match args["product"]
-                .as_str()
-                .unwrap_or_default()
-                .to_lowercase()
-                .as_str()
-            {
-                "keyboard" => 89.0,
-                "mouse" => 35.0,
-                _ => 0.0,
-            };
-            Ok(json!(p))
-        },
-    );
-    let tools = ToolBox::new().with(price).with(Inventory {
+    let tools = ToolBox::new().with(unit_price::tool()).with(Inventory {
         stock: HashMap::from([("keyboard", 12), ("mouse", 0)]),
     });
 
