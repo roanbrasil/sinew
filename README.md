@@ -139,8 +139,10 @@ Sinew is built for low latency and high throughput:
 
 ## Status and roadmap
 
-Next: AWS Bedrock and Cohere native providers, A2A 1.0, MCP sampling, resources and prompts,
-`sqlx` 0.9 (bundled SQLite 3.54).
+Sinew 0.1 is on crates.io. The full roadmap — durable execution, Kubernetes operator and Agent Sandbox,
+compile-time checked prompts and tools, Python bindings, Studio and more — lives in
+[docs/ROADMAP.md](docs/ROADMAP.md) and the [pinned roadmap issue](https://github.com/roanbrasil/sinew/issues/124),
+grouped in epics by theme and prioritized P0–P3.
 
 ## Contributing and security
 
