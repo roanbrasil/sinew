@@ -25,6 +25,7 @@ pub mod pricing;
 pub mod prompt;
 pub mod providers;
 pub mod resilience;
+pub mod router;
 pub mod runnable;
 pub mod stream;
 pub mod structured;
@@ -40,6 +41,7 @@ pub use model::{
 pub use parsers::{JsonOutputParser, ListOutputParser, StrOutputParser};
 pub use prompt::PromptTemplate;
 pub use resilience::{ChatModelExt, RateLimiter, RetryPolicy};
+pub use router::Router;
 pub use runnable::{BoxRunnable, ChatPromptTemplate, Runnable, RunnableExt, Vars};
 pub use stream::{
     chat_streaming, collect_stream, BoxStream, ChatStream, StreamAccumulator, StreamEvent,
