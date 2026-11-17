@@ -64,15 +64,27 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
+      # Samples are examples, not library code: keep them out of the report.
+      # (`--exclude-from-report` takes package names, and `report` rejects it,
+      # so filter by path.)
       - name: Measure coverage
         run: |
-          cargo llvm-cov --workspace --all-features --exclude-from-report 'samples/*' \
+          cargo llvm-cov --workspace --all-features --ignore-filename-regex '/samples/' \
             --lcov --output-path lcov.info
-          cargo llvm-cov report --summary-only --exclude-from-report 'samples/*' | tee summary.txt
+      - name: Coverage threshold (85% of lines)
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo llvm-cov report --summary-only --ignore-filename-regex '/samples/' \
+            --fail-under-lines 85 | tee summary.txt
+      - name: Coverage summary
+        if: always()
+        shell: bash
+        run: |
           {
             echo '## Test coverage'
             echo '```'
-            tail -n 1 summary.txt
+            tail -n 1 summary.txt 2>/dev/null || echo 'no report'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4

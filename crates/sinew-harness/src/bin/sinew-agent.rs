@@ -124,7 +124,13 @@ fn parse_args(raw: Vec<String>) -> Result<Option<Args>, String> {
             "--no-subagents" => a.no_subagents = true,
             "--skills" => a.skills.push(value(&flag)?.into()),
             "-y" | "--yes" => a.yes = true,
-            "--max-steps" => a.max_steps = Some(num(value(&flag)?, &flag)? as u32),
+            "--max-steps" => {
+                let v = value(&flag)?;
+                // Not `as u32`: 4294967297 must not silently become 1.
+                let n = u32::try_from(num(v.clone(), &flag)?)
+                    .map_err(|_| format!("{flag}: `{v}` is too large"))?;
+                a.max_steps = Some(n);
+            }
             "--max-tokens" => a.max_tokens = Some(num(value(&flag)?, &flag)?),
             "--timeout" => a.timeout = Some(num(value(&flag)?, &flag)?),
             "--max-context" => a.max_context = Some(num(value(&flag)?, &flag)? as usize),
@@ -655,6 +661,66 @@ mod tests {
     }
 
     #[test]
+    fn parses_every_option_and_rejects_bad_values() {
+        let a = args(&[
+            "--workspace",
+            "/tmp/ws",
+            "--read-only",
+            "--http",
+            "--think",
+            "--no-subagents",
+            "--skills",
+            "s1",
+            "--skills=s2",
+            "--max-tokens",
+            "1000",
+            "--timeout=30",
+            "--max-context",
+            "5000",
+            "--instructions",
+            "be terse",
+            "--trace",
+            "t.jsonl",
+            "--mcp",
+            "server --stdio",
+            "-q",
+            "--allow-shell",
+        ]);
+        assert_eq!(
+            a.workspace.as_deref(),
+            Some(std::path::Path::new("/tmp/ws"))
+        );
+        assert!(a.read_only && a.http && a.think && a.no_subagents && a.quiet);
+        assert!(a.allow_shell && a.shell_allow.is_empty());
+        assert_eq!(a.skills, vec![PathBuf::from("s1"), PathBuf::from("s2")]);
+        assert_eq!(
+            (a.max_tokens, a.timeout, a.max_context),
+            (Some(1000), Some(30), Some(5000))
+        );
+        assert_eq!(a.instructions.as_deref(), Some("be terse"));
+        assert_eq!(a.trace, Some(PathBuf::from("t.jsonl")));
+        assert_eq!(a.mcp, vec!["server --stdio"]);
+        assert!(args(&[]).prompt.is_none());
+
+        let err = |v: &[&str]| parse_args(v.iter().map(|s| s.to_string()).collect()).unwrap_err();
+        assert_eq!(err(&["-p"]), "-p needs a value");
+        assert_eq!(err(&["--timeout", "-1"]), "--timeout: `-1` is not a number");
+        assert_eq!(err(&["-x"]), "unknown option `-x` (see --help)");
+        // Regression: `as u32` turned 4294967297 into 1.
+        assert_eq!(
+            err(&["--max-steps", "4294967297"]),
+            "--max-steps: `4294967297` is too large"
+        );
+        assert_eq!(args(&["--max-steps=4294967295"]).max_steps, Some(u32::MAX));
+        // Help and version stop parsing.
+        for flag in ["-h", "--help", "-V", "--version"] {
+            assert!(parse_args(vec![flag.into(), "--bogus".into()])
+                .unwrap()
+                .is_none());
+        }
+    }
+
+    #[test]
     fn summarizes_calls() {
         assert_eq!(
             call_summary("read_file", &serde_json::json!({"path": "src/main.rs"})),
@@ -664,5 +730,223 @@ mod tests {
             call_summary("x", &serde_json::json!({"a": 1})),
             "x({\"a\":1})"
         );
+        assert_eq!(
+            call_summary(
+                "shell",
+                &serde_json::json!({"command": "\n\n  ls -la  \nrm"})
+            ),
+            "shell(ls -la)"
+        );
+        assert_eq!(one_line(&"é".repeat(100), 3), "ééé…");
+        assert_eq!(one_line("", 3), "");
+    }
+
+    #[test]
+    fn ui_colors_only_when_enabled() {
+        let plain = Ui {
+            color: false,
+            quiet: false,
+        };
+        let color = Ui {
+            color: true,
+            quiet: false,
+        };
+        assert_eq!(plain.red("x"), "x");
+        assert_eq!(color.red("x"), "\x1b[31mx\x1b[0m");
+        assert_eq!(color.dim("x"), "\x1b[2mx\x1b[0m");
+        assert_eq!(color.cyan("x"), "\x1b[36mx\x1b[0m");
+        assert_eq!(color.yellow("x"), "\x1b[33mx\x1b[0m");
+        assert!(uuid_like().starts_with("cli-"));
+    }
+
+    fn base_args(ws: &std::path::Path) -> Args {
+        Args {
+            model: Some("ollama:qwen3:4b".into()),
+            workspace: Some(ws.to_path_buf()),
+            ..Args::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn builds_agents_from_flags() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(ws.path().join(".sinew/skills")).unwrap();
+        let a = build_agent(&base_args(ws.path())).await.unwrap();
+        assert_eq!(a.model_name(), "qwen3:4b");
+        let names = a.tool_names();
+        for t in ["read_file", "write_file", "edit_file", "task"] {
+            assert!(names.iter().any(|n| n == t), "{t} in {names:?}");
+        }
+        assert!(!names.iter().any(|n| n == "shell"));
+
+        let trace = ws.path().join("t.jsonl");
+        let args = Args {
+            read_only: true,
+            allow_shell: true,
+            shell_allow: vec!["cargo *".into()],
+            http: true,
+            think: true,
+            no_subagents: true,
+            skills: vec![ws.path().join(".sinew/skills")],
+            max_tokens: Some(10_000),
+            timeout: Some(60),
+            max_context: Some(4_000),
+            instructions: Some("be terse".into()),
+            trace: Some(trace.clone()),
+            model: Some("openai-compat-test:m".into()),
+            ..base_args(ws.path())
+        };
+        // Unknown provider: the error is reported, not a panic.
+        let e = build_agent(&args).await.err().unwrap();
+        assert!(e.contains("unknown provider"), "{e}");
+        let args = Args {
+            model: Some("lmstudio:m".into()),
+            ..args
+        };
+        let a = build_agent(&args).await.unwrap();
+        let names = a.tool_names();
+        for t in ["read_file", "shell", "http_fetch", "think"] {
+            assert!(names.iter().any(|n| n == t), "{t} in {names:?}");
+        }
+        for t in ["write_file", "edit_file", "task"] {
+            assert!(!names.iter().any(|n| n == t), "{t} in {names:?}");
+        }
+        assert!(trace.exists());
+
+        let bad_trace = Args {
+            trace: Some(ws.path().join("missing-dir/t.jsonl")),
+            ..base_args(ws.path())
+        };
+        let e = build_agent(&bad_trace).await.err().unwrap();
+        assert!(e.starts_with("trace file"), "{e}");
+    }
+
+    #[cfg(not(feature = "mcp"))]
+    #[tokio::test]
+    async fn mcp_needs_the_feature() {
+        let ws = tempfile::tempdir().unwrap();
+        let args = Args {
+            mcp: vec!["server".into()],
+            ..base_args(ws.path())
+        };
+        let e = build_agent(&args).await.err().unwrap();
+        assert!(e.contains("`mcp` feature"), "{e}");
+    }
+
+    fn write_then_answer(answer: &str) -> (Agent, tempfile::TempDir) {
+        use sinew_core::{mock::ScriptedModel, Message, ToolCall};
+        let ws = tempfile::tempdir().unwrap();
+        let model = ScriptedModel::new([
+            Message::assistant_with_tools(
+                "Writing the file.",
+                vec![ToolCall {
+                    id: "w1".into(),
+                    name: "write_file".into(),
+                    arguments: serde_json::json!({"path": "out.txt", "content": "hello"}),
+                }],
+            ),
+            Message::assistant(answer),
+        ]);
+        let agent = Agent::builder()
+            .model(model)
+            .workspace(ws.path())
+            .filesystem()
+            .permissions(PermissionPolicy::interactive())
+            .build()
+            .unwrap();
+        (agent, ws)
+    }
+
+    fn lines(answers: &[Option<&str>]) -> Option<Lines> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        for a in answers {
+            tx.send(a.map(str::to_string)).unwrap();
+        }
+        Some(rx)
+    }
+
+    const UI: Ui = Ui {
+        color: false,
+        quiet: false,
+    };
+
+    #[tokio::test]
+    async fn turn_with_approval_answers() {
+        // Approved.
+        let (agent, _ws) = write_then_answer("done");
+        let r = run_turn(&agent, "t", "write it", &mut lines(&[Some("y")]), &UI)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.text, "done");
+        assert_eq!(r.steps, 2);
+        // Approved for the rest of the session.
+        let (agent, _ws) = write_then_answer("done");
+        let r = run_turn(&agent, "t", "x", &mut lines(&[Some("always")]), &UI)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.text, "done");
+        // Declined, with and without a reason; quiet output.
+        let quiet = Ui {
+            color: true,
+            quiet: true,
+        };
+        for answer in ["n", "not now"] {
+            let (agent, _ws) = write_then_answer("skipped");
+            let r = run_turn(&agent, "t", "x", &mut lines(&[Some(answer)]), &quiet)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(r.text, "skipped");
+        }
+        // Not interactive: denied automatically.
+        let (agent, _ws) = write_then_answer("skipped");
+        let r = run_turn(&agent, "t", "x", &mut None, &UI)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.text, "skipped");
+        // Stdin closed while asking: the turn is cancelled.
+        let (agent, _ws) = write_then_answer("never");
+        assert!(run_turn(&agent, "t", "x", &mut lines(&[None]), &UI)
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn approval_details_and_model_errors() {
+        let requests = vec![
+            ApprovalRequest {
+                call_id: "1".into(),
+                tool: "shell".into(),
+                arguments: serde_json::json!({"command": "ls"}),
+                reason: String::new(),
+            },
+            ApprovalRequest {
+                call_id: "2".into(),
+                tool: "http_fetch".into(),
+                arguments: serde_json::json!({"url": "https://example.com"}),
+                reason: String::new(),
+            },
+        ];
+        let d = ask_approvals(&requests, &mut lines(&[Some(""), Some("NO")]), &UI)
+            .await
+            .unwrap();
+        assert_eq!(d[0], ApprovalDecision::approve("1"));
+        assert_eq!(d[1], ApprovalDecision::deny("2", "the user declined"));
+
+        // A model that fails: the error is returned, not printed as success.
+        let agent = Agent::builder()
+            .model(sinew_core::mock::ScriptedModel::new(Vec::<
+                sinew_core::Message,
+            >::new()))
+            .build()
+            .unwrap();
+        let e = run_turn(&agent, "t", "hi", &mut None, &UI)
+            .await
+            .unwrap_err();
+        assert!(e.contains("no responses left"), "{e}");
     }
 }

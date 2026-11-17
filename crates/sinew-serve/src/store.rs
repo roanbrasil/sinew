@@ -60,10 +60,12 @@ pub trait ThreadStore: Send + Sync + 'static {
 }
 
 const DEFAULT_LIMIT: usize = 100;
+/// Largest page a `ThreadQuery` can ask for.
+pub(crate) const MAX_LIMIT: usize = 10_000;
 
-fn page(q: &ThreadQuery) -> (usize, usize) {
+pub(crate) fn page(q: &ThreadQuery) -> (usize, usize) {
     (
-        q.limit.unwrap_or(DEFAULT_LIMIT).min(10_000),
+        q.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT),
         q.offset.unwrap_or(0),
     )
 }

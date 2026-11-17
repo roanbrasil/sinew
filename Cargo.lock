@@ -3034,6 +3034,7 @@ name = "sinew-rag"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "criterion",
  "csv",
  "futures-util",

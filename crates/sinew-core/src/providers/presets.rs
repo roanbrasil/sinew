@@ -494,7 +494,9 @@ pub fn from_spec(spec: &str) -> Result<Arc<dyn ChatModel>> {
 /// client (no API key needed): `capabilities_for("anthropic",
 /// "claude-sonnet-5-5")`. `None` for unknown providers.
 pub fn capabilities_for(provider: &str, model: &str) -> Option<Capabilities> {
-    match provider {
+    // Same case-insensitive matching as `from_spec`.
+    let provider = provider.to_ascii_lowercase();
+    match provider.as_str() {
         "anthropic" | "claude" => Some(super::anthropic::anthropic_capabilities(model)),
         "gemini" | "google" => Some(Capabilities::all()),
         "azure" | "azure-openai" | "azure_openai" => Some(Capabilities::all()),
@@ -586,6 +588,25 @@ mod tests {
             "https://res.openai.azure.com/openai/deployments/d"
         );
         assert!(provider_names().contains(&"azure"));
+    }
+
+    #[test]
+    fn capabilities_for_matches_providers_like_from_spec() {
+        // Regression: `from_spec("Ollama:m")` worked but
+        // `capabilities_for("Ollama", "m")` returned `None`.
+        assert_eq!(
+            capabilities_for("Ollama", "m"),
+            capabilities_for("ollama", "m")
+        );
+        assert!(capabilities_for("ANTHROPIC", "claude-haiku-4-5").is_some());
+        assert!(capabilities_for("Gemini", "x").is_some());
+        assert!(capabilities_for("azure-openai", "x").is_some());
+        assert!(capabilities_for("lm-studio", "x").is_some());
+        assert!(capabilities_for("nope", "x").is_none());
+        assert_eq!(
+            from_spec("OLLAMA:qwen3:4b").unwrap().capabilities(),
+            capabilities_for("ollama", "qwen3:4b").unwrap()
+        );
     }
 
     #[test]

@@ -110,9 +110,15 @@ impl Error {
             Error::RateLimited { .. } | Error::Timeout(_) => true,
             Error::Provider { status, .. } => matches!(*status, 408 | 409 | 429 | 500..=599),
             Error::Http(e) => {
+                // `is_body` / an I/O cause: the connection dropped while the
+                // response body (e.g. an SSE stream) was being read; reqwest
+                // reports a truncated body as a decode error caused by an
+                // `UnexpectedEof` I/O error.
                 e.is_timeout()
                     || e.is_connect()
                     || e.is_request()
+                    || e.is_body()
+                    || caused_by_io(e)
                     || e.status()
                         .is_some_and(|s| s.as_u16() == 429 || s.is_server_error())
             }
@@ -122,12 +128,28 @@ impl Error {
     }
 }
 
+/// Whether an [`std::io::Error`] is in the error's source chain.
+fn caused_by_io(e: &reqwest::Error) -> bool {
+    let mut source = std::error::Error::source(e);
+    while let Some(s) = source {
+        if s.is::<std::io::Error>() {
+            return true;
+        }
+        source = s.source();
+    }
+    false
+}
+
 /// Parses a `Retry-After` value: delta-seconds (possibly fractional) or an
 /// IMF-fixdate (`Sun, 06 Nov 1994 08:49:37 GMT`).
 pub(crate) fn parse_retry_after(v: &str) -> Option<Duration> {
     let v = v.trim();
     if let Ok(secs) = v.parse::<f64>() {
-        return (secs.is_finite() && secs >= 0.0).then(|| Duration::from_secs_f64(secs));
+        // `Duration::from_secs_f64` panics on values too large for a
+        // `Duration` (e.g. `1e30`); a hostile or buggy header must not crash
+        // the caller, so saturate instead.
+        return (secs.is_finite() && secs >= 0.0)
+            .then(|| Duration::try_from_secs_f64(secs).unwrap_or(Duration::MAX));
     }
     let target = parse_http_date(v)?;
     let now = std::time::SystemTime::now()
@@ -195,6 +217,69 @@ mod tests {
             Some(Duration::ZERO)
         );
         assert_eq!(parse_retry_after("soon"), None);
+    }
+
+    #[test]
+    fn retry_after_rejects_or_saturates_out_of_range_values() {
+        // Regression: these used to panic inside `Duration::from_secs_f64`.
+        assert_eq!(parse_retry_after("1e30"), Some(Duration::MAX));
+        assert_eq!(parse_retry_after("-1"), None);
+        assert_eq!(parse_retry_after("NaN"), None);
+        assert_eq!(parse_retry_after("inf"), None);
+        // Malformed HTTP dates.
+        for bad in [
+            "06 Nov 1994 08:49:37 GMT",
+            "Sun, xx Nov 1994 08:49:37 GMT",
+            "Sun, 06 Foo 1994 08:49:37 GMT",
+            "Sun, 06 Nov year 08:49:37 GMT",
+            "Sun, 06 Nov 1994 08:49 GMT",
+            "Sun, 06 Nov 1994",
+        ] {
+            assert_eq!(parse_http_date(bad), None, "{bad}");
+        }
+        // Every month name, and a date before the epoch.
+        let months = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
+        let firsts: Vec<u64> = months
+            .iter()
+            .map(|m| parse_http_date(&format!("Mon, 01 {m} 2001 00:00:00 GMT")).unwrap())
+            .collect();
+        assert!(firsts.windows(2).all(|w| w[1] - w[0] >= 28 * 86400));
+        // 2001-03-01 is 59 days after 2001-01-01 (not a leap year).
+        assert_eq!(firsts[2] - firsts[0], 59 * 86400);
+        assert_eq!(parse_http_date("Thu, 01 Jan 1970 00:00:00 GMT"), Some(0));
+        assert_eq!(parse_http_date("Wed, 31 Dec 1969 00:00:00 GMT"), None);
+        // A date in the future is a positive wait.
+        let far = parse_retry_after("Fri, 01 Jan 2100 00:00:00 GMT").unwrap();
+        assert!(far > Duration::from_secs(365 * 86400));
+    }
+
+    #[test]
+    fn status_and_retry_after_accessors() {
+        let rl = Error::RateLimited {
+            provider: "p".into(),
+            status: 503,
+            retry_after: Some(Duration::from_secs(3)),
+            body: "busy".into(),
+        };
+        assert_eq!(rl.status(), Some(503));
+        assert_eq!(rl.retry_after(), Some(Duration::from_secs(3)));
+        assert!(rl.is_retryable());
+        assert!(rl.to_string().contains("rate limited"));
+        assert_eq!(Error::Timeout(Duration::from_secs(1)).status(), None);
+        assert_eq!(Error::Timeout(Duration::from_secs(1)).retry_after(), None);
+        assert!(Error::Stream("eof".into()).is_retryable());
+        for s in [408, 409, 502, 599] {
+            let e = Error::Provider {
+                provider: "p".into(),
+                status: s,
+                body: String::new(),
+            };
+            assert!(e.is_retryable(), "{s}");
+        }
+        assert!(!Error::InvalidResponse("x".into()).is_retryable());
+        assert!(!Error::ToolNotFound("x".into()).is_retryable());
     }
 
     #[test]

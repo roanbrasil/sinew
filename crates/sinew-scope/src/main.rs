@@ -179,14 +179,7 @@ fn main() -> ExitCode {
             let store = Store::open(&db).await.map_err(|e| e.to_string())?;
             eprintln!("database: {db}");
             if let Some(path) = pricing {
-                let text = std::fs::read_to_string(&path)
-                    .map_err(|e| format!("cannot read {path}: {e}"))?;
-                let table: sinew_scope::Pricing = serde_json::from_str(&text)
-                    .or_else(|_| {
-                        serde_json::from_str::<Vec<sinew_scope::ModelPrice>>(&text)
-                            .map(|models| sinew_scope::Pricing { models })
-                    })
-                    .map_err(|e| format!("invalid pricing file {path}: {e}"))?;
+                let table = read_pricing(&path)?;
                 let n = store.set_pricing(table).await.map_err(|e| e.to_string())?;
                 eprintln!("pricing: {path} ({n} runs priced)");
             }
@@ -223,19 +216,38 @@ fn main() -> ExitCode {
             .map_err(|e| e.to_string())
         }),
         Cmd::Import { path, db, project } => run_async(async move {
-            let runs = view::load_jsonl(&path).map_err(|e| format!("cannot read {path}: {e}"))?;
-            let store = Store::open(&db).await.map_err(|e| e.to_string())?;
-            let pairs: Vec<_> = runs.into_iter().map(|r| (project.clone(), r)).collect();
-            let mut total = (0, 0);
-            for chunk in pairs.chunks(500) {
-                let r = store.ingest(chunk).await.map_err(|e| e.to_string())?;
-                total.0 += r.accepted;
-                total.1 += r.traces;
-            }
-            println!("imported {} runs into {db} (project `{project}`)", total.0);
+            let n = import(&path, &db, &project).await?;
+            println!("imported {n} runs into {db} (project `{project}`)");
             Ok(())
         }),
     }
+}
+
+/// Reads a pricing file: a `Pricing` object or a bare list of model prices.
+fn read_pricing(path: &str) -> Result<sinew_scope::Pricing, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+    serde_json::from_str(&text)
+        .or_else(|_| {
+            serde_json::from_str::<Vec<sinew_scope::ModelPrice>>(&text)
+                .map(|models| sinew_scope::Pricing { models })
+        })
+        .map_err(|e| format!("invalid pricing file {path}: {e}"))
+}
+
+/// Imports a JSONL trace file into the database; returns the runs accepted.
+async fn import(path: &str, db: &str, project: &str) -> Result<usize, String> {
+    let runs = view::load_jsonl(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let store = Store::open(db).await.map_err(|e| e.to_string())?;
+    let pairs: Vec<_> = runs.into_iter().map(|r| (project.to_string(), r)).collect();
+    let mut accepted = 0;
+    for chunk in pairs.chunks(500) {
+        accepted += store
+            .ingest(chunk)
+            .await
+            .map_err(|e| e.to_string())?
+            .accepted;
+    }
+    Ok(accepted)
 }
 
 fn run_async(fut: impl std::future::Future<Output = Result<(), String>>) -> ExitCode {
@@ -255,5 +267,191 @@ fn run_async(fut: impl std::future::Future<Output = Result<(), String>>) -> Exit
             eprintln!("error: {e}");
             ExitCode::from(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Cmd, String> {
+        parse_args(args.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn serve_defaults_and_flags() {
+        match parse(&["serve"]).unwrap() {
+            Cmd::Serve {
+                db,
+                addr,
+                pricing,
+                retention_days,
+                no_engine,
+                metrics_auth,
+                ..
+            } => {
+                assert_eq!(db, "scope.db");
+                assert_eq!(addr, "127.0.0.1:7878");
+                assert!(pricing.is_none() && retention_days.is_none());
+                assert!(!no_engine && !metrics_auth);
+            }
+            _ => panic!("expected serve"),
+        }
+        match parse(&[
+            "serve",
+            "--db",
+            "x.db",
+            "--addr",
+            "0.0.0.0:9000",
+            "--token",
+            "secret",
+            "--pricing",
+            "p.json",
+            "--retention-days",
+            "30",
+            "--no-engine",
+            "--metrics-auth",
+        ])
+        .unwrap()
+        {
+            Cmd::Serve {
+                db,
+                addr,
+                token,
+                pricing,
+                retention_days,
+                no_engine,
+                metrics_auth,
+            } => {
+                assert_eq!(db, "x.db");
+                assert_eq!(addr, "0.0.0.0:9000");
+                assert_eq!(token.as_deref(), Some("secret"));
+                assert_eq!(pricing.as_deref(), Some("p.json"));
+                assert_eq!(retention_days, Some(30));
+                assert!(no_engine && metrics_auth);
+            }
+            _ => panic!("expected serve"),
+        }
+    }
+
+    #[test]
+    fn import_and_view() {
+        match parse(&["import", "t.jsonl", "--project", "p", "--db", "d.db"]).unwrap() {
+            Cmd::Import { path, db, project } => {
+                assert_eq!((path.as_str(), db.as_str()), ("t.jsonl", "d.db"));
+                assert_eq!(project, "p");
+            }
+            _ => panic!("expected import"),
+        }
+        match parse(&["import", "t.jsonl"]).unwrap() {
+            Cmd::Import { project, .. } => assert_eq!(project, "default"),
+            _ => panic!("expected import"),
+        }
+        match parse(&["view", "t.jsonl", "--trace", "ab", "--io"]).unwrap() {
+            Cmd::View { path, trace, io } => {
+                assert_eq!(path, "t.jsonl");
+                assert_eq!(trace.as_deref(), Some("ab"));
+                assert!(io);
+            }
+            _ => panic!("expected view"),
+        }
+        // A bare path is `view <path>`.
+        match parse(&["t.jsonl"]).unwrap() {
+            Cmd::View { path, trace, io } => {
+                assert_eq!(path, "t.jsonl");
+                assert!(trace.is_none() && !io);
+            }
+            _ => panic!("expected view"),
+        }
+    }
+
+    #[test]
+    fn pricing_file_object_list_and_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let obj = dir.path().join("obj.json");
+        std::fs::write(
+            &obj,
+            r#"{"models":[{"model":"m1","input_per_mtok":1.0,"output_per_mtok":2.0}]}"#,
+        )
+        .unwrap();
+        let list = dir.path().join("list.json");
+        std::fs::write(
+            &list,
+            r#"[{"model":"m2","input_per_mtok":3.0,"output_per_mtok":4.0,"provider":"p"}]"#,
+        )
+        .unwrap();
+        let bad = dir.path().join("bad.json");
+        std::fs::write(&bad, r#"{"nope": 1}"#).unwrap();
+
+        let p = read_pricing(obj.to_str().unwrap()).unwrap();
+        assert_eq!(p.models[0].model, "m1");
+        let p = read_pricing(list.to_str().unwrap()).unwrap();
+        assert_eq!(p.models[0].provider.as_deref(), Some("p"));
+        let e = read_pricing(bad.to_str().unwrap()).unwrap_err();
+        assert!(e.starts_with("invalid pricing file"), "{e}");
+        let e = read_pricing("/definitely/missing.json").unwrap_err();
+        assert!(e.starts_with("cannot read"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn import_writes_runs_into_the_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let trace = dir.path().join("t.jsonl");
+        let runs: Vec<String> = (0..3)
+            .map(|i| {
+                serde_json::json!({
+                    "id": format!("r{i}"), "trace_id": "t1",
+                    "parent_id": if i == 0 { None } else { Some("r0") },
+                    "name": "n", "kind": "chain", "start_ms": i, "end_ms": i + 1,
+                    "inputs": {}, "outputs": null, "error": null,
+                    "input_tokens": null, "output_tokens": null
+                })
+                .to_string()
+            })
+            .collect();
+        std::fs::write(&trace, runs.join("\n")).unwrap();
+        let db = dir.path().join("scope.db");
+        let (trace, db) = (trace.to_str().unwrap(), db.to_str().unwrap());
+        assert_eq!(import(trace, db, "proj").await.unwrap(), 3);
+        let stats = Store::open(db).await.unwrap().stats().await.unwrap();
+        assert_eq!((stats.runs, stats.traces), (3, 1));
+        let e = import("/definitely/missing.jsonl", db, "p")
+            .await
+            .unwrap_err();
+        assert!(e.starts_with("cannot read"), "{e}");
+    }
+
+    #[test]
+    fn errors_and_help() {
+        assert_eq!(parse(&[]).err().as_deref(), Some("missing command"));
+        for help in [&["--help"][..], &["help"], &["-h"], &["serve", "--help"]] {
+            assert_eq!(parse(help).err().as_deref(), Some(""));
+        }
+        assert_eq!(
+            parse(&["import"]).err().as_deref(),
+            Some("missing trace file")
+        );
+        assert_eq!(
+            parse(&["view"]).err().as_deref(),
+            Some("missing trace file")
+        );
+        assert_eq!(
+            parse(&["serve", "--db"]).err().as_deref(),
+            Some("--db needs a value")
+        );
+        for bad in ["0", "-1", "x"] {
+            assert_eq!(
+                parse(&["serve", "--retention-days", bad]).err(),
+                Some(format!("invalid --retention-days `{bad}`"))
+            );
+        }
+        assert_eq!(
+            parse(&["serve", "--bogus"]).err().as_deref(),
+            Some("unexpected argument `--bogus`")
+        );
+        assert_eq!(
+            parse(&["view", "a.jsonl", "b.jsonl"]).err().as_deref(),
+            Some("unexpected argument `b.jsonl`")
+        );
     }
 }

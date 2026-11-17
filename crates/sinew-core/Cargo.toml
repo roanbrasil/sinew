@@ -37,7 +37,7 @@ http2 = ["reqwest/http2"]
 sqlite-cache = ["dep:sqlx"]
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["test-util", "net", "io-util"] }
 tempfile.workspace = true
 trybuild = "1"
 criterion.workspace = true

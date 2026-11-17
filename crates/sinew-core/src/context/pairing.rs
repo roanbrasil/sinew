@@ -186,3 +186,130 @@ pub fn drop_unpaired_tool_messages(messages: Vec<Message>) -> Vec<Message> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::ToolCall;
+    use serde_json::json;
+
+    fn call(id: &str) -> ToolCall {
+        ToolCall {
+            id: id.into(),
+            name: "t".into(),
+            arguments: json!({}),
+        }
+    }
+
+    #[test]
+    fn groups_split_on_non_tool_messages() {
+        let msgs = vec![
+            Message::system("s"),
+            Message::assistant_with_tools("", vec![call("1"), call("2")]),
+            Message::tool_result("1", "a"),
+            Message::tool_result("2", "b"),
+            Message::tool_result("x", "orphan"),
+            Message::user("u"),
+            Message::assistant_with_tools("", vec![call("3")]),
+        ];
+        assert_eq!(message_groups(&msgs), vec![0..1, 1..5, 5..6, 6..7]);
+        assert!(message_groups(&[]).is_empty());
+        // A tool result after a plain assistant message is its own group.
+        let msgs = vec![Message::assistant("a"), Message::tool_result("1", "r")];
+        assert_eq!(message_groups(&msgs), vec![0..1, 1..2]);
+    }
+
+    #[test]
+    fn check_reports_each_kind_of_mismatch() {
+        let wrong_id = vec![
+            Message::assistant_with_tools("", vec![call("1")]),
+            Message::tool_result("2", "r"),
+        ];
+        let e = check_tool_pairing(&wrong_id).unwrap_err();
+        assert_eq!(
+            e,
+            PairingError::OrphanResult {
+                index: 1,
+                call_id: Some("2".into())
+            }
+        );
+        assert_eq!(
+            e.to_string(),
+            "tool result at index 1 (call id 2) has no matching tool call"
+        );
+
+        let mut no_id = Message::tool_result("1", "r");
+        no_id.tool_call_id = None;
+        let e = check_tool_pairing(&[Message::user("u"), no_id.clone()]).unwrap_err();
+        assert!(e.to_string().contains("(call id <none>)"));
+        let e = check_tool_pairing(&[Message::assistant_with_tools("", vec![call("1")]), no_id])
+            .unwrap_err();
+        assert_eq!(
+            e,
+            PairingError::OrphanResult {
+                index: 1,
+                call_id: None
+            }
+        );
+
+        let missing = vec![
+            Message::user("u"),
+            Message::assistant_with_tools("", vec![call("1"), call("2")]),
+            Message::tool_result("1", "r"),
+            Message::assistant("done"),
+        ];
+        let e = check_tool_pairing(&missing).unwrap_err();
+        assert_eq!(
+            e,
+            PairingError::MissingResult {
+                index: 1,
+                call_id: "2".into()
+            }
+        );
+        assert_eq!(
+            e.to_string(),
+            "tool call 2 of the assistant message at index 1 has no result"
+        );
+        let _: &dyn std::error::Error = &e;
+        assert!(check_tool_pairing(&[]).is_ok());
+    }
+
+    #[test]
+    fn drop_unpaired_repairs_every_case() {
+        let msgs = vec![
+            Message::user("u"),
+            // Calls 1 and 2; result for 1 twice, for 9 (unknown), none for 2.
+            Message::assistant_with_tools("thinking", vec![call("1"), call("2")]),
+            Message::tool_result("1", "first"),
+            Message::tool_result("1", "duplicate"),
+            Message::tool_result("9", "unknown"),
+            // No result at all and no text: dropped entirely.
+            Message::assistant_with_tools("", vec![call("3")]),
+            Message::assistant("final"),
+        ];
+        let fixed = drop_unpaired_tool_messages(msgs);
+        assert!(check_tool_pairing(&fixed).is_ok());
+        let contents: Vec<&str> = fixed.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(contents, vec!["u", "thinking", "first", "final"]);
+        assert_eq!(fixed[1].tool_calls.len(), 1);
+        assert_eq!(fixed[1].tool_calls[0].id, "1");
+
+        // A result without a call id inside a call block is dropped.
+        let mut no_id = Message::tool_result("1", "r");
+        no_id.tool_call_id = None;
+        let fixed = drop_unpaired_tool_messages(vec![
+            Message::assistant_with_tools("keep text", vec![call("1")]),
+            no_id,
+        ]);
+        assert_eq!(fixed.len(), 1);
+        assert!(fixed[0].tool_calls.is_empty());
+        assert_eq!(fixed[0].content, "keep text");
+
+        // Valid input is unchanged.
+        let ok = vec![
+            Message::assistant_with_tools("", vec![call("1")]),
+            Message::tool_result("1", "r"),
+        ];
+        assert_eq!(drop_unpaired_tool_messages(ok.clone()).len(), ok.len());
+    }
+}
