@@ -11,6 +11,7 @@ All notable changes to this project are documented here. The format follows
 - `#[sinew::tool]` attribute (new crate `sinew-macros`, feature `macros`, on by default in `sinew`): a plain sync or async function becomes a `Tool`; name from the function, description from the doc comment, JSON Schema from the argument types (argument doc comments, `Option`, enums, `#[serde]`/`#[schemars]` attributes), `#[state]` for injected application state, helpful compile errors. `tools![...]` builds a `ToolBox` (#4).
 - Guide: [docs/tools.md](docs/tools.md).
 - `LoopGuard` for tool-calling agents: catches repeated identical tool calls and turns whose tools keep failing, then nudges the model, stops the run or asks a human (`LoopAction`). Opt-in on `ReactAgent::loop_guard`, on by default in `sinew-harness` (`AgentBuilder::loop_guard`, `None` to disable). Detections are emitted as `loop_detected` custom events (#26). Guide: [docs/loop-detection.md](docs/loop-detection.md).
+- Record/replay cassettes (`sinew_core::vcr`): `Vcr` wraps models and tools, records requests, responses, stream events and tool results to JSON, and replays them offline with request matching (`MatchRequests::{Exact, Messages, Sequential}`), `assert_all_played` and `SINEW_VCR=record|replay|auto`. `sinew_trace::cassette_from_runs` and `GET /api/traces/{id}/cassette` in sinew-scope turn any trace into a cassette. `ToolBox::tools` and `ToolBox::register_arc` (#27). Guide: [docs/testing.md](docs/testing.md).
 
 ### Changed
 

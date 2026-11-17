@@ -139,6 +139,7 @@ Sinew is built for low latency and high throughput:
 - **Graphs:** [Fan-out](docs/fan-out.md) · [Commands and interrupts](docs/commands-and-interrupts.md) · [Subgraphs](docs/subgraphs.md) · [Time travel](docs/time-travel.md) · [Checkpointing](docs/checkpointing.md) · [Store](docs/store.md) · [Multi-agent](docs/multi-agent.md) · [Loop detection](docs/loop-detection.md)
 - **Agents and retrieval:** [Harness](docs/harness.md) · [RAG](docs/rag.md)
 - **Deployment and protocols:** [Serve](docs/serve.md) · [MCP](docs/mcp.md) · [A2A](docs/a2a.md)
+- **Testing:** [Testing agents and record/replay](docs/testing.md)
 - **Observability:** [Scope](docs/scope.md) · [Monitoring](docs/monitoring.md) · [Prompt hub](docs/prompt-hub.md) · [Evaluation](docs/evaluation.md) · [OpenTelemetry](docs/otel.md)
 
 ## Design choices
@@ -146,7 +147,8 @@ Sinew is built for low latency and high throughput:
 - **Typed state, whole-state nodes (`S -> S`)** with optional reducers for parallel branches; `compile()`
   reports every graph problem at once.
 - **Offline first:** every provider mapping is tested against recorded payloads, and every sample runs
-  with a scripted model; live tests against a local model are opt-in (`cargo test -- --ignored`).
+  with a scripted model; record/replay cassettes turn real runs (or production traces) into offline tests;
+  live tests against a local model are opt-in (`cargo test -- --ignored`).
 - **Tracing never breaks the app:** sink errors are swallowed, unfinished runs are recorded as failed.
 - **Heavy dependencies are opt-in** behind cargo features.
 

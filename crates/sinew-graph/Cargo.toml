@@ -23,6 +23,7 @@ tokio.workspace = true
 futures-core.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 futures-util.workspace = true
 criterion.workspace = true
 
