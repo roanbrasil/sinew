@@ -649,6 +649,16 @@ impl Store {
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
             .busy_timeout(std::time::Duration::from_secs(5));
+        // Migrate on a throwaway single connection first: connections that
+        // prepared statements before an `ALTER TABLE` keep stale column
+        // counts in sqlx's statement cache, so the serving pool must only
+        // ever see the migrated schema.
+        let migrate = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts.clone())
+            .await?;
+        Self::init(migrate.clone()).await?;
+        migrate.close().await;
         let pool = SqlitePoolOptions::new()
             .max_connections(8)
             .connect_with(opts)

@@ -21,6 +21,10 @@ All notable changes to this project are documented here. The format follows
 - Troubleshooting guide [docs/troubleshooting.md](docs/troubleshooting.md): cause and fix for every variant of `sinew_core::Error`, `sinew_graph::GraphError` and `sinew_harness::HarnessError`, plus Anthropic 400s on sampling and forced tool choice, rate limits, local servers, missing API keys, interrupts without a checkpointer, loop guard stops and cassette mismatches. Each variant's rustdoc links to its entry (#56).
 - Contributor guides in [docs/contributing/](docs/contributing/README.md) for adding a provider, vector store, document loader, tool, and checkpointer or store, plus "New provider" and "New integration" issue templates (#58).
 
+### Fixed
+
+- `sinew-scope`: opening a database that needs schema migrations could panic in sqlx (`index out of bounds`) when a pooled connection had cached a statement prepared before the `ALTER TABLE`; migrations now run on a separate connection.
+
 ### Changed
 
 - CONTRIBUTING.md documents the protected-branch workflow and commit signing; `.github/CODEOWNERS` added (#104).
