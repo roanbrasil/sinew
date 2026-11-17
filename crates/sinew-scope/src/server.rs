@@ -1,5 +1,6 @@
 //! HTTP server: ingest, query API, datasets/experiments, prompt hub,
-//! feedback, annotation queues, monitoring, rules, alerts and the embedded UI.
+//! feedback, annotation queues, monitoring, rules, alerts, the playground
+//! and the embedded UI.
 
 use std::{
     collections::HashMap,
@@ -31,6 +32,7 @@ use crate::{
     api,
     engine::{Engine, EngineConfig},
     otlp,
+    playground::{self, PlaygroundConfig},
     pricing::{run_cost, run_model},
     store::{Store, StoreError, TraceQuery},
 };
@@ -50,6 +52,7 @@ pub(crate) struct AppState {
     pub(crate) token: Option<String>,
     pub(crate) engine: Option<Engine>,
     pub(crate) metrics: Arc<IngestMetrics>,
+    pub(crate) playground: Arc<PlaygroundConfig>,
 }
 
 /// Run metrics of ingested runs plus ingest counters, for `GET /metrics`.
@@ -102,6 +105,9 @@ pub struct ServerConfig {
     /// Require the bearer token on `GET /metrics` (default: open, for an
     /// internal Prometheus scraper).
     pub metrics_auth: bool,
+    /// Playground settings: allowed providers (default: local providers
+    /// only), model factory, registered models; see [`PlaygroundConfig`].
+    pub playground: PlaygroundConfig,
 }
 
 /// JSON error response: `{"error": "..."}` with a status code.
@@ -158,11 +164,15 @@ pub fn router_with(store: Store, config: ServerConfig) -> Router {
         token: config.token.filter(|t| !t.is_empty()),
         engine,
         metrics: Arc::new(IngestMetrics::new()),
+        playground: Arc::new(config.playground),
     };
     let protected = Router::new()
         .route("/api/runs", post(ingest_runs).get(api::search_runs))
         .route("/api/runs/{id}", get(get_run))
         .route("/api/runs/{id}/feedback", get(api::run_feedback))
+        .route("/api/runs/{id}/playground", get(playground::prefill))
+        .route("/api/playground/models", get(playground::models))
+        .route("/api/playground/run", post(playground::run))
         .route("/api/metrics", get(api::metrics))
         .route(
             "/api/feedback",

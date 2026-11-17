@@ -8,6 +8,8 @@
 - serves a query API with filters, full-text search, cursor pagination and aggregates;
 - stores datasets, evaluation experiments and pairwise comparisons from `sinew-eval`;
 - hosts a **prompt hub** (versioned prompts with tags), see [prompt-hub.md](prompt-hub.md);
+- has a **playground** that runs a prompt against several models side by side, see
+  [Playground](#playground);
 - collects **feedback** on runs and runs **annotation queues** for human review;
 - runs **online evaluators** on incoming runs and **alerts** to webhooks, see
   [monitoring.md](monitoring.md);
@@ -23,7 +25,7 @@ Storage is a single SQLite file (sqlx, WAL mode). Older databases are migrated f
 ```text
 sinew-scope serve  [--db scope.db] [--addr 127.0.0.1:7878] [--token T]
                    [--pricing prices.json] [--retention-days N] [--no-engine]
-                   [--metrics-auth]
+                   [--metrics-auth] [--playground-providers LIST]
 sinew-scope import <traces.jsonl> [--db scope.db] [--project default]
 sinew-scope view   <traces.jsonl> [--trace <id-prefix>] [--io]
 sinew-scope <traces.jsonl> [--trace <id-prefix>] [--io]     # same as `view`
@@ -37,6 +39,8 @@ sinew-scope <traces.jsonl> [--trace <id-prefix>] [--io]     # same as `view`
 - `--no-engine` disables the background engine (online rules, alerts, retention).
 - `--metrics-auth` requires the token on `GET /metrics` (open by default, see
   [monitoring.md](monitoring.md#prometheus-metrics)).
+- `--playground-providers` lists the providers the playground may call with the server's API
+  keys (default: local providers only; see [Playground](#playground)).
 - `import` loads a JSONL file written by `JsonlSink` into the database. Runs are upserted, so
   importing the same file twice is safe.
 - `view` is the original terminal viewer; a bare path keeps working.
@@ -234,8 +238,136 @@ From Rust: `ScopeClient::create_feedback(&Feedback::score(run_id, "thumbs", 1.0)
 | `GET`, `POST`, `GET`/`PUT`/`DELETE` `{id}`, `POST {id}/check` | `/api/alerts` | [monitoring.md](monitoring.md) |
 | `GET`, `PUT`, `DELETE` | `/api/pricing` | [Cost](#cost) |
 | `POST` | `/api/pricing/recompute` | [Cost](#cost) |
+| `GET` | `/api/playground/models`, `/api/runs/{id}/playground` | [Playground](#playground) |
+| `POST` | `/api/playground/run` | [Playground](#playground) |
 | `GET`, `PUT` | `/api/settings` | `{"retention_days": N}` (or `null`) |
 | `POST` | `/api/retention/run` | apply retention now; returns `{traces, runs, feedback}` deleted |
+
+## Playground
+
+The playground runs one prompt against several models side by side, with latency, time to first
+token, tokens and cost per model. Each run is traced into the store, so it can be inspected,
+compared and opened again like any other trace.
+
+### Which providers it may call
+
+Models are built on the server with `sinew_core::providers::from_spec`, using the server's
+environment: API keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...) and local hosts
+(`OLLAMA_HOST`, ...). The browser never sends credentials. This makes the provider list a
+security boundary: anyone holding the server token can spend the credits of every provider the
+playground is allowed to call.
+
+- By default only the **local** providers of the catalog are allowed: `ollama`, `lmstudio`,
+  `llamacpp`, `vllm`, `sglang`, `localai`, `jan`, `llamafile`, `tgi`. With Ollama running, the
+  playground works with no API keys.
+- `--playground-providers ollama,openai,anthropic` (or `SINEW_SCOPE_PLAYGROUND_PROVIDERS`) sets
+  the list. Aliases work (`claude` = `anthropic`); `local` adds every local provider, `all` (or
+  `*`) allows every provider, `none` allows none. Unknown names stop the server at startup.
+- A spec whose provider is not allowed is refused with `403` before anything runs.
+- Custom endpoint specs (`http://host:port/v1|model`) are always refused, so the playground
+  cannot be used to make the server send requests to arbitrary URLs.
+- Local hosts come from the server's environment, not from the request.
+- The playground endpoints are under `/api`, so they require the bearer token when the server
+  runs with `--token`.
+
+From Rust, `ServerConfig::playground` takes a `PlaygroundConfig`:
+
+```rust
+use sinew_scope::{PlaygroundConfig, ServerConfig};
+
+let config = ServerConfig {
+    token: Some("...".into()),
+    playground: PlaygroundConfig::default()
+        .allow_providers(["ollama", "openai"])
+        .max_models(4)                                   // per request (default 8)
+        .timeout(std::time::Duration::from_secs(120)),   // per model call (default 5 min)
+    ..Default::default()
+};
+```
+
+`PlaygroundConfig::with_model("test:echo", model)` serves a model under an exact spec (always
+allowed, listed by the models endpoint); tests use it with `sinew_core::mock::ScriptedModel`.
+`with_model_factory` replaces `from_spec`, `project` changes the trace project (default
+`playground`) and `discover_models(false)` turns off model discovery.
+
+### API
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/playground/models` | `{project, allowed_providers, providers, models, max_models}`. `providers`: the allowed catalog entries (`name`, `kind`, `env_var`, `configured`, `capabilities`). `models`: registered models and, for each allowed local provider, the ids its server reports on `GET /v1/models` (1.5 s timeout), as `{spec, provider, capabilities, source}`. |
+| `POST` | `/api/playground/run` | Runs the models concurrently; see below. |
+| `GET` | `/api/runs/{id}/playground` | The inputs of a stored `llm` run, to prefill the editor; `400` for other run kinds. |
+
+`POST /api/playground/run` body:
+
+| Field | Meaning |
+|---|---|
+| `messages` | chat messages (`sinew_core::Message` JSON). With `variables` they are templates (`{name}`, `{{`/`}}` for literal braces); without, they are sent as written. |
+| `prompt` | a prompt-hub reference instead of `messages`: `name`, `name@prod`, `name@v3`, `name@<commit>`. The version's messages are rendered with `variables`; its `model_config` supplies `model` (a spec or a list), `temperature` and `max_tokens` when the request does not. |
+| `variables` | `{name: value}`; non-string values are used as their JSON text. A missing variable is a `400`. |
+| `models` | `provider:model` specs, at most `max_models`. The same spec may appear twice to compare two samples. |
+| `temperature`, `max_tokens` | sent to every model; `temperature` is dropped for a model whose `capabilities().sampling` is false. |
+| `tools` | `[{name, description, parameters}]` offered to the model; dropped when `capabilities().tools` is false. Tool calls are returned, not executed. |
+| `response_format` | `{"type": "json"}` or `{"type": "json_schema", "name": "...", "schema": {...}}`. |
+| `stream` | `true` for Server-Sent Events (below); otherwise one JSON body. |
+
+The JSON response is `{trace_id, project, prompt, results, trace_error}`, where `prompt` is the
+resolved `name@commit` and each result has `index`, `spec`, `model` (as reported by the
+provider), `run_id`, `output` (the assistant message), `error`, `latency_ms`, `ttft_ms`,
+`input_tokens`, `output_tokens`, `cost_usd` (from the pricing table; `null` for unpriced local
+models), `stop_reason` and `ignored` (options dropped for that model). A model that fails (no
+API key, server down, timeout) reports `error` without failing the others.
+
+With `"stream": true` the response is `text/event-stream` with these events, each with a JSON
+`data` line:
+
+| Event | Data |
+|---|---|
+| `start` | `{trace_id, project, messages, models}` (messages after rendering) |
+| `delta` | `{index, text}`: a chunk of model `index`'s answer |
+| `result` | one result, as in the JSON response |
+| `done` | the same body as the JSON response |
+
+The calls keep running and are traced if the client disconnects.
+
+```bash
+curl -s localhost:7878/api/playground/run -H 'content-type: application/json' -d '{
+  "messages": [{"role": "system", "content": "Answer in one sentence."},
+               {"role": "user", "content": "What is the capital of {country}?"}],
+  "variables": {"country": "Brazil"},
+  "models": ["ollama:qwen3:4b", "ollama:llama3.1:8b"],
+  "temperature": 0.2
+}'
+```
+
+### Traces
+
+Every request becomes one trace in the `playground` project: a `chain` root named `playground`
+(inputs: the request; metadata `tags: ["playground"]` and, for hub prompts, `prompt:
+"name@commit"`) with one `llm` child per model, named after the spec. Each `llm` run records the
+messages, usage, `model`, `ttft_ms`, `spec` and `invocation_params` (temperature, max tokens,
+tool specs, response format), so `GET /api/runs/{id}/playground` gives back the exact request.
+Online evaluation rules see these runs like any others.
+
+For runs recorded by applications, the prefill endpoint reads the messages from
+`inputs.messages` (`traced_chat`), a message array, or OpenTelemetry GenAI messages with
+`parts`; temperature and max tokens from `invocation_params` or the
+`gen_ai.request.temperature` / `gen_ai.request.max_tokens` attributes. `spec` comes from
+`metadata.spec`, else the `gen_ai.provider.name` / `gen_ai.system` attribute plus the model, else
+the provider of the model's pricing-table entry; `spec_allowed` says whether this server may run
+it. `traced_chat` records tool names only, so `tools` is `null` and `tool_names` lists them.
+
+### In the UI
+
+`#/playground` has the message editor (roles, add/remove), one field per `{variable}` found in
+the messages ("Treat {placeholders} as variables" turns templating off), the model list from
+`GET /api/playground/models` plus a free-form spec field, temperature, max tokens, response
+format and tools, and a Stream toggle. Outputs appear side by side with latency, TTFT, tokens,
+cost and a link to the trace. "Save as prompt version" pushes the messages with
+`model_config = {model, temperature, max_tokens}` to the prompt hub (`POST /api/prompts`).
+
+"Open in playground" appears on `llm` runs in the trace view (`#/playground?run=<id>`, messages
+sent as written) and on prompt versions (`#/playground?prompt=<name>@<commit>`).
 
 ## Cost
 
@@ -280,7 +412,7 @@ Open `http://127.0.0.1:7878/`. Pages (hash routes, so links can be shared):
 - **Trace** (`#/trace/<id>`): collapsible run tree with a waterfall bar per run on a shared
   timeline, and a detail panel for the selected run: ids, timing, tokens, model, cost, time to
   first token, tags, error, **feedback** (list, add a score/comment, delete), **actions** (add the
-  run to a dataset, add it to an annotation queue), inputs, outputs and metadata as pretty-printed
+  run to a dataset, add it to an annotation queue, open an `llm` run in the playground), inputs, outputs and metadata as pretty-printed
   JSON (chat messages also get a readable "Messages" view).
 - **Runs** (`#/runs`): run search (full text, kind, model, tag, metadata, has-feedback, errors,
   root only) with "load older" cursor paging; tick runs and add them to an annotation queue.
@@ -295,8 +427,11 @@ Open `http://127.0.0.1:7878/`. Pages (hash routes, so links can be shared):
 - **Pairwise** (`#/pairwise/<id>`): win/tie counts and win rates per pairwise evaluator, and every
   example with both outputs and the verdict with its reason (listed on the Experiments page).
 - **Prompts** (`#/prompts`, `#/prompt/<name>`): the prompt hub: versions with tags, template,
-  variables and model config, "edit as new version", tag management and a line diff between any
-  two versions.
+  variables and model config, "edit as new version", "open in playground", tag management and a
+  line diff between any two versions.
+- **Playground** (`#/playground`): edit messages and variables, run several models side by side
+  with streaming output and per-model metrics, save the result as a prompt version; see
+  [Playground](#playground).
 - **Annotate** (`#/queues`, `#/queue/<id>`): annotation queues; the review screen shows the run's
   inputs, outputs and existing feedback, a score (0 / 0.5 / 1 or any number) and a comment per
   queue key, "Submit & next" and "Remove from queue".
@@ -325,7 +460,7 @@ tokio::spawn(sinew_scope::server::serve_with_shutdown(
 
 `router` starts the background engine (rules, alerts, retention) when it runs inside a Tokio
 runtime. `router_with` takes a `ServerConfig { token, engine: Option<EngineConfig>,
-disable_engine }`; `EngineConfig` sets the alert and retention intervals, the webhook timeout and
+disable_engine, metrics_auth, playground: PlaygroundConfig }`; `EngineConfig` sets the alert and retention intervals, the webhook timeout and
 the `model_factory` that turns an LLM-judge `provider:model` spec into a `ChatModel` (default:
 `sinew_core::providers::from_spec`; tests inject a scripted model there).
 
@@ -364,6 +499,10 @@ See `crates/sinew-scope/examples/traced_agent.rs` and `eval_agent.rs`, and the i
 - Alert webhooks are called from the server; only `http(s)` URLs are accepted. Anyone with the
   token can create alerts, so treat the token as an admin credential.
 - LLM-judge rules use the provider API keys found in the server's environment.
+- The playground calls models with the server's API keys. Only local providers are allowed
+  unless `--playground-providers` lists more; custom endpoint URLs are always refused. Every
+  token holder can use every allowed provider, so allow hosted providers only on servers whose
+  token you would trust with those credits. See [Playground](#playground).
 - The server stores runs as received. To keep API keys, tokens, e-mail addresses and card
   numbers out of it, set a `Redactor` on the application's `Tracer`; see
   [redaction.md](redaction.md).

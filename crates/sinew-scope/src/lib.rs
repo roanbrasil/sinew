@@ -8,6 +8,8 @@
 //!   semantic conventions); protobuf ingest with the `otlp-proto` feature.
 //! - [`pricing`]: model price table, per-run and per-trace cost.
 //! - [`engine`]: background online-evaluation rules, alerts and retention.
+//! - [`playground`]: run a prompt against several models side by side
+//!   (`POST /api/playground/run`), restricted to allowed providers.
 //! - [`view`]: the terminal tree viewer.
 //!
 //! Start a server in-process (tests, examples):
@@ -33,12 +35,14 @@
 mod api;
 pub mod engine;
 pub mod otlp;
+pub mod playground;
 pub mod pricing;
 pub mod server;
 pub mod store;
 pub mod view;
 
 pub use engine::{Engine, EngineConfig, ModelFactory};
+pub use playground::PlaygroundConfig;
 pub use pricing::{ModelPrice, Pricing};
 pub use server::{router, router_with, ServerConfig};
 pub use store::{MetricsQuery, RunQuery, Store, StoreError, StoreStats, TraceQuery};

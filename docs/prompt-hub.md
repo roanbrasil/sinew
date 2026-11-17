@@ -122,7 +122,9 @@ variables, model config, a ready-to-paste `PromptHub::pull` line). From there yo
 
 - **Edit as new version**: a form prefilled with the version; committing pushes a new version;
 - **Point tag here** / **untag**: promote a version to `prod` or roll back;
-- **Compare with…**: a line diff of the templates plus changed variables and model-config keys.
+- **Compare with…**: a line diff of the templates plus changed variables and model-config keys;
+- **Open in playground**: run the version against several models and save edits as a new
+  version (see [the playground](scope.md#playground)).
 
 ## Example
 

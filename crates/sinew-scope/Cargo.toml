@@ -36,6 +36,7 @@ axum.workspace = true
 sqlx = { workspace = true, features = ["sqlite"] }
 tokio = { workspace = true, features = ["net", "signal", "fs"] }
 thiserror.workspace = true
+futures-util.workspace = true
 
 [dev-dependencies]
 sinew-graph.workspace = true
