@@ -30,6 +30,8 @@ edit the version in the release PR.
   `main` branch and require a reviewer).
 - **Release PRs.** Settings → Actions → General → Workflow permissions → allow GitHub Actions to create pull
   requests.
+- **Turn it on.** Settings → Secrets and variables → Actions → Variables → `RELEASE_ENABLED` = `true`. Until then
+  the release workflow is skipped, so merges to `main` do not fail on missing setup.
 
 ## Manual release (fallback)
 
