@@ -190,3 +190,49 @@ with the key in the `api-key` header. The endpoint can also be just the
 resource name. Two lower-level builders work for any OpenAI-compatible
 gateway: `OpenAiCompat::with_api_key_header`, `with_header` and
 `with_query`.
+
+## Prompt caching (Anthropic)
+
+Agents resend the same system prompt, tools and growing history on every call. With prompt caching, Anthropic
+serves the repeated prefix from cache: reads cost a fraction of normal input (about 0.1x, less on the newest
+models) and time to first token drops. Writes cost 1.25x (5-minute TTL) or 2x (1-hour TTL), so caching pays off
+from the second request that shares a prefix.
+
+```rust
+use sinew::core::providers::{Anthropic, CacheTtl, PromptCaching};
+
+let model = Anthropic::from_env("claude-sonnet-5-5")?
+    .with_prompt_caching(PromptCaching::agent());            // system + conversation, 5-minute TTL
+// PromptCaching::system_only()                               // many independent requests, one big prompt
+// PromptCaching::agent().with_ttl(CacheTtl::OneHour)         // users who reply 5-60 minutes later
+```
+
+| Setting | Breakpoints |
+|---|---|
+| `system: true` | on the system prompt, or on the last tool when there is no system prompt (tools render first, so both are cached) |
+| `conversation: true` | top-level automatic caching: the breakpoint follows the end of the conversation, so each turn reads the previous ones |
+
+`from_spec("anthropic:...")` and `Anthropic::from_env` read `SINEW_ANTHROPIC_CACHE` (`agent`, `system`,
+`agent-1h`, `system-1h`). Check that it works in `Usage::cached_input_tokens` and
+`Usage::cache_creation_input_tokens` (also in traces and sinew-scope cost): a steady agent loop reads almost the
+whole prompt from cache and writes only the last turn.
+
+Caching silently does nothing when the prefix changes between requests. Keep the system prompt free of timestamps
+and per-user data, keep the tool list stable and sorted, and put per-request context at the end of the
+conversation. Prefixes below the model's minimum (512 to 4096 tokens depending on the model) are not cached.
+
+## Batch APIs
+
+For work nobody waits on (evaluations, backfills, enrichment), batch APIs process many requests at a discount
+(Anthropic Message Batches: 50%) within 24 hours:
+
+```rust
+use std::time::Duration;
+use sinew::core::batch::run_batch;
+
+let requests = docs.iter().map(|d| ChatRequest::new(vec![Message::user(format!("Summarize: {d}"))])).collect();
+let results = run_batch(&model, requests, Duration::from_secs(60)).await?;   // one Result per request, in order
+```
+
+`BatchModel` (`submit_batch`, `batch_status`, `batch_results`) is implemented for `Anthropic`, and prompt caching
+applies inside batches too.
