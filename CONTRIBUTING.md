@@ -20,6 +20,12 @@ cargo deny check   # optional locally: cargo install cargo-deny
 
 By contributing you agree that your work is dual-licensed under MIT and Apache-2.0, like the rest of the project.
 
+## Extension guides
+
+Adding a provider, vector store, document loader, tool, checkpointer or store? Follow the step-by-step guides in
+[docs/contributing/](docs/contributing/README.md), and open the matching issue first (**New provider** or
+**New integration**).
+
 ## Releases
 
 Add a line under `## [Unreleased]` in `CHANGELOG.md` with every user-visible change. Releases are cut by merging the automated release PR; see [RELEASING.md](RELEASING.md).

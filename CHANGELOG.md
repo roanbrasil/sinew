@@ -18,6 +18,8 @@ All notable changes to this project are documented here. The format follows
 - `Capabilities` and `ChatModel::capabilities()` (tools, streaming, images, PDF, audio, JSON schema, cached tokens, sampling, forced tool choice), forwarded by every wrapper; per-preset values, `OpenAiCompat::with_capabilities`, `providers::capabilities_for`, `providers::catalog()` (`ProviderInfo`). `docs/providers.md` is generated from the catalog by a test (#54).
 - Architecture guide: [docs/architecture.md](docs/architecture.md) with the crate layer diagram, request lifecycle, concurrency and error models, cargo feature map and extension points, linked from the README and each crate README (#51).
 - Architecture decision records: [docs/adr/](docs/adr/README.md) with an index, a MADR-style template and eight ADRs for decisions already in the code (#59).
+- Troubleshooting guide [docs/troubleshooting.md](docs/troubleshooting.md): cause and fix for every variant of `sinew_core::Error`, `sinew_graph::GraphError` and `sinew_harness::HarnessError`, plus Anthropic 400s on sampling and forced tool choice, rate limits, local servers, missing API keys, interrupts without a checkpointer, loop guard stops and cassette mismatches. Each variant's rustdoc links to its entry (#56).
+- Contributor guides in [docs/contributing/](docs/contributing/README.md) for adding a provider, vector store, document loader, tool, and checkpointer or store, plus "New provider" and "New integration" issue templates (#58).
 
 ### Changed
 
