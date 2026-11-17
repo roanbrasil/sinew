@@ -16,6 +16,7 @@ cargo deny check   # optional locally: cargo install cargo-deny
 - Add an entry to `CHANGELOG.md` under "Unreleased".
 - Hot paths (streaming decoders, graph supersteps, vector search) must not regress; run the benches (`cargo bench -p <crate>`) when touching them.
 - One logical change per PR, with a clear description of the behavior change.
+- Read the [architecture guide](docs/architecture.md) and the [architecture decision records](docs/adr/README.md) before changing a design decision; record a new or superseding ADR when you do.
 
 By contributing you agree that your work is dual-licensed under MIT and Apache-2.0, like the rest of the project.
 

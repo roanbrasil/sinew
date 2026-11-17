@@ -27,6 +27,8 @@ let tools = ToolBox::new().with(get_order::tool(db));
 
 Full guide: [docs/tools.md](https://github.com/roanbrasil/sinew/blob/main/docs/tools.md).
 
+How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
+
 ## License
 
 MIT OR Apache-2.0.

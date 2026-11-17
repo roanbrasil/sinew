@@ -135,6 +135,7 @@ Sinew is built for low latency and high throughput:
 
 ## Documentation
 
+- **Architecture:** [Crates, layers and data flow](docs/architecture.md) · [Architecture decision records](docs/adr/README.md)
 - **Models:** [Providers and capabilities](docs/providers.md) · [Tools](docs/tools.md) · [Runnables](docs/runnables.md) · [Multimodal](docs/multimodal.md) · [Resilience and cost](docs/resilience.md) · [Streaming](docs/streaming.md)
 - **Graphs:** [Fan-out](docs/fan-out.md) · [Commands and interrupts](docs/commands-and-interrupts.md) · [Subgraphs](docs/subgraphs.md) · [Time travel](docs/time-travel.md) · [Checkpointing](docs/checkpointing.md) · [Store](docs/store.md) · [Multi-agent](docs/multi-agent.md) · [Loop detection](docs/loop-detection.md) · [Diagrams](docs/visualization.md)
 - **Agents and retrieval:** [Harness](docs/harness.md) · [RAG](docs/rag.md)

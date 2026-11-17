@@ -15,6 +15,8 @@ All notable changes to this project are documented here. The format follows
 - Record/replay cassettes (`sinew_core::vcr`): `Vcr` wraps models and tools, records requests, responses, stream events and tool results to JSON, and replays them offline with request matching (`MatchRequests::{Exact, Messages, Sequential}`), `assert_all_played` and `SINEW_VCR=record|replay|auto`. `sinew_trace::cassette_from_runs` and `GET /api/traces/{id}/cassette` in sinew-scope turn any trace into a cassette. `ToolBox::tools` and `ToolBox::register_arc` (#27). Guide: [docs/testing.md](docs/testing.md).
 - Graph diagrams: `CompiledGraph::view()` (serializable `GraphView`), `to_mermaid()` and `to_dot()`, with command nodes, `Send` edges, subgraphs drawn nested, interrupts and policies marked. The root `graph` trace run carries the view in `metadata.graph` (#65). Guide: [docs/visualization.md](docs/visualization.md).
 - `Capabilities` and `ChatModel::capabilities()` (tools, streaming, images, PDF, audio, JSON schema, cached tokens, sampling, forced tool choice), forwarded by every wrapper; per-preset values, `OpenAiCompat::with_capabilities`, `providers::capabilities_for`, `providers::catalog()` (`ProviderInfo`). `docs/providers.md` is generated from the catalog by a test (#54).
+- Architecture guide: [docs/architecture.md](docs/architecture.md) with the crate layer diagram, request lifecycle, concurrency and error models, cargo feature map and extension points, linked from the README and each crate README (#51).
+- Architecture decision records: [docs/adr/](docs/adr/README.md) with an index, a MADR-style template and eight ADRs for decisions already in the code (#59).
 
 ### Changed
 

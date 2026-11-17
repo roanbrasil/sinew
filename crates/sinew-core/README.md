@@ -47,6 +47,8 @@ let reply = model.chat(ChatRequest::new(vec![Message::user("Hi")])).await?;
 | `schemars` | `StructuredOutput::for_type::<T>()`, `TypedTool` |
 | `macros` | `#[tool]` attribute (implies `schemars`) |
 
+How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](https://github.com/roanbrasil/sinew/blob/main/LICENSE-APACHE) or [MIT license](https://github.com/roanbrasil/sinew/blob/main/LICENSE-MIT) at your option.

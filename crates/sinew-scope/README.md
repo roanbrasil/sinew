@@ -37,6 +37,8 @@ println!("UI at http://{addr}/");
 
 See the [scope guide](../../docs/scope.md).
 
+How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](https://github.com/roanbrasil/sinew/blob/main/LICENSE-APACHE) or [MIT license](https://github.com/roanbrasil/sinew/blob/main/LICENSE-MIT) at your option.

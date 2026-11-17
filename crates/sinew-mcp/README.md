@@ -46,6 +46,8 @@ See the [MCP guide](../../docs/mcp.md).
 | `http` | Streamable HTTP client transport |
 | `http-server` | Streamable HTTP server: `McpServer::http_router`, `serve_http`, `McpHttpConfig` |
 
+How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](https://github.com/roanbrasil/sinew/blob/main/LICENSE-APACHE) or [MIT license](https://github.com/roanbrasil/sinew/blob/main/LICENSE-MIT) at your option.

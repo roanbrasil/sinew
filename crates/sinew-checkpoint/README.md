@@ -33,6 +33,8 @@ println!("threads: {:?}", store.list_threads().await?);
 Both implement `Checkpointer` and `CheckpointStore` (`list_threads`, `delete_thread`, `prune`, `with_retention`).
 See the [checkpointing guide](../../docs/checkpointing.md).
 
+How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](https://github.com/roanbrasil/sinew/blob/main/LICENSE-APACHE) or [MIT license](https://github.com/roanbrasil/sinew/blob/main/LICENSE-MIT) at your option.

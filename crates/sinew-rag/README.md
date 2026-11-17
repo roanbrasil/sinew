@@ -120,6 +120,8 @@ SINEW_PGVECTOR_URL=postgres://postgres:pw@127.0.0.1:5432/postgres \
 More in [docs/rag.md](https://github.com/roanbrasil/sinew/blob/main/docs/rag.md) and the
 `samples/15-rag` program.
 
+How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
+
 ## License
 
 MIT OR Apache-2.0

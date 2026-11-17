@@ -33,6 +33,8 @@ assert_eq!(out.n, 3);
 Durable checkpointers (SQLite, Postgres) live in [`sinew-checkpoint`](../sinew-checkpoint).
 See the [streaming](../../docs/streaming.md), [fan-out](../../docs/fan-out.md) and [checkpointing](../../docs/checkpointing.md) guides.
 
+How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](https://github.com/roanbrasil/sinew/blob/main/LICENSE-APACHE) or [MIT license](https://github.com/roanbrasil/sinew/blob/main/LICENSE-MIT) at your option.
