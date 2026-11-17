@@ -19,6 +19,14 @@ http = ["dep:reqwest"]
 http-server = ["dep:axum", "dep:uuid", "dep:futures-util", "tokio/net"]
 # `ResourceContents::to_document` and `McpClient::read_resource_documents` (sinew-rag `Document`s).
 rag = ["dep:sinew-rag"]
+# OAuth 2.1 client for the HTTP transport: discovery, dynamic client
+# registration, authorization code + PKCE, refresh, `McpClient::connect_http_with_oauth`.
+oauth-client = ["http", "dep:ring", "dep:base64"]
+# OAuth 2.1 resource server for `http_router`: protected resource metadata and
+# JWT access-token validation against a JWKS (`McpHttpConfig::with_oauth`).
+oauth-server = ["http-server", "dep:jsonwebtoken", "dep:reqwest"]
+# Both of the above.
+oauth = ["oauth-client", "oauth-server"]
 
 [[bin]]
 name = "sinew-mcp"
@@ -38,11 +46,17 @@ axum = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 futures-util = { workspace = true, optional = true }
 sinew-rag = { workspace = true, optional = true }
+jsonwebtoken = { workspace = true, optional = true }
+ring = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["net"] }
 reqwest.workspace = true
 axum.workspace = true
+# PEM keys to sign test tokens.
+jsonwebtoken = { workspace = true, features = ["use_pem"] }
+base64.workspace = true
 
 [lints]
 workspace = true

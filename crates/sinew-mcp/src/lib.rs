@@ -9,6 +9,10 @@
 //! - **Server** ([`McpServer`]): serve any [`ToolBox`](sinew_core::ToolBox),
 //!   optionally an agent graph as a single tool ([`AgentTool`]), resources,
 //!   resource templates and prompts to MCP clients such as Claude Code.
+//! - **OAuth 2.1** (features `oauth-server`, `oauth-client`, `oauth`): the
+//!   MCP authorization specification for the Streamable HTTP transport, in
+//!   the `oauth` module: JWT access-token validation and protected resource
+//!   metadata on the server, authorization code + PKCE on the client.
 //! - **`sinew-mcp` binary**: an MCP server exposing a Sinew JSONL trace
 //!   file through `list_traces`, `get_trace` and `search_runs` ([`traces`]).
 //!
@@ -63,6 +67,8 @@ mod http;
 #[cfg(feature = "http-server")]
 pub mod http_server;
 mod hub;
+#[cfg(any(feature = "oauth-client", feature = "oauth-server"))]
+pub mod oauth;
 pub mod protocol;
 pub mod server;
 pub mod traces;

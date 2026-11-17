@@ -30,6 +30,9 @@ sinew-trace = { path = "crates/sinew-trace", version = "0.1.0" }
 sinew-checkpoint = { path = "crates/sinew-checkpoint", version = "0.1.0", default-features = false }
 sinew-eval = { path = "crates/sinew-eval", version = "0.1.0" }
 axum = "0.8"
+jsonwebtoken = { version = "9.3", default-features = false }
+ring = "0.17"
+base64 = "0.22"
 futures = "0.3"
 regex = "1"
 sinew-mcp = { path = "crates/sinew-mcp", version = "0.1.0" }
