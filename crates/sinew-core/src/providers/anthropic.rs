@@ -20,7 +20,91 @@ pub struct Anthropic {
     api_key: String,
     model: String,
     default_max_tokens: u32,
+    caching: Option<PromptCaching>,
     client: reqwest::Client,
+}
+
+/// How long a prompt-cache entry lives after its last use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CacheTtl {
+    /// 5 minutes (writes cost 1.25x input). Right for continuous traffic and
+    /// agent loops: every request refreshes the entry.
+    #[default]
+    FiveMinutes,
+    /// 1 hour (writes cost 2x input). Pays off when requests sharing a prefix
+    /// arrive 5 to 60 minutes apart.
+    OneHour,
+}
+
+/// Where [`Anthropic`] places prompt-cache breakpoints. Cache reads cost a
+/// fraction of normal input and cut time to first token; see
+/// `docs/resilience.md` for when caching pays off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PromptCaching {
+    /// Breakpoint on the system prompt (or, without one, on the last tool
+    /// definition): caches tools + system, the stable part of every request.
+    pub system: bool,
+    /// Automatic caching of the growing conversation (top-level
+    /// `cache_control`): each request reads the previous turns from cache.
+    pub conversation: bool,
+    pub ttl: CacheTtl,
+}
+
+impl PromptCaching {
+    /// System prefix plus conversation: the recommended setup for agents and
+    /// multi-turn chats.
+    pub fn agent() -> Self {
+        Self {
+            system: true,
+            conversation: true,
+            ttl: CacheTtl::FiveMinutes,
+        }
+    }
+
+    /// Only the system prompt and tools: many independent requests sharing
+    /// one large prompt (classification, extraction).
+    pub fn system_only() -> Self {
+        Self {
+            system: true,
+            conversation: false,
+            ttl: CacheTtl::FiveMinutes,
+        }
+    }
+
+    pub fn with_ttl(mut self, ttl: CacheTtl) -> Self {
+        self.ttl = ttl;
+        self
+    }
+
+    fn marker(&self) -> Value {
+        match self.ttl {
+            CacheTtl::FiveMinutes => json!({"type": "ephemeral"}),
+            CacheTtl::OneHour => json!({"type": "ephemeral", "ttl": "1h"}),
+        }
+    }
+
+    /// Adds the breakpoints to an encoded Messages API body.
+    fn apply(&self, body: &mut Value) {
+        let marker = self.marker();
+        if self.system {
+            if let Some(text) = body
+                .get("system")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+            {
+                body["system"] = json!([{"type": "text", "text": text, "cache_control": marker}]);
+            } else if let Some(last) = body
+                .get_mut("tools")
+                .and_then(Value::as_array_mut)
+                .and_then(|t| t.last_mut())
+            {
+                last["cache_control"] = marker.clone();
+            }
+        }
+        if self.conversation {
+            body["cache_control"] = marker;
+        }
+    }
 }
 
 impl Anthropic {
@@ -30,6 +114,7 @@ impl Anthropic {
             api_key: api_key.into(),
             model: model.into(),
             default_max_tokens: 4096,
+            caching: None,
             client: super::shared_client(),
         }
     }
@@ -44,12 +129,46 @@ impl Anthropic {
     pub fn from_env(model: impl Into<String>) -> Result<Self> {
         let key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| Error::Config("ANTHROPIC_API_KEY not set".into()))?;
-        Ok(Self::new(key, model))
+        let m = Self::new(key, model);
+        Ok(match std::env::var("SINEW_ANTHROPIC_CACHE").as_deref() {
+            Ok("agent") => m.with_prompt_caching(PromptCaching::agent()),
+            Ok("agent-1h") => {
+                m.with_prompt_caching(PromptCaching::agent().with_ttl(CacheTtl::OneHour))
+            }
+            Ok("system") => m.with_prompt_caching(PromptCaching::system_only()),
+            Ok("system-1h") => {
+                m.with_prompt_caching(PromptCaching::system_only().with_ttl(CacheTtl::OneHour))
+            }
+            _ => m,
+        })
     }
 
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
         self.base_url = url.into().trim_end_matches('/').to_string();
         self
+    }
+
+    /// Turns on prompt caching, e.g. `PromptCaching::agent()`. Off by default.
+    /// `from_env` also reads `SINEW_ANTHROPIC_CACHE` = `agent`, `system` or
+    /// `agent-1h` / `system-1h`.
+    pub fn with_prompt_caching(mut self, caching: PromptCaching) -> Self {
+        self.caching = Some(caching);
+        self
+    }
+
+    fn body(&self, request: &ChatRequest) -> Value {
+        let mut body = encode_request(&self.model, self.default_max_tokens, request);
+        if let Some(c) = &self.caching {
+            c.apply(&mut body);
+        }
+        body
+    }
+
+    fn get(&self, url: &str) -> reqwest::RequestBuilder {
+        self.client
+            .get(url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", API_VERSION)
     }
 
     pub fn with_default_max_tokens(mut self, n: u32) -> Self {
@@ -208,8 +327,6 @@ pub(crate) fn encode_request(model: &str, default_max: u32, req: &ChatRequest) -
     body
 }
 
-/// Claude models whose request surface removed sampling parameters
-/// (`temperature`, `top_p`, `top_k`): sending them returns a 400.
 /// What the Messages API supports for `model` through this client.
 pub(crate) fn anthropic_capabilities(model: &str) -> crate::Capabilities {
     crate::Capabilities::all()
@@ -220,6 +337,8 @@ pub(crate) fn anthropic_capabilities(model: &str) -> crate::Capabilities {
         .with_forced_tool_choice(accepts_forced_tool_choice(model))
 }
 
+/// Claude models whose request surface removed sampling parameters
+/// (`temperature`, `top_p`, `top_k`): sending them returns a 400.
 fn accepts_sampling(model: &str) -> bool {
     const NO_SAMPLING: &[&str] = &[
         "claude-fable",
@@ -467,22 +586,192 @@ impl ChatModel for Anthropic {
     }
 
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
-        let body = encode_request(&self.model, self.default_max_tokens, &request);
+        let body = self.body(&request);
         let v = super::post_json("anthropic", self.request(), &body).await?;
         decode_response(&self.model, &v)
     }
 
     async fn chat_stream(&self, request: ChatRequest) -> Result<ChatStream> {
-        let mut body = encode_request(&self.model, self.default_max_tokens, &request);
+        let mut body = self.body(&request);
         body["stream"] = json!(true);
         let resp = super::post_sse("anthropic", self.request(), &body).await?;
         Ok(sse_stream(resp, AnthropicStreamDecoder::new(&self.model)))
     }
 }
 
+/// Message Batches body: one entry per request, `custom_id` = `r<index>`.
+fn encode_batch(a: &Anthropic, requests: &[ChatRequest]) -> Value {
+    let reqs: Vec<Value> = requests
+        .iter()
+        .enumerate()
+        .map(|(i, r)| json!({"custom_id": format!("r{i}"), "params": a.body(r)}))
+        .collect();
+    json!({ "requests": reqs })
+}
+
+fn decode_batch_status(v: &Value) -> Result<crate::batch::BatchStatus> {
+    let id = v["id"]
+        .as_str()
+        .ok_or_else(|| Error::InvalidResponse("batch without id".into()))?;
+    let n = |k: &str| v["request_counts"][k].as_u64().unwrap_or(0);
+    Ok(crate::batch::BatchStatus {
+        id: id.to_string(),
+        ended: v["processing_status"] == "ended",
+        processing: n("processing"),
+        succeeded: n("succeeded"),
+        errored: n("errored") + n("canceled") + n("expired"),
+    })
+}
+
+/// Results file (JSON lines) → results in submission order.
+fn decode_batch_results(model: &str, jsonl: &str) -> Result<Vec<Result<ChatResponse>>> {
+    let mut out: Vec<(usize, Result<ChatResponse>)> = Vec::new();
+    for line in jsonl.lines().filter(|l| !l.trim().is_empty()) {
+        let v: Value = serde_json::from_str(line)?;
+        let idx = crate::batch::index_of(v["custom_id"].as_str().unwrap_or_default())?;
+        let r = &v["result"];
+        let res = match r["type"].as_str() {
+            Some("succeeded") => decode_response(model, &r["message"]),
+            Some("errored") => Err(Error::Provider {
+                provider: "anthropic".into(),
+                status: 400,
+                body: r["error"].to_string(),
+            }),
+            Some(other) => Err(Error::Other(format!("batch request {other}"))),
+            None => Err(Error::InvalidResponse(format!(
+                "batch result without type: {line}"
+            ))),
+        };
+        out.push((idx, res));
+    }
+    out.sort_by_key(|(i, _)| *i);
+    Ok(out.into_iter().map(|(_, r)| r).collect())
+}
+
+#[async_trait]
+impl crate::batch::BatchModel for Anthropic {
+    async fn submit_batch(&self, requests: Vec<ChatRequest>) -> Result<String> {
+        let body = encode_batch(self, &requests);
+        let req = self
+            .client
+            .post(format!("{}/messages/batches", self.base_url))
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", API_VERSION);
+        let v = super::post_json("anthropic", req, &body).await?;
+        Ok(decode_batch_status(&v)?.id)
+    }
+
+    async fn batch_status(&self, id: &str) -> Result<crate::batch::BatchStatus> {
+        let resp = self
+            .get(&format!("{}/messages/batches/{id}", self.base_url))
+            .send()
+            .await?
+            .error_for_status()?;
+        decode_batch_status(&resp.json().await?)
+    }
+
+    async fn batch_results(&self, id: &str) -> Result<Vec<Result<ChatResponse>>> {
+        let text = self
+            .get(&format!("{}/messages/batches/{id}/results", self.base_url))
+            .send()
+            .await?
+            .error_for_status()?
+            .text()
+            .await?;
+        decode_batch_results(&self.model, &text)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tool(name: &str) -> crate::ToolSpec {
+        crate::ToolSpec {
+            name: name.into(),
+            description: "d".into(),
+            parameters: json!({"type": "object"}),
+        }
+    }
+
+    #[test]
+    fn prompt_caching_places_breakpoints() {
+        let req = ChatRequest::new(vec![Message::system("long rules"), Message::user("hi")])
+            .with_tools(vec![tool("a"), tool("b")]);
+        let off = Anthropic::new("k", "claude-sonnet-4-5").body(&req);
+        assert_eq!(off["system"], "long rules");
+        assert!(off.get("cache_control").is_none());
+
+        let on = Anthropic::new("k", "claude-sonnet-4-5")
+            .with_prompt_caching(PromptCaching::agent())
+            .body(&req);
+        assert_eq!(
+            on["system"],
+            json!([{"type": "text", "text": "long rules", "cache_control": {"type": "ephemeral"}}])
+        );
+        assert_eq!(on["cache_control"], json!({"type": "ephemeral"}));
+        assert!(on["tools"][1].get("cache_control").is_none());
+
+        // No system prompt: the last tool carries the breakpoint; 1h TTL everywhere.
+        let req =
+            ChatRequest::new(vec![Message::user("hi")]).with_tools(vec![tool("a"), tool("b")]);
+        let sys = Anthropic::new("k", "m")
+            .with_prompt_caching(PromptCaching::system_only().with_ttl(CacheTtl::OneHour))
+            .body(&req);
+        assert_eq!(
+            sys["tools"][1]["cache_control"],
+            json!({"type": "ephemeral", "ttl": "1h"})
+        );
+        assert!(sys.get("cache_control").is_none());
+    }
+
+    #[test]
+    fn batch_round_trip_encoding() {
+        let a = Anthropic::new("k", "claude-haiku-5-5")
+            .with_prompt_caching(PromptCaching::system_only());
+        let reqs = vec![
+            ChatRequest::new(vec![Message::system("s"), Message::user("one")]),
+            ChatRequest::new(vec![Message::user("two")]),
+        ];
+        let body = encode_batch(&a, &reqs);
+        assert_eq!(body["requests"][0]["custom_id"], "r0");
+        assert_eq!(
+            body["requests"][1]["params"]["messages"][0]["content"][0]["text"],
+            "two"
+        );
+        assert_eq!(
+            body["requests"][0]["params"]["system"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+
+        let st = decode_batch_status(&json!({
+            "id": "msgbatch_1", "processing_status": "in_progress",
+            "request_counts": {"processing": 1, "succeeded": 1, "errored": 0, "canceled": 0, "expired": 0}
+        }))
+        .unwrap();
+        assert!(!st.ended);
+        assert_eq!((st.processing, st.succeeded), (1, 1));
+
+        let msg = |t: &str| {
+            json!({"id": "m", "type": "message", "role": "assistant", "model": "claude-haiku-5-5",
+            "content": [{"type": "text", "text": t}], "stop_reason": "end_turn",
+            "usage": {"input_tokens": 3, "output_tokens": 1}})
+        };
+        let jsonl = [
+            json!({"custom_id": "r1", "result": {"type": "errored", "error": {"type": "invalid_request_error"}}}),
+            json!({"custom_id": "r0", "result": {"type": "succeeded", "message": msg("first")}}),
+            json!({"custom_id": "r2", "result": {"type": "expired"}}),
+        ]
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+        let out = decode_batch_results("claude-haiku-5-5", &jsonl).unwrap();
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].as_ref().unwrap().message.content, "first");
+        assert!(matches!(out[1], Err(Error::Provider { status: 400, .. })));
+        assert!(out[2].as_ref().unwrap_err().to_string().contains("expired"));
+    }
 
     #[test]
     fn system_hoisted_and_tool_results_merged() {

@@ -5,7 +5,7 @@ pub mod presets;
 
 use std::{sync::OnceLock, time::Duration};
 
-pub use anthropic::Anthropic;
+pub use anthropic::{Anthropic, CacheTtl, PromptCaching};
 pub use gemini::Gemini;
 pub use openai::OpenAiCompat;
 pub use presets::{
