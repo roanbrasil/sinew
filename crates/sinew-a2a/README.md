@@ -76,6 +76,8 @@ with `--ollama`, or with `--model provider:model`.
 
 More detail is in [docs/a2a.md](../../docs/a2a.md).
 
+How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
+
 ## License
 
 MIT OR Apache-2.0.

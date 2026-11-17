@@ -36,6 +36,8 @@ ScopeClient::new("http://127.0.0.1:7878").upload_experiment(&ds, &report).await?
 
 Upload datasets and reports to [`sinew-scope`](../sinew-scope) with `ScopeClient` to compare experiments in the browser. See the [evaluation guide](../../docs/evaluation.md).
 
+How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](https://github.com/roanbrasil/sinew/blob/main/LICENSE-APACHE) or [MIT license](https://github.com/roanbrasil/sinew/blob/main/LICENSE-MIT) at your option.

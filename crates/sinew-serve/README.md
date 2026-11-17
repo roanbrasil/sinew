@@ -88,6 +88,8 @@ shared 8-core machine under heavy load, so the tails are noisy):
 The server adds a fraction of a millisecond per request, well below the
 time-to-first-token of any real model.
 
+How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
+
 ## License
 
 MIT OR Apache-2.0

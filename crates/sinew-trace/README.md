@@ -23,6 +23,8 @@ Part of [Sinew](https://github.com/roanbrasil/sinew): LLM chains, agent graphs, 
 |---|---|
 | `http` | `HttpSink`, `HttpSinkConfig` |
 
+How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](https://github.com/roanbrasil/sinew/blob/main/LICENSE-APACHE) or [MIT license](https://github.com/roanbrasil/sinew/blob/main/LICENSE-MIT) at your option.

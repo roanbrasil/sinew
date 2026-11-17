@@ -106,6 +106,8 @@ match agent.run("t1", "Delete the build folder").await? {
 See [docs/harness.md](../../docs/harness.md) for the design and every option,
 and `samples/19-harness` for a runnable example.
 
+How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
+
 ## License
 
 MIT OR Apache-2.0
