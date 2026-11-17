@@ -272,7 +272,7 @@ axum::serve(tokio::net::TcpListener::bind("0.0.0.0:8080").await?, app).await?;
 | `stateless()` | No sessions, so any replica behind a load balancer can answer any request |
 | `GET /mcp` | With `Mcp-Session-Id` and `Accept: text/event-stream`: the session's SSE stream for server notifications (resource updates for the session's subscriptions, list changes), with keep-alive comments. One stream per session; a new `GET` replaces the previous one. Notifications sent while no stream is open are dropped. `400` without a session, `404` for an unknown one, `406` without `text/event-stream`, `405` in stateless mode |
 | `DELETE /mcp` | Ends the session, its subscriptions and its stream |
-| Auth | `with_bearer_token` (repeatable, for rotation; constant-time compare, `401` + `WWW-Authenticate`) |
+| Auth | `with_bearer_token` (repeatable, for rotation; constant-time compare, `401` + `WWW-Authenticate`), or OAuth 2.1 with `with_oauth` ([below](#oauth-21-public-mcp-servers)) |
 | Origin | `with_allowed_origins([...])` rejects browser requests from other origins (`403`), against DNS rebinding |
 | Version | An unsupported `MCP-Protocol-Version` header gets `400` |
 | `GET /health` | Unauthenticated, for probes |
@@ -288,6 +288,148 @@ let agent = react_agent(model, client.toolbox().await?)?; // remote tools, local
 `connect_http_with_headers` adds any other header (API keys, tenant ids, trace context). Claude Code
 can use the same service: `claude mcp add --transport http orders http://127.0.0.1:8080/mcp --header "Authorization: Bearer <token>"`.
 See [sample 22](../samples/22-mcp-microservice/src/main.rs).
+
+## OAuth 2.1 (public MCP servers)
+
+Static bearer tokens are fine between services inside a cluster. An MCP server that users reach from
+their own clients needs the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization):
+the server is an OAuth 2.1 resource server, an identity provider (Keycloak, Auth0, Entra ID, Okta, ...)
+issues the tokens, and clients discover everything from the server's `401`. The `oauth-server` and
+`oauth-client` features (both: `oauth`; umbrella: `mcp-oauth`) implement the two sides.
+
+### Server: `McpHttpConfig::with_oauth`
+
+```rust
+use sinew_mcp::{oauth::OAuthConfig, McpHttpConfig, McpServer};
+
+let oauth = OAuthConfig::new(
+    "https://mcp.example.com/mcp",               // resource: the URL clients use; tokens need it in `aud`
+    "https://auth.example.com/realms/mcp",       // issuer: tokens need it in `iss`
+)
+.with_scopes_supported(["mcp:tools", "mcp:admin"])
+.with_required_scopes(["mcp:tools"])             // every request
+.with_tool_scopes("delete_order", ["mcp:admin"]); // tools/call of this tool only
+
+let mcp = McpServer::new("orders", "1.0.0")
+    .with_tools(tools)
+    .http_router(McpHttpConfig::default().with_oauth(oauth).with_allowed_origins(["https://app.example.com"]));
+```
+
+| Behavior | Details |
+|---|---|
+| Metadata | `GET /.well-known/oauth-protected-resource/mcp` and `GET /.well-known/oauth-protected-resource` serve the RFC 9728 document: `resource`, `authorization_servers` (default: the issuer), `scopes_supported`, `bearer_methods_supported: ["header"]`. Unauthenticated |
+| No token | `401` with `WWW-Authenticate: Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"` |
+| Invalid token | `401` with `error="invalid_token"` and a short `error_description` (`token expired`, `wrong audience`, ...). The token itself is never echoed or logged |
+| Missing scope | `403` with `error="insufficient_scope"` and `scope="..."` listing what the request needs. Required scopes apply to every request; tool scopes to `tools/call` of that tool (also inside a batch). Listing tools is not restricted |
+| Keys unavailable | `503` when the JWKS cannot be fetched and nothing is cached |
+| Static tokens | `with_bearer_token` is ignored on an OAuth endpoint: the specification forbids accepting tokens not issued for the resource |
+
+Token validation (`oauth::JwtValidator`, usable on its own for other routes):
+
+- Signature with a key from the issuer's JWKS, selected by `kid`. RS256/384/512, PS256/384/512, ES256/384 and
+  EdDSA are accepted by default (`with_algorithms` narrows the list). `alg: none` and HMAC algorithms are always
+  refused, and the key type, curve and the JWK's `alg` must match the header.
+- `iss` equal to the issuer; `aud` (string or array) containing the resource URL, or an extra value from
+  `with_audience` for providers that cannot put the resource URL there.
+- `exp` required and in the future, `nbf` (when present) in the past, with 60 seconds of leeway
+  (`with_leeway`). Date claims that are not numbers are rejected rather than skipped.
+- The JWKS comes from `with_jwks_uri`, or from the `jwks_uri` in the issuer's metadata (RFC 8414
+  `/.well-known/oauth-authorization-server`, then OpenID Connect discovery). It is cached for an hour
+  (`with_jwks_cache_ttl`) and fetched again when a token names an unknown `kid`, at most once per 30 seconds
+  (`with_jwks_refresh_interval`), so key rotation needs no restart and forged `kid`s cannot flood the provider.
+- Issuer and JWKS URLs must be HTTPS except on loopback hosts; `allow_insecure_http()` lifts that for a
+  development network.
+
+Validated claims are available as `AccessClaims` (`subject`, `client_id`, `scopes`, `expires_at`, raw `claims`)
+from `JwtValidator::validate`; tool handlers do not receive them yet.
+
+### Client: authorization code + PKCE
+
+```rust
+use std::sync::Arc;
+use sinew_mcp::{oauth::{InMemoryTokenStore, OAuthClient, OAuthClientConfig}, McpClient};
+
+let url = "https://mcp.example.com/mcp";
+let oauth = OAuthClient::discover(
+    url,
+    OAuthClientConfig::new("http://127.0.0.1:8765/callback") // HTTPS, or a loopback http URL
+        .with_client_name("orders agent")
+        .with_store(Arc::new(InMemoryTokenStore::new())),  // or your keychain-backed TokenStore
+)
+.await?;
+
+let (authorize_url, state) = oauth.begin()?;   // open authorize_url in the user's browser
+// ... your callback handler receives ?code=...&state=...
+oauth.complete(&code, &returned_state).await?; // or oauth.complete_redirect(&full_callback_url)
+
+let client = McpClient::connect_http_with_oauth(url, oauth.clone()).await?;
+```
+
+`discover` follows the specification's order: an unauthenticated request to the MCP server, the
+`resource_metadata` URL from its `401` (or the RFC 9728 well-known URL), a check that the metadata's
+`resource` covers the server URL, the authorization server's metadata (RFC 8414, then OpenID Connect discovery;
+its `issuer` must match), and the client registration: `with_client_id` (plus `with_client_secret` for a
+confidential client), else a registration kept in the `TokenStore`, else dynamic client registration
+(RFC 7591) as a public client. Scopes default to the challenge's `scope`, then the resource's
+`scopes_supported` (`with_scopes` overrides).
+
+`begin` returns the authorization URL and its `state`; the PKCE verifier (S256, 256 random bits) stays inside the
+client. The URL carries the `resource` parameter (RFC 8707) so the token is bound to this server, and the token
+requests send it too. `complete` accepts each `state` once, within ten minutes, comparing in constant time.
+
+`OAuthClient` is a `TokenProvider`. `connect_http_with_oauth` sends its token on every request, refreshes it when
+it expires within 30 seconds (`with_refresh_skew`), and after a `401` refreshes once and retries the request.
+Concurrent requests share one refresh. A rejected refresh token (`invalid_grant`) clears the stored tokens, so the
+application starts a new authorization. Implement `TokenProvider` yourself for other grants (client credentials,
+token exchange), and `TokenStore` to keep tokens and the registration outside process memory. `Debug` output of
+`TokenSet`, `ClientRegistration` and `Pkce` redacts secrets.
+
+### Example: Keycloak in docker compose
+
+A local identity provider for development. This configuration is not exercised in CI; command names follow
+Keycloak 26 and may differ in other versions.
+
+```yaml
+# compose.yaml
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: start-dev
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports: ["8080:8080"]
+```
+
+```bash
+docker compose up -d
+kc() { docker compose exec keycloak /opt/keycloak/bin/kcadm.sh "$@"; }
+kc config credentials --server http://localhost:8080 --realm master --user admin --password admin
+kc create realms -s realm=mcp -s enabled=true
+# A scope whose tokens carry the MCP server URL in `aud` (Keycloak does not derive `aud` from RFC 8707 `resource`).
+SCOPE=$(kc create client-scopes -r mcp -i -s name=mcp:tools -s protocol=openid-connect \
+  -s 'attributes."include.in.token.scope"=true' | tr -d '\r')
+kc create client-scopes/$SCOPE/protocol-mappers/models -r mcp -s name=mcp-audience \
+  -s protocol=openid-connect -s protocolMapper=oidc-audience-mapper \
+  -s 'config."included.custom.audience"=http://localhost:3000/mcp' -s 'config."access.token.claim"=true'
+kc update realms/mcp/default-default-client-scopes/$SCOPE
+kc create users -r mcp -s username=alice -s enabled=true
+kc set-password -r mcp --username alice --new-password alice
+```
+
+```rust
+// Server on http://localhost:3000
+let oauth = OAuthConfig::new("http://localhost:3000/mcp", "http://localhost:8080/realms/mcp")
+    .with_scopes_supported(["mcp:tools"])
+    .with_required_scopes(["mcp:tools"]);
+```
+
+Keycloak publishes OpenID Connect discovery at `/realms/mcp/.well-known/openid-configuration`, including
+`jwks_uri` and a `registration_endpoint`, so neither side needs more configuration. Anonymous dynamic
+registration is subject to the realm's client registration policies (Trusted Hosts, Allowed Client Scopes): allow
+your client's host there, or create a public client with PKCE (`S256`) and the loopback redirect URI and pass its id
+with `OAuthClientConfig::with_client_id`. Hosts other than `localhost` need HTTPS, or `allow_insecure_http()` on
+both sides for a private development network.
 
 ## The `sinew-mcp` trace server
 
@@ -368,7 +510,7 @@ SINEW_MODEL=qwen3:4b-instruct-2507-q4_K_M \
   cargo run -p sinew-mcp --example mcp_agent -- --ollama      # local Ollama
 cargo run -p sample-11-mcp                                    # tools, a resource template and a prompt over stdio
 cargo test -p sinew-mcp                                       # unit + stdio + in-process tests
-cargo test -p sinew-mcp --all-features                        # adds the Streamable HTTP and rag tests
+cargo test -p sinew-mcp --all-features                        # adds the Streamable HTTP, OAuth and rag tests
 ```
 
 `mcp_agent` runs both sides. It spawns itself with `--serve` as an MCP server, connects with `McpClient`,

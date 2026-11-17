@@ -188,6 +188,24 @@ impl McpClient {
         Ok(client)
     }
 
+    /// Connects to a Streamable HTTP endpoint with OAuth 2.1 (feature
+    /// `oauth-client`): every request carries `Authorization: Bearer` from
+    /// `tokens`, usually an [`OAuthClient`](crate::oauth::OAuthClient) that
+    /// finished its authorization flow. On a `401` the provider may refresh
+    /// the token, and the request is retried once.
+    #[cfg(feature = "oauth-client")]
+    pub async fn connect_http_with_oauth(
+        url: impl Into<String>,
+        tokens: impl crate::oauth::TokenProvider + 'static,
+    ) -> Result<Self> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let out = crate::http::HttpOut::new(url.into(), tx, Vec::new())
+            .with_token_provider(Arc::new(tokens));
+        let client = Self::new(Box::new(out), rx, None);
+        client.initialize().await?;
+        Ok(client)
+    }
+
     async fn start_streams<R, W>(reader: R, writer: W, child: Option<Child>) -> Result<Self>
     where
         R: AsyncRead + Send + Unpin + 'static,

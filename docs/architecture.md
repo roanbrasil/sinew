@@ -255,6 +255,7 @@ crate features they turn on:
 | `postgres` | `sinew-checkpoint` with `postgres` |
 | `mcp` | `sinew-mcp` (stdio) |
 | `mcp-http` | `mcp` + `sinew-mcp/http` + `sinew-mcp/http-server` (axum) |
+| `mcp-oauth` | `mcp-http` + `sinew-mcp/oauth` (OAuth 2.1: JWT validation with `jsonwebtoken`, PKCE client with `ring`) |
 | `eval` | `sinew-eval` |
 | `http-trace` | `sinew-trace/http` (`HttpSink`) |
 | `otlp` | `sinew-trace/otlp` (`OtlpSink`, JSON) |

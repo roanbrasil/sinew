@@ -36,6 +36,8 @@ pub(crate) struct HttpOut {
     incoming: mpsc::UnboundedSender<Value>,
     extra: Vec<(String, String)>,
     stream: tokio::sync::Mutex<GetStream>,
+    #[cfg(feature = "oauth-client")]
+    auth: Option<std::sync::Arc<dyn crate::oauth::TokenProvider>>,
 }
 
 impl HttpOut {
@@ -52,11 +54,55 @@ impl HttpOut {
             incoming,
             extra,
             stream: tokio::sync::Mutex::new(GetStream::Closed),
+            #[cfg(feature = "oauth-client")]
+            auth: None,
         }
+    }
+
+    /// Sends `Authorization: Bearer` from `provider` on every request.
+    #[cfg(feature = "oauth-client")]
+    pub(crate) fn with_token_provider(
+        mut self,
+        provider: std::sync::Arc<dyn crate::oauth::TokenProvider>,
+    ) -> Self {
+        self.auth = Some(provider);
+        self
+    }
+
+    /// Sends the request built by `build`. With a token provider, the
+    /// access token is attached, and a `401` gives the provider one chance
+    /// to replace the token before the request is retried.
+    async fn execute(
+        &self,
+        build: impl Fn() -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response> {
+        #[cfg(feature = "oauth-client")]
+        if let Some(auth) = &self.auth {
+            let token = auth.access_token().await?;
+            let resp = build().bearer_auth(&token).send().await?;
+            if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
+                return Ok(resp);
+            }
+            let challenge = resp
+                .headers()
+                .get(reqwest::header::WWW_AUTHENTICATE)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            if !auth.on_unauthorized(&token, challenge.as_deref()).await? {
+                return Ok(resp);
+            }
+            let token = auth.access_token().await?;
+            return Ok(build().bearer_auth(&token).send().await?);
+        }
+        Ok(build().send().await?)
     }
 
     fn with_headers(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         for (k, v) in &self.extra {
+            #[cfg(feature = "oauth-client")]
+            if self.auth.is_some() && k.eq_ignore_ascii_case("authorization") {
+                continue;
+            }
             req = req.header(k.as_str(), v.as_str());
         }
         if let Some(s) = self.session.lock().unwrap().clone() {
@@ -124,12 +170,15 @@ async fn read_stream(mut resp: reqwest::Response, incoming: mpsc::UnboundedSende
 #[async_trait]
 impl Outbound for HttpOut {
     async fn send(&self, msg: Value) -> Result<()> {
-        let req = self
-            .with_headers(self.http.post(&self.url))
-            .header(ACCEPT, "application/json, text/event-stream")
-            .header(CONTENT_TYPE, "application/json")
-            .body(serde_json::to_vec(&msg)?);
-        let resp = req.send().await?;
+        let body = serde_json::to_vec(&msg)?;
+        let resp = self
+            .execute(|| {
+                self.with_headers(self.http.post(&self.url))
+                    .header(ACCEPT, "application/json, text/event-stream")
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(body.clone())
+            })
+            .await?;
         if let Some(s) = resp
             .headers()
             .get(SESSION_HEADER)
@@ -181,9 +230,10 @@ impl Outbound for HttpOut {
             _ => {}
         }
         let resp = self
-            .with_headers(self.http.get(&self.url))
-            .header(ACCEPT, "text/event-stream")
-            .send()
+            .execute(|| {
+                self.with_headers(self.http.get(&self.url))
+                    .header(ACCEPT, "text/event-stream")
+            })
             .await?;
         let status = resp.status();
         if status == reqwest::StatusCode::METHOD_NOT_ALLOWED {
@@ -206,7 +256,9 @@ impl Outbound for HttpOut {
         }
         let has_session = self.session.lock().unwrap().is_some();
         if has_session {
-            let _ = self.with_headers(self.http.delete(&self.url)).send().await;
+            let _ = self
+                .execute(|| self.with_headers(self.http.delete(&self.url)))
+                .await;
         }
     }
 }

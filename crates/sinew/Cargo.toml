@@ -22,6 +22,8 @@ postgres = ["dep:sinew-checkpoint", "sinew-checkpoint/postgres"]
 mcp = ["dep:sinew-mcp"]
 # MCP over Streamable HTTP: client transport plus `McpServer::http_router` (axum) for microservices.
 mcp-http = ["mcp", "sinew-mcp/http", "sinew-mcp/http-server"]
+# OAuth 2.1 for MCP over HTTP: JWT validation on the server, authorization code + PKCE on the client.
+mcp-oauth = ["mcp-http", "sinew-mcp/oauth"]
 # Datasets and evaluations (`sinew::eval`).
 eval = ["dep:sinew-eval"]
 # `HttpSink`: ship traces to a `sinew-scope serve` instance.
@@ -47,7 +49,7 @@ sqlite-cache = ["sinew-core/sqlite-cache"]
 # Derive structured-output schemas from Rust types.
 schemars = ["sinew-core/schemars"]
 # Everything above except Postgres-backed features.
-full = ["sqlite", "mcp", "mcp-http", "eval", "http-trace", "otlp", "rag", "qdrant", "pdf", "a2a", "harness", "serve", "sqlite-cache", "schemars", "macros", "memory"]
+full = ["sqlite", "mcp", "mcp-http", "mcp-oauth", "eval", "http-trace", "otlp", "rag", "qdrant", "pdf", "a2a", "harness", "serve", "sqlite-cache", "schemars", "macros", "memory"]
 
 [dependencies]
 sinew-core.workspace = true

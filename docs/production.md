@@ -97,8 +97,16 @@ let app = sinew::serve::Server::builder()
 - SSE streams send keep-alive comments (`keep_alive`); set proxy idle timeouts above that interval.
 - On deploy, send SIGTERM and wait for the grace period; interrupted runs resume from their last checkpoint.
 
-MCP endpoints (`McpServer::http_router`): require a bearer token, set an `Origin` allow-list for anything a browser
-can reach, and use stateless mode behind a load balancer without sticky sessions ([MCP](mcp.md)).
+MCP endpoints (`McpServer::http_router`): set an `Origin` allow-list for anything a browser can reach, and use
+stateless mode behind a load balancer without sticky sessions ([MCP](mcp.md)). Choose the authentication by who
+calls the endpoint:
+
+- Services inside your network: a static bearer token (`with_bearer_token`, repeatable for rotation).
+- Users' MCP clients over the internet: OAuth 2.1 (`with_oauth`, feature `mcp-oauth`) with your identity provider
+  ([MCP: OAuth 2.1](mcp.md#oauth-21-public-mcp-servers)). Set the resource to the exact public URL clients use,
+  make the provider put it in `aud`, keep access tokens short-lived (minutes) with refresh-token rotation, require
+  scopes for tools with side effects (`with_tool_scopes`), and alert on `503` from the endpoint (JWKS unreachable).
+  Do not forward the client's token to other APIs; call those with their own credentials.
 
 ## 5. Observability
 
@@ -136,6 +144,7 @@ Copy into your PR template:
 - [ ] No agent holds both untrusted input and an exfiltration-capable tool
 - [ ] Shell / code tools run in a sandbox without unneeded credentials
 - [ ] Server behind TLS, API keys required, CORS and MCP origins restricted, health/ready probes wired
+- [ ] Public MCP endpoints use OAuth (`with_oauth`): audience = public URL, short-lived tokens, per-tool scopes
 - [ ] Graceful shutdown grace period ≥ typical run length
 - [ ] Traces exported with a redactor; retention set; alerts on latency, errors and cost
 - [ ] Provider keys from the secret manager, per environment, with spend limits

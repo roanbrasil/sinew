@@ -127,7 +127,7 @@ Sinew is built for low latency and high throughput:
 | `memory` | `sinew::memory`: long-term memory (extraction, dedup, recall) |
 | `serve` | `sinew::serve`: deployment server and client |
 | `a2a` | `sinew::a2a`: Agent2Agent protocol |
-| `mcp` / `mcp-http` | `sinew::mcp`: Model Context Protocol (stdio; `mcp-http` adds the HTTP client and server for microservices) |
+| `mcp` / `mcp-http` / `mcp-oauth` | `sinew::mcp`: Model Context Protocol (stdio; `mcp-http` adds the HTTP client and server for microservices; `mcp-oauth` adds OAuth 2.1 on both sides) |
 | `eval` | `sinew::eval`: datasets, evaluators, experiments, prompt hub client |
 | `http-trace` | `trace::HttpSink` for `sinew-scope serve` |
 | `otlp` / `otlp-proto` | `trace::OtlpSink` for any OpenTelemetry collector |
