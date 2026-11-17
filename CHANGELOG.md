@@ -24,6 +24,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- `OpenAiCompat::ollama` accepts an `OLLAMA_HOST` ending in `/v1` (it produced `/v1/v1`), like `from_spec("ollama:...")`.
 - `sinew-scope`: opening a database that needs schema migrations could panic in sqlx (`index out of bounds`) when a pooled connection had cached a statement prepared before the `ALTER TABLE`; migrations now run on a separate connection.
 
 ### Changed

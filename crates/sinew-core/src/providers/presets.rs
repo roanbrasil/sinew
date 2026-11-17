@@ -205,7 +205,7 @@ fn matches(name: &str, primary: &str, aliases: &[&str]) -> bool {
     primary == name || aliases.contains(&name)
 }
 
-fn local_url(host: String) -> String {
+pub(crate) fn local_url(host: String) -> String {
     let host = if host.starts_with("http") {
         host
     } else {
@@ -513,6 +513,19 @@ pub fn capabilities_for(provider: &str, model: &str) -> Option<Capabilities> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn local_urls_are_normalized() {
+        for h in [
+            "127.0.0.1:11434",
+            "http://127.0.0.1:11434",
+            "http://127.0.0.1:11434/",
+            "http://127.0.0.1:11434/v1",
+            "http://127.0.0.1:11434/v1/",
+        ] {
+            assert_eq!(local_url(h.to_string()), "http://127.0.0.1:11434/v1", "{h}");
+        }
+    }
+
     use super::*;
 
     #[test]
