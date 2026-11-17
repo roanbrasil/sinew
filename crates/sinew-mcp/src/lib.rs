@@ -3,10 +3,12 @@
 //! - **Client** ([`McpClient`]): connect to an MCP server over stdio (or
 //!   Streamable HTTP with the `http` feature), and use its tools as ordinary
 //!   Sinew [`Tool`](sinew_core::Tool)s, so `react_agent` calls them
-//!   transparently.
+//!   transparently. Read its resources, subscribe to changes, and load its
+//!   prompts as [`Message`](sinew_core::Message)s or
+//!   [`PromptTemplate`](sinew_core::PromptTemplate)s.
 //! - **Server** ([`McpServer`]): serve any [`ToolBox`](sinew_core::ToolBox),
-//!   and optionally an agent graph as a single tool ([`AgentTool`]), to MCP
-//!   clients such as Claude Code.
+//!   optionally an agent graph as a single tool ([`AgentTool`]), resources,
+//!   resource templates and prompts to MCP clients such as Claude Code.
 //! - **`sinew-mcp` binary**: an MCP server exposing a Sinew JSONL trace
 //!   file through `list_traces`, `get_trace` and `search_runs` ([`traces`]).
 //!
@@ -29,18 +31,20 @@
 //!
 //! The official Rust SDK (`rmcp`) covers the whole protocol (resources,
 //! prompts, sampling, elicitation, OAuth) and brings proc macros, `schemars`
-//! and a large dependency tree with it. Sinew only needs the tool surface:
-//! `initialize`, `tools/list`, `tools/call`, `ping` and cancellation, which is
-//! a few hundred lines of JSON-RPC over tokio. Writing it directly keeps
+//! and a large dependency tree with it. Sinew uses the server features
+//! (tools, resources, prompts), `ping`, cancellation and server
+//! notifications, which is JSON-RPC over tokio. Writing it directly keeps
 //! `sinew-mcp` free of new dependencies (everything it uses is already in the
-//! workspace), compiles in seconds, and lets the mapping to Sinew's `Tool`
-//! and `ToolBox` stay exact. If Sinew later needs resources or prompts, the
-//! [`protocol`] module is the single place to extend.
+//! workspace), compiles in seconds, and lets the mapping to Sinew's `Tool`,
+//! `ToolBox`, `Message` and `PromptTemplate` stay exact. The [`protocol`]
+//! module holds the message types.
 //!
 //! # Protocol notes
 //!
 //! - Speaks protocol version `2025-06-18` and accepts `2025-03-26` and
-//!   `2024-11-05` from peers (the tool messages are identical across them).
+//!   `2024-11-05` from peers (the messages used are compatible across them).
+//! - Resource reads for unknown URIs are `-32002` errors; unknown prompts and
+//!   missing required prompt arguments are `-32602`.
 //! - Stdio framing is newline-delimited JSON. Batches are rejected, as in
 //!   `2025-06-18`.
 //! - Tool failures are reported in-band (`isError: true`) so a model can see
@@ -58,6 +62,7 @@ pub mod error;
 mod http;
 #[cfg(feature = "http-server")]
 pub mod http_server;
+mod hub;
 pub mod protocol;
 pub mod server;
 pub mod traces;
@@ -67,5 +72,9 @@ pub use client::{McpClient, McpTool};
 pub use error::{McpError, Result};
 #[cfg(feature = "http-server")]
 pub use http_server::McpHttpConfig;
-pub use protocol::{CallToolResult, Content, InitializeResult, McpToolInfo};
-pub use server::McpServer;
+pub use protocol::{
+    CallToolResult, Content, GetPromptResult, InitializeResult, McpNotification, McpPrompt,
+    McpResource, McpResourceTemplate, McpToolInfo, PromptArgument, PromptMessage, PromptRole,
+    ResourceContents, RpcError, UriTemplate,
+};
+pub use server::{HandlerResult, McpServer, PromptRequest, ResourceRequest};

@@ -353,6 +353,7 @@ pub(crate) mod topk {
 
         /// Whether `score` would enter the current top k.
         #[inline]
+        #[cfg_attr(not(feature = "sqlite"), allow(dead_code))]
         pub fn accepts(&self, score: f32) -> bool {
             self.k > 0
                 && !score.is_nan()

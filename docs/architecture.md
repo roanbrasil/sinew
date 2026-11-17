@@ -249,7 +249,7 @@ crate features they turn on:
 | `http-trace` | `sinew-trace/http` (`HttpSink`) |
 | `otlp` | `sinew-trace/otlp` (`OtlpSink`, JSON) |
 | `otlp-proto` | `otlp` + `sinew-trace/otlp-proto` |
-| `rag` | `sinew-rag` with `sqlite` |
+| `rag` | `sinew-rag` with `sqlite`; with `mcp`, also `sinew-mcp/rag` (MCP resources as `Document`s) |
 | `pgvector` | `rag` + `sinew-rag/pgvector` |
 | `qdrant` | `rag` + `sinew-rag/qdrant` |
 | `pdf` | `rag` + `sinew-rag/pdf` (`pdf-extract`) |
