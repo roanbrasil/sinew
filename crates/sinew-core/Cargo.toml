@@ -39,9 +39,14 @@ sqlite-cache = ["dep:sqlx"]
 tokio = { workspace = true, features = ["test-util"] }
 tempfile.workspace = true
 trybuild = "1"
+criterion.workspace = true
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "context"
+harness = false
 
 [[test]]
 name = "tool_macro"

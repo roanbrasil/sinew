@@ -209,6 +209,10 @@ offload_preview, offload_dir }`.
   with its first `offload_preview` characters and the path, so the model can
   page through it with `read_file` or search it with `grep`.
 
+For other trimming, tool-result clearing, running summaries and semantic selection outside the harness
+(for example in a `ReactAgent`), see [Context engineering](context.md). Plugging a `ContextPolicy` into
+the harness is tracked in [#160](https://github.com/roanbrasil/sinew/issues/160).
+
 ## Budgets
 
 `Budget { max_steps, max_total_tokens, max_cost_usd, timeout }` applies per

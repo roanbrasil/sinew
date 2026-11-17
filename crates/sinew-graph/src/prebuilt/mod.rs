@@ -12,7 +12,8 @@ use std::{future::Future, sync::Arc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sinew_core::{
-    ChatModel, ChatRequest, Message, Role, StreamEvent, StructuredOutput, ToolBox, ToolSpec,
+    context::ContextPolicy, ChatModel, ChatRequest, Message, Role, StreamEvent, StructuredOutput,
+    ToolBox, ToolSpec,
 };
 use sinew_trace::{traced_chat, traced_chat_stream};
 
@@ -81,6 +82,8 @@ pub struct ReactAgent {
     handoffs: Vec<Handoff>,
     loop_guard: Option<LoopGuard>,
     unknown_outcome: crate::durable::UnknownOutcome,
+    context_policy: Option<ContextPolicy>,
+    persist_context: bool,
 }
 
 impl ReactAgent {
@@ -96,6 +99,8 @@ impl ReactAgent {
             handoffs: Vec::new(),
             loop_guard: None,
             unknown_outcome: crate::durable::UnknownOutcome::default(),
+            context_policy: None,
+            persist_context: false,
         }
     }
 
@@ -113,6 +118,48 @@ impl ReactAgent {
         f: impl Fn(&AgentState) -> Vec<Message> + Send + Sync + 'static,
     ) -> Self {
         self.pre_model_hook = Some(Arc::new(f));
+        self
+    }
+
+    /// Fits the messages sent to the model into a token budget before every
+    /// model call (after [`pre_model_hook`](Self::pre_model_hook), if any):
+    /// clearing old tool results, summarizing or trimming, as the policy
+    /// says. The [`system_prompt`](Self::system_prompt) is part of the
+    /// messages the policy sees (and always kept); it is added unless a
+    /// system message with the same text is already there. The budget is
+    /// reduced by the estimated size of the tool schemas.
+    ///
+    /// The state is not changed unless [`persist_context`](Self::persist_context)
+    /// is set, so checkpoints keep the full history. When the policy changes
+    /// the messages, a [`GraphEvent::Custom`](crate::GraphEvent::Custom) with
+    /// a `context_policy` field reports the token counts and strategies.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use sinew_core::context::ContextPolicy;
+    /// use sinew_core::{mock::ScriptedModel, ChatModel, ToolBox};
+    /// use sinew_graph::prebuilt::ReactAgent;
+    ///
+    /// let model: Arc<dyn ChatModel> = Arc::new(ScriptedModel::new([]));
+    /// let agent = ReactAgent::new(model.clone(), ToolBox::new())
+    ///     .context_policy(ContextPolicy::summarizing(16_000, model))
+    ///     .compile()
+    ///     .unwrap();
+    /// # let _ = agent;
+    /// ```
+    pub fn context_policy(mut self, policy: ContextPolicy) -> Self {
+        self.context_policy = Some(policy);
+        self
+    }
+
+    /// Whether the output of the [`context_policy`](Self::context_policy)
+    /// replaces [`AgentState::messages`] (default `false`). With `true` the
+    /// stored history shrinks too: a summary message stays in the state and
+    /// is updated on later turns, and dropped messages are gone from
+    /// checkpoints. With a [`pre_model_hook`](Self::pre_model_hook), its
+    /// output is stored as well.
+    pub fn persist_context(mut self, yes: bool) -> Self {
+        self.persist_context = yes;
         self
     }
 
@@ -180,6 +227,20 @@ impl ReactAgent {
         let model = self.model.clone();
         let system = self.system_prompt.clone();
         let hook = self.pre_model_hook.clone();
+        let policy = self.context_policy.clone();
+        let persist = self.persist_context;
+        // Room for what is added after the policy: system prompt and tools.
+        let reserved = policy.as_ref().map_or(0, |p| {
+            let c = p.token_counter();
+            specs
+                .iter()
+                .map(|t| {
+                    c.count_text(&t.name)
+                        + c.count_text(&t.description)
+                        + c.count_text(&t.parameters.to_string())
+                })
+                .sum()
+        });
         let max = self.max_iterations;
         // Supersteps per loop round: agent, [post_model_hook], tools.
         let cycle = if self.post_model_hook.is_some() { 3 } else { 2 };
@@ -187,16 +248,13 @@ impl ReactAgent {
 
         g.add_node_with_context("agent", move |mut s: AgentState, ctx| {
             let model = model.clone();
-            let mut messages = match &hook {
+            let messages = match &hook {
                 Some(h) => h(&s),
                 None => s.messages.clone(),
             };
-            if let Some(p) = &system {
-                if messages.first().is_none_or(|m| m.role != Role::System) {
-                    messages.insert(0, Message::system(p.clone()));
-                }
-            }
-            let req = ChatRequest::new(messages).with_tools(specs.clone());
+            let system = system.clone();
+            let specs = specs.clone();
+            let policy = policy.clone();
             // `ctx.step` restarts at 0 for every run (and every subgraph
             // invocation), so this counts this run's model calls.
             let exhausted = max.is_some_and(|max| ctx.step / cycle >= max);
@@ -205,6 +263,57 @@ impl ReactAgent {
                     s.messages.push(Message::assistant(MAX_ITERATIONS_REPLY));
                     return Ok(s);
                 }
+                let mut messages = messages;
+                match &policy {
+                    None => {
+                        if let Some(p) = &system {
+                            if messages.first().is_none_or(|m| m.role != Role::System) {
+                                messages.insert(0, Message::system(p.clone()));
+                            }
+                        }
+                    }
+                    Some(policy) => {
+                        // The prompt goes in before the policy runs, so it is
+                        // counted and kept like any system message. A summary
+                        // message may lead the history, so the prompt is
+                        // added unless it is already there.
+                        let added = match &system {
+                            Some(p)
+                                if !messages
+                                    .iter()
+                                    .any(|m| m.role == Role::System && m.content == *p) =>
+                            {
+                                messages.insert(0, Message::system(p.clone()));
+                                true
+                            }
+                            _ => false,
+                        };
+                        let report = policy.apply_with_report(messages, reserved).await?;
+                        if report.changed() {
+                            ctx.emit(json!({ "context_policy": {
+                                "tokens_before": report.tokens_before,
+                                "tokens_after": report.tokens_after,
+                                "budget": report.budget,
+                                "applied": report.applied,
+                            }}));
+                            if persist {
+                                let mut stored = report.messages.clone();
+                                if added {
+                                    let p = system.as_deref().unwrap_or_default();
+                                    if let Some(i) = stored
+                                        .iter()
+                                        .position(|m| m.role == Role::System && m.content == p)
+                                    {
+                                        stored.remove(i);
+                                    }
+                                }
+                                s.messages = stored;
+                            }
+                        }
+                        messages = report.messages;
+                    }
+                }
+                let req = ChatRequest::new(messages).with_tools(specs);
                 let resp = if ctx.is_streaming() {
                     traced_chat_stream(
                         model.as_ref(),
@@ -471,5 +580,100 @@ mod tests {
             json!({"a": 2, "b": 40})
         );
         assert_eq!(state.last().unwrap().content, "The answer is 42.");
+    }
+
+    fn long_history(turns: usize) -> Vec<Message> {
+        let mut msgs = Vec::new();
+        for i in 0..turns {
+            msgs.push(Message::user(format!(
+                "question {i}: {}",
+                "padding ".repeat(60)
+            )));
+            msgs.push(Message::assistant_with_tools(
+                "",
+                vec![ToolCall {
+                    id: format!("old{i}"),
+                    name: "add".into(),
+                    arguments: json!({}),
+                }],
+            ));
+            msgs.push(Message::tool_result(
+                format!("old{i}"),
+                "result ".repeat(200),
+            ));
+            msgs.push(Message::assistant(format!("answer {i}")));
+        }
+        msgs.push(Message::user("latest question"));
+        msgs
+    }
+
+    #[tokio::test]
+    async fn context_policy_shrinks_the_request_not_the_state() {
+        use sinew_core::context::{
+            check_tool_pairing, ContextPolicy, EstimateCounter, TokenCounter,
+        };
+        let model = Arc::new(ScriptedModel::new([Message::assistant("done")]));
+        let graph = ReactAgent::new(model.clone(), ToolBox::new())
+            .system_prompt("Be brief.")
+            .context_policy(ContextPolicy::trimming(1_500))
+            .compile()
+            .unwrap();
+        let input = long_history(40);
+        let out = graph.invoke(AgentState::new(input.clone())).await.unwrap();
+        assert_eq!(out.messages.len(), input.len() + 1);
+        assert_eq!(out.messages[..input.len()], input[..]);
+        let sent = &model.requests()[0].messages;
+        assert!(EstimateCounter.count_messages(sent) <= 1_500);
+        check_tool_pairing(sent).unwrap();
+        assert_eq!(sent[0].content, "Be brief.");
+        assert_eq!(sent.last().unwrap().content, "latest question");
+    }
+
+    #[tokio::test]
+    async fn persisted_context_keeps_a_running_summary() {
+        use sinew_core::context::{ContextPolicy, KeepRecent, Summarize, DEFAULT_SUMMARY_HEADER};
+        let summarizer = Arc::new(ScriptedModel::new([
+            Message::assistant("summary one"),
+            Message::assistant("summary two"),
+        ]));
+        let policy = ContextPolicy::new(2_000).then(
+            Summarize::new(summarizer.clone())
+                .keep_recent(KeepRecent::Messages(4))
+                .max_chunk_tokens(100_000),
+        );
+        let model = Arc::new(ScriptedModel::new([
+            Message::assistant("first"),
+            Message::assistant("second"),
+        ]));
+        let graph = ReactAgent::new(model.clone(), ToolBox::new())
+            .system_prompt("Be brief.")
+            .context_policy(policy)
+            .persist_context(true)
+            .compile()
+            .unwrap();
+        let out = graph
+            .invoke(AgentState::new(long_history(20)))
+            .await
+            .unwrap();
+        assert!(out.messages[0].content.starts_with(DEFAULT_SUMMARY_HEADER));
+        assert!(out.messages[0].content.ends_with("summary one"));
+        // The system prompt is sent but not stored.
+        assert!(out.messages.iter().all(|m| m.content != "Be brief."));
+        assert_eq!(model.requests()[0].messages[0].content, "Be brief.");
+
+        let mut next = out.messages;
+        next.extend(long_history(20));
+        let out = graph.invoke(AgentState::new(next)).await.unwrap();
+        let summaries: Vec<_> = out
+            .messages
+            .iter()
+            .filter(|m| m.content.starts_with(DEFAULT_SUMMARY_HEADER))
+            .collect();
+        assert_eq!(summaries.len(), 1);
+        assert!(summaries[0].content.ends_with("summary two"));
+        // The second summarizer call started from the first summary.
+        let input = &summarizer.requests()[1].messages[1].content;
+        assert!(input.contains("Current summary:\nsummary one"));
+        assert_eq!(model.requests()[1].messages[0].content, "Be brief.");
     }
 }
