@@ -52,10 +52,10 @@ sinew-core.workspace = true
 sinew-graph.workspace = true
 sinew-trace.workspace = true
 sinew-checkpoint = { workspace = true, optional = true, default-features = false }
-sinew-mcp = { path = "../sinew-mcp", version = "0.1.0", optional = true }
+sinew-mcp = { path = "../sinew-mcp", version = "0.1.1", optional = true }
 sinew-eval = { workspace = true, optional = true }
 sinew-rag = { workspace = true, optional = true }
-sinew-a2a = { path = "../sinew-a2a", version = "0.1.0", optional = true }
+sinew-a2a = { path = "../sinew-a2a", version = "0.1.1", optional = true }
 sinew-harness = { workspace = true, optional = true, default-features = false }
 sinew-serve = { workspace = true, optional = true, default-features = false }
 

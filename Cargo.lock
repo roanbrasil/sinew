@@ -2206,7 +2206,7 @@ checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
 name = "sinew"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures-util",
  "serde",
@@ -2226,7 +2226,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-a2a"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2243,7 +2243,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-checkpoint"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "serde",
@@ -2258,7 +2258,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -2277,7 +2277,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-eval"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "futures",
@@ -2293,7 +2293,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-graph"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "criterion",
@@ -2311,7 +2311,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-harness"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2331,7 +2331,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-macros"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2341,7 +2341,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2358,7 +2358,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-rag"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "criterion",
@@ -2380,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-scope"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2400,7 +2400,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-serve"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -2425,7 +2425,7 @@ dependencies = [
 
 [[package]]
 name = "sinew-trace"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "reqwest",
  "serde",
