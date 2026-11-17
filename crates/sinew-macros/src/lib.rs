@@ -300,3 +300,123 @@ fn expand(args: ToolArgs, mut func: ItemFn) -> syn::Result<TokenStream2> {
         };
     })
 }
+
+// ------------------------------------------------------------ derive(State)
+
+/// Derives `sinew_graph::Reduce` for a graph state struct. See
+/// `sinew_graph::Reduce` for the field strategies.
+#[proc_macro_derive(State, attributes(state))]
+pub fn derive_state(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as syn::DeriveInput);
+    expand_state(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+fn graph_path() -> syn::Result<TokenStream2> {
+    use proc_macro_crate::{crate_name, FoundCrate};
+    match crate_name("sinew-graph") {
+        Ok(FoundCrate::Itself) => return Ok(quote!(::sinew_graph)),
+        Ok(FoundCrate::Name(n)) => {
+            let id = format_ident!("{}", n);
+            return Ok(quote!(::#id));
+        }
+        Err(_) => {}
+    }
+    match crate_name("sinew") {
+        Ok(FoundCrate::Itself) => Ok(quote!(::sinew::graph)),
+        Ok(FoundCrate::Name(n)) => {
+            let id = format_ident!("{}", n);
+            Ok(quote!(::#id::graph))
+        }
+        Err(_) => Err(syn::Error::new(
+            Span::call_site(),
+            "#[derive(State)] needs `sinew` or `sinew-graph` (feature `macros`) as a dependency",
+        )),
+    }
+}
+
+enum Strategy {
+    Replace,
+    Overwrite,
+    Keep,
+    Append,
+    Add,
+    Merge,
+    Custom(Path),
+}
+
+fn field_strategy(attrs: &[Attribute]) -> syn::Result<Strategy> {
+    let mut out = None;
+    for a in attrs.iter().filter(|a| a.path().is_ident("state")) {
+        a.parse_nested_meta(|meta| {
+            let s = if meta.path.is_ident("replace") {
+                Strategy::Replace
+            } else if meta.path.is_ident("overwrite") {
+                Strategy::Overwrite
+            } else if meta.path.is_ident("keep") {
+                Strategy::Keep
+            } else if meta.path.is_ident("append") {
+                Strategy::Append
+            } else if meta.path.is_ident("add") {
+                Strategy::Add
+            } else if meta.path.is_ident("merge") {
+                Strategy::Merge
+            } else if meta.path.is_ident("reducer") {
+                let lit: LitStr = meta.value()?.parse()?;
+                Strategy::Custom(lit.parse()?)
+            } else {
+                return Err(meta.error(
+                    "unknown #[state] strategy; expected replace, overwrite, keep, append, add, \
+                     merge or reducer = \"path\"",
+                ));
+            };
+            if out.is_some() {
+                return Err(meta.error("only one #[state] strategy per field"));
+            }
+            out = Some(s);
+            Ok(())
+        })?;
+    }
+    Ok(out.unwrap_or(Strategy::Replace))
+}
+
+fn expand_state(input: syn::DeriveInput) -> syn::Result<TokenStream2> {
+    let graph = graph_path()?;
+    let name = &input.ident;
+    let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
+    let data = match &input.data {
+        syn::Data::Struct(d) => d,
+        _ => {
+            return Err(syn::Error::new(
+                name.span(),
+                "#[derive(State)] works on structs; wrap enums in a struct field",
+            ))
+        }
+    };
+    let mut merges = Vec::new();
+    for (i, f) in data.fields.iter().enumerate() {
+        let member: syn::Member = match &f.ident {
+            Some(id) => syn::Member::Named(id.clone()),
+            None => syn::Member::Unnamed(syn::Index::from(i)),
+        };
+        let h = quote!(#graph::__private::reduce);
+        let expr = match field_strategy(&f.attrs)? {
+            Strategy::Replace => quote!(#h::replace(&base.#member, acc.#member, branch.#member)),
+            Strategy::Overwrite => quote!(branch.#member),
+            Strategy::Keep => quote!(acc.#member),
+            Strategy::Append => quote!(#h::append(&base.#member, acc.#member, branch.#member)),
+            Strategy::Add => quote!(#h::add(&base.#member, acc.#member, branch.#member)),
+            Strategy::Merge => quote!(#h::merge(&base.#member, acc.#member, branch.#member)),
+            Strategy::Custom(p) => quote!(#p(&base.#member, acc.#member, branch.#member)),
+        };
+        merges.push(quote!(#member: #expr));
+    }
+    Ok(quote! {
+        impl #impl_g #graph::Reduce for #name #ty_g #where_g {
+            fn reduce(base: &Self, acc: Self, branch: Self) -> Self {
+                Self { #(#merges),* }
+            }
+        }
+    })
+}

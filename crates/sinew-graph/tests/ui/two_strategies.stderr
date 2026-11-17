@@ -1,0 +1,5 @@
+error: only one #[state] strategy per field
+ --> tests/ui/two_strategies.rs:2:25
+  |
+2 | struct S { #[state(add, append)] n: u32 }
+  |                         ^^^^^^

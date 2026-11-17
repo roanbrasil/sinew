@@ -1,0 +1,5 @@
+error: unknown #[state] strategy; expected replace, overwrite, keep, append, add, merge or reducer = "path"
+ --> tests/ui/unknown_strategy.rs:2:20
+  |
+2 | struct S { #[state(sum)] n: u32 }
+  |                    ^^^

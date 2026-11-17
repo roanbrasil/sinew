@@ -14,7 +14,7 @@ categories = ["api-bindings", "asynchronous", "science"]
 [features]
 default = ["macros"]
 # `#[sinew::tool]` and `tools!`: plain functions become tools (schemas via schemars).
-macros = ["sinew-core/macros"]
+macros = ["sinew-core/macros", "sinew-graph/macros"]
 # Durable checkpointers (`sinew::checkpoint`).
 sqlite = ["dep:sinew-checkpoint", "sinew-checkpoint/sqlite"]
 postgres = ["dep:sinew-checkpoint", "sinew-checkpoint/postgres"]
