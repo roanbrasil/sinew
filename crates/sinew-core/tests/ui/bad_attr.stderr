@@ -1,4 +1,4 @@
-error: unsupported #[tool] argument; expected `name`, `description` or `crate`
+error: unsupported #[tool] argument; expected `name`, `description`, `side_effects` or `crate`
  --> tests/ui/bad_attr.rs:2:20
   |
 2 | #[sinew_core::tool(title = "x")]

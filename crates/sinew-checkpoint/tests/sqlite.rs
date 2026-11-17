@@ -169,3 +169,32 @@ async fn migrates_tables_from_older_versions() {
     assert_eq!(store.get("old", "legacy-1").await.unwrap(), Some(old));
     common::namespaces_and_ids(&store).await;
 }
+
+#[tokio::test]
+async fn tool_ledger_round_trip_survives_reopen_and_thread_delete() {
+    use sinew_graph::ToolEntry;
+    let dir = tempfile::tempdir().unwrap();
+    let url = format!("sqlite://{}", dir.path().join("cp.db").display());
+    let cp = SqliteCheckpointer::connect(&url).await.unwrap();
+    assert!(cp.supports_tool_ledger());
+    assert_eq!(cp.get_tool_entry("t", "k").await.unwrap(), None);
+    let pending = ToolEntry::Pending {
+        name: "charge".into(),
+        arguments: serde_json::json!({"usd": 10}),
+        started_ms: 1,
+    };
+    cp.put_tool_entry("t", "k", &pending).await.unwrap();
+    assert_eq!(cp.get_tool_entry("t", "k").await.unwrap(), Some(pending));
+    let done = ToolEntry::Done {
+        content: "ok".into(),
+    };
+    cp.put_tool_entry("t", "k", &done).await.unwrap();
+    drop(cp);
+
+    // A new process opens the same database.
+    let cp = SqliteCheckpointer::connect(&url).await.unwrap();
+    assert_eq!(cp.get_tool_entry("t", "k").await.unwrap(), Some(done));
+    assert_eq!(cp.get_tool_entry("other", "k").await.unwrap(), None);
+    cp.delete_thread("t").await.unwrap();
+    assert_eq!(cp.get_tool_entry("t", "k").await.unwrap(), None);
+}

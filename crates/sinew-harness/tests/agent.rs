@@ -1048,3 +1048,71 @@ async fn loop_guard_stops_a_turn_whose_tools_keep_failing() {
     let state = agent.state("t").await.unwrap().unwrap();
     assert_eq!(tool_results(&state.messages).len(), 4);
 }
+
+#[tokio::test]
+async fn recover_after_a_crash_does_not_repeat_finished_tools() {
+    use std::sync::atomic::AtomicBool;
+    let sent = Arc::new(AtomicUsize::new(0));
+    let hang = Arc::new(AtomicBool::new(true));
+    let (s2, h2) = (sent.clone(), hang.clone());
+    let send = sinew_core::AsyncFnTool::new(
+        "send_email",
+        "send",
+        json!({"type": "object"}),
+        move |_: Value| {
+            let (sent, hang) = (s2.clone(), h2.clone());
+            async move {
+                sent.fetch_add(1, Ordering::SeqCst);
+                Ok(json!("sent"))
+            }
+            .then_hang(hang)
+        },
+    );
+    let model = Arc::new(ScriptedModel::new([
+        tool_msg(vec![
+            call("1", "send_email", json!({"to": "a"})),
+            call("2", "send_email", json!({"to": "b"})),
+        ]),
+        Message::assistant("Both sent."),
+    ]));
+    let agent = Agent::builder()
+        .model_arc(model)
+        .tool(send)
+        .build()
+        .unwrap();
+    // The first call finishes; the second hangs and the process "dies".
+    let r = tokio::time::timeout(Duration::from_millis(300), agent.run("t", "email a and b")).await;
+    assert!(r.is_err());
+    hang.store(false, Ordering::SeqCst);
+    let AgentOutcome::Completed(r) = agent.recover("t").await.unwrap() else {
+        panic!("expected completion")
+    };
+    assert_eq!(r.text, "Both sent.");
+    // a ran once (replayed from the ledger on recover); b hung before
+    // sending and ran again on recover (no side effects declared).
+    assert_eq!(sent.load(Ordering::SeqCst), 2);
+    let state = agent.state("t").await.unwrap().unwrap();
+    assert_eq!(tool_results(&state.messages), ["sent", "sent"]);
+}
+
+/// Hangs forever after the first completed call while `hang` is set.
+trait ThenHang: std::future::Future + Sized {
+    fn then_hang(
+        self,
+        hang: Arc<std::sync::atomic::AtomicBool>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Self::Output> + Send>>
+    where
+        Self: Send + 'static,
+        Self::Output: Send,
+    {
+        Box::pin(async move {
+            static CALLS: AtomicUsize = AtomicUsize::new(0);
+            let n = CALLS.fetch_add(1, Ordering::SeqCst);
+            if n == 1 && hang.load(Ordering::SeqCst) {
+                std::future::pending::<()>().await;
+            }
+            self.await
+        })
+    }
+}
+impl<F: std::future::Future> ThenHang for F {}

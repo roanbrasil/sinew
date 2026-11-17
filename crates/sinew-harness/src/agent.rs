@@ -8,6 +8,7 @@ use sinew_core::{
     providers::from_spec, ChatModel, ChatRequest, Message, Role, StreamEvent, StructuredOutput,
     Tool, ToolBox, ToolSpec,
 };
+use sinew_graph::durable::{durable_run, UnknownOutcome};
 use sinew_graph::prebuilt::{LoopAction, LoopGuard, LOOP_STOP_REPLY};
 use sinew_graph::{
     BoxError, Checkpointer, CompiledGraph, GraphEvent, MemoryCheckpointer, NodeContext, RunOutcome,
@@ -63,6 +64,7 @@ pub(crate) struct Config {
     offload_display: String,
     budget: Budget,
     loop_guard: Option<LoopGuard>,
+    unknown_outcome: UnknownOutcome,
     pricing: Option<Pricing>,
     guardrails: Vec<Arc<dyn Guardrail>>,
     output: Option<StructuredOutput>,
@@ -84,6 +86,7 @@ pub(crate) struct SubagentContext {
     offload: (PathBuf, String),
     budget: Budget,
     loop_guard: Option<LoopGuard>,
+    unknown_outcome: UnknownOutcome,
     pricing: Option<Pricing>,
     guardrails: Vec<Arc<dyn Guardrail>>,
     tracer: Option<Tracer>,
@@ -129,6 +132,7 @@ pub(crate) fn build_subagent(ctx: &SubagentContext, spec: &SubagentSpec) -> Resu
         offload: Some(ctx.offload.clone()),
         budget,
         loop_guard: ctx.loop_guard.clone(),
+        unknown_outcome: ctx.unknown_outcome,
         pricing: ctx.pricing,
         guardrails: ctx.guardrails.clone(),
         tracer: ctx.tracer.clone(),
@@ -190,6 +194,7 @@ pub struct AgentBuilder {
     offload: Option<(PathBuf, String)>,
     budget: Budget,
     loop_guard: Option<LoopGuard>,
+    unknown_outcome: UnknownOutcome,
     pricing: Option<Pricing>,
     guardrails: Vec<Arc<dyn Guardrail>>,
     project_instructions: bool,
@@ -233,6 +238,7 @@ impl AgentBuilder {
             offload: None,
             budget: Budget::default(),
             loop_guard: Some(LoopGuard::default()),
+            unknown_outcome: UnknownOutcome::Fail,
             pricing: None,
             guardrails: Vec::new(),
             project_instructions: false,
@@ -449,6 +455,18 @@ impl AgentBuilder {
     /// keep failing stops with [`StopReason::Guardrail`]. With
     /// [`LoopAction::Interrupt`] the repeated calls go to approval instead.
     /// Pass `None` to turn it off.
+    /// Tool calls are durable when the agent has a checkpointer with a tool
+    /// ledger (the default in-memory one, SQLite or Postgres): calls that
+    /// finished before a crash are not run again when the thread resumes.
+    /// This sets what happens to a side-effecting call (`Tool::side_effects`)
+    /// that started but has no recorded result (default `Fail`: the model is
+    /// told the outcome is unknown). `Interrupt` behaves like `Fail` here;
+    /// use approvals to have a human decide.
+    pub fn unknown_tool_outcome(mut self, policy: UnknownOutcome) -> Self {
+        self.unknown_outcome = policy;
+        self
+    }
+
     pub fn loop_guard(mut self, guard: impl Into<Option<LoopGuard>>) -> Self {
         self.loop_guard = guard.into();
         self
@@ -597,6 +615,7 @@ impl AgentBuilder {
                 offload: offload.clone(),
                 budget: self.budget.clone(),
                 loop_guard: self.loop_guard.clone(),
+                unknown_outcome: self.unknown_outcome,
                 pricing: self.pricing,
                 guardrails: self.guardrails.clone(),
                 tracer: self.tracer.clone(),
@@ -659,6 +678,7 @@ impl AgentBuilder {
             offload_display: offload.1,
             budget: self.budget.clone(),
             loop_guard: self.loop_guard.clone(),
+            unknown_outcome: self.unknown_outcome,
             pricing: self.pricing,
             guardrails: self.guardrails.clone(),
             output: self.output.clone(),
@@ -774,6 +794,14 @@ impl Agent {
             Prepared::State(s) => self.drive(thread_id, Some(*s)).await,
             Prepared::Blocked(r) => Ok(AgentOutcome::Completed(r)),
         }
+    }
+
+    /// Continues a thread from its last checkpoint after the process stopped
+    /// mid-turn (a crash, a deploy, a cancelled request). Tool calls that
+    /// finished before the stop are not run again; see
+    /// [`AgentBuilder::unknown_tool_outcome`] for calls that were running.
+    pub async fn recover(&self, thread_id: &str) -> Result<AgentOutcome> {
+        self.drive(thread_id, None).await
     }
 
     /// Answers the approval requests of a paused thread and continues it.
@@ -1361,6 +1389,12 @@ async fn decide(
 async fn tools_node(cfg: &Config, mut s: HarnessState, ctx: NodeContext) -> Result<HarnessState> {
     let pending = std::mem::take(&mut s.pending);
     let hctx = hook_ctx(cfg, &s, &ctx);
+    // Where these calls were requested, for durable ledger keys.
+    let position = s.messages.len().saturating_sub(1).to_string();
+    let unknown = match cfg.unknown_outcome {
+        UnknownOutcome::Interrupt => UnknownOutcome::Fail,
+        u => u,
+    };
 
     // `write_todos` updates the state directly, in order.
     let mut outputs: Vec<Option<String>> = vec![None; pending.len()];
@@ -1401,9 +1435,21 @@ async fn tools_node(cfg: &Config, mut s: HarnessState, ctx: NodeContext) -> Resu
     let runs = pending.iter().zip(&outputs).map(|(p, done)| {
         let ctx = &ctx;
         let hctx = &hctx;
+        let position = &position;
         async move {
             match done {
                 Some(out) => out.clone(),
+                None if p.decision == CallDecision::Allow => {
+                    let side_effects = cfg
+                        .tools
+                        .get(&p.call.name)
+                        .is_some_and(|t| t.side_effects());
+                    durable_run(ctx, position, &p.call, side_effects, unknown, || {
+                        run_tool(cfg, p, ctx, hctx)
+                    })
+                    .await
+                    .unwrap_or_else(|e| format!("error: {e}"))
+                }
                 None => run_tool(cfg, p, ctx, hctx).await,
             }
         }

@@ -11,6 +11,14 @@ use crate::{
 const SCHEMA_LOCK: i64 = 0x5_1E7E_C4EC;
 
 const SCHEMA: &[&str] = &[
+    // Durable tool calls (see `Checkpointer::get_tool_entry`).
+    "CREATE TABLE IF NOT EXISTS sinew_tool_ledger (
+        thread_id  TEXT        NOT NULL,
+        key        TEXT        NOT NULL,
+        entry      JSONB       NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (thread_id, key)
+    )",
     "CREATE TABLE IF NOT EXISTS sinew_checkpoints (
         id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
         thread_id  TEXT        NOT NULL,
@@ -230,6 +238,49 @@ async fn prune_thread(
 
 #[async_trait]
 impl Checkpointer for PostgresCheckpointer {
+    fn supports_tool_ledger(&self) -> bool {
+        true
+    }
+
+    async fn get_tool_entry(
+        &self,
+        thread_id: &str,
+        key: &str,
+    ) -> Result<Option<sinew_graph::ToolEntry>, String> {
+        let row =
+            sqlx::query("SELECT entry FROM sinew_tool_ledger WHERE thread_id = $1 AND key = $2")
+                .bind(thread_id)
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        row.map(|r| {
+            let v: serde_json::Value = r.try_get(0).map_err(|e| e.to_string())?;
+            serde_json::from_value(v).map_err(|e| e.to_string())
+        })
+        .transpose()
+    }
+
+    async fn put_tool_entry(
+        &self,
+        thread_id: &str,
+        key: &str,
+        entry: &sinew_graph::ToolEntry,
+    ) -> Result<(), String> {
+        let text = serde_json::to_string(entry).map_err(|e| e.to_string())?;
+        sqlx::query(
+            "INSERT INTO sinew_tool_ledger (thread_id, key, entry, updated_at) VALUES ($1, $2, $3::jsonb, now())
+             ON CONFLICT (thread_id, key) DO UPDATE SET entry = excluded.entry, updated_at = excluded.updated_at",
+        )
+        .bind(thread_id)
+        .bind(key)
+        .bind(text)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     async fn put(&self, checkpoint: Checkpoint) -> Result<(), String> {
         self.put_checkpoint(&checkpoint)
             .await
@@ -289,6 +340,10 @@ impl CheckpointStore for PostgresCheckpointer {
         let mut tx = self.pool.begin().await?;
         lock_thread(&mut tx, thread_id).await?;
         let res = sqlx::query("DELETE FROM sinew_checkpoints WHERE thread_id = $1")
+            .bind(thread_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM sinew_tool_ledger WHERE thread_id = $1")
             .bind(thread_id)
             .execute(&mut *tx)
             .await?;

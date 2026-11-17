@@ -38,6 +38,7 @@
 
 mod checkpoint;
 mod command;
+pub mod durable;
 mod events;
 mod graph;
 mod policy;
@@ -48,7 +49,7 @@ pub mod store;
 mod viz;
 
 pub use checkpoint::{
-    new_checkpoint_id, Checkpoint, Checkpointer, MemoryCheckpointer, PendingTask,
+    new_checkpoint_id, Checkpoint, Checkpointer, MemoryCheckpointer, PendingTask, ToolEntry,
 };
 pub use command::{
     Command, CommandGraph, Goto, GraphInterrupt, Interrupt, NodeTimeout, ParentCommand, Resume,

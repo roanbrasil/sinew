@@ -18,6 +18,41 @@ pub struct ToolSpec {
 pub trait Tool: Send + Sync {
     fn spec(&self) -> ToolSpec;
     async fn call(&self, arguments: Value) -> Result<Value>;
+
+    /// True when calling the tool changes something outside the program
+    /// (sends a message, charges a card, writes a record), so running it twice
+    /// is not safe. Durable runtimes then never repeat a call whose outcome
+    /// is unknown after a crash without a policy saying so. Default `false`.
+    fn side_effects(&self) -> bool {
+        false
+    }
+}
+
+tokio::task_local! {
+    static IDEMPOTENCY_KEY: String;
+}
+
+/// The idempotency key of the tool call being executed, when the runtime
+/// provides one (durable graph runs do). Stable across retries and resumes of
+/// the same call, so a tool can pass it to an external API (an
+/// `Idempotency-Key` header, a unique constraint) and let that system drop
+/// duplicates.
+///
+/// ```
+/// # async fn demo() {
+/// use sinew_core::tool::{idempotency_key, with_idempotency_key};
+/// assert_eq!(idempotency_key(), None);
+/// let k = with_idempotency_key("thread-1/tools/3/call_a".into(), async { idempotency_key() }).await;
+/// assert_eq!(k.as_deref(), Some("thread-1/tools/3/call_a"));
+/// # }
+/// ```
+pub fn idempotency_key() -> Option<String> {
+    IDEMPOTENCY_KEY.try_with(Clone::clone).ok()
+}
+
+/// Runs `f` with [`idempotency_key`] returning `key`.
+pub async fn with_idempotency_key<F: std::future::Future>(key: String, f: F) -> F::Output {
+    IDEMPOTENCY_KEY.scope(key, f).await
 }
 
 /// Wraps a synchronous closure as a [`Tool`].
@@ -220,6 +255,11 @@ impl ToolBox {
     /// Registers an already shared tool.
     pub fn register_arc(&mut self, tool: Arc<dyn Tool>) {
         self.tools.insert(tool.spec().name, tool);
+    }
+
+    /// The tool registered under `name`.
+    pub fn get(&self, name: &str) -> Option<&Arc<dyn Tool>> {
+        self.tools.get(name)
     }
 
     /// The registered tools, by name.
