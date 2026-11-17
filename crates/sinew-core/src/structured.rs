@@ -25,9 +25,7 @@
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
-use crate::{
-    ChatModel, ChatRequest, Error, Message, ResponseFormat, Result, Role, ToolChoice, ToolSpec,
-};
+use crate::{ChatModel, ChatRequest, Error, Message, ResponseFormat, Result, ToolChoice, ToolSpec};
 
 /// How the schema is presented to the model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -125,6 +123,28 @@ impl StructuredOutput {
         }
     }
 
+    /// Parses and validates one assistant message without calling a model:
+    /// the same extraction, schema check and deserialization as
+    /// [`generate`](Self::generate), but no retry. Useful to check a reply
+    /// produced elsewhere, for example in a
+    /// [`router::Validator`](crate::router::Validator).
+    ///
+    /// ```
+    /// use sinew_core::{Message, StructuredOutput};
+    ///
+    /// let so = StructuredOutput::new("n", serde_json::json!({
+    ///     "type": "object", "properties": {"n": {"type": "integer"}}, "required": ["n"]
+    /// }));
+    /// let v: serde_json::Value = so.parse_message(&Message::assistant("{\"n\": 3}")).unwrap();
+    /// assert_eq!(v["n"], 3);
+    /// assert!(so.parse_message::<serde_json::Value>(&Message::assistant("three")).is_err());
+    /// ```
+    pub fn parse_message<T: DeserializeOwned>(&self, message: &Message) -> Result<T> {
+        let (raw, _) = self.extract(message);
+        self.parse(&raw)
+            .map_err(|message| Error::Structured { message, raw })
+    }
+
     fn prepare(&self, mut req: ChatRequest) -> ChatRequest {
         match self.mode {
             StructuredMode::Tool => {
@@ -161,7 +181,6 @@ impl StructuredOutput {
 
     /// The raw JSON text and, for tool mode, the id of the call to answer.
     fn extract(&self, msg: &Message) -> (String, Option<String>) {
-        debug_assert_eq!(msg.role, Role::Assistant);
         if let Some(call) = msg
             .tool_calls
             .iter()
@@ -285,7 +304,7 @@ fn type_matches(t: &str, v: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{mock::ScriptedModel, ToolCall};
+    use crate::{mock::ScriptedModel, Role, ToolCall};
     use serde::Deserialize;
 
     #[derive(Debug, Deserialize, PartialEq)]

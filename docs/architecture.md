@@ -83,7 +83,7 @@ about graphs, and graphs carry an optional `Tracer`.
 
 | Crate | Owns | Depends on (Sinew crates) | Main entry points |
 |---|---|---|---|
-| `sinew-core` | `Message` / `ContentPart`, `ChatModel`, `ChatRequest` / `ChatResponse`, `StreamEvent` and the SSE parser, `Tool` / `ToolBox`, prompts, `Runnable` pipelines, output parsers, structured output, resilience wrappers (retry, fallback, rate limit, timeout, cache), pricing, providers, the shared HTTP client, `ScriptedModel`, `vcr` cassettes, `Error` | `sinew-macros` (optional, feature `macros`) | [crates/sinew-core/src/lib.rs](../crates/sinew-core/src/lib.rs), [providers/mod.rs](../crates/sinew-core/src/providers/mod.rs) |
+| `sinew-core` | `Message` / `ContentPart`, `ChatModel`, `ChatRequest` / `ChatResponse`, `StreamEvent` and the SSE parser, `Tool` / `ToolBox`, prompts, `Runnable` pipelines, output parsers, structured output, resilience wrappers (retry, fallback, rate limit, timeout, cache), the model `Router`, pricing, providers, the shared HTTP client, `ScriptedModel`, `vcr` cassettes, `Error` | `sinew-macros` (optional, feature `macros`) | [crates/sinew-core/src/lib.rs](../crates/sinew-core/src/lib.rs), [providers/mod.rs](../crates/sinew-core/src/providers/mod.rs) |
 | `sinew-macros` | `#[tool]` attribute | none | [crates/sinew-macros/src/lib.rs](../crates/sinew-macros/src/lib.rs) |
 | `sinew-trace` | `Run` / `RunKind` / `Tracer` / `RunHandle`, `TraceSink`, `Redactor`, `MemorySink`, `JsonlSink`, `HttpSink` (feature `http`), `OtlpSink` (features `otlp`, `otlp-proto`), `traced_chat` / `traced_chat_stream` / `traced_tool`, `cassette_from_runs` | `sinew-core` | [crates/sinew-trace/src/lib.rs](../crates/sinew-trace/src/lib.rs) |
 | `sinew-graph` | `StateGraph<S>`, `CompiledGraph<S>`, the Pregel loop, `Command` / interrupts, `Checkpointer` trait and `MemoryCheckpointer`, `Store` trait and `InMemoryStore`, stream modes and `GraphEvent`, policies, diagrams, prebuilt ReAct / supervisor / swarm agents, `GraphError` | `sinew-core`, `sinew-trace` | [crates/sinew-graph/src/lib.rs](../crates/sinew-graph/src/lib.rs), [pregel.rs](../crates/sinew-graph/src/pregel.rs) |
@@ -292,5 +292,5 @@ Other traits follow the same pattern: `Runnable` and `ResponseCache` (sinew-core
 ## Related guides
 
 [Streaming](streaming.md) · [Fan-out](fan-out.md) · [Checkpointing](checkpointing.md) ·
-[Store](store.md) · [Providers](providers.md) · [Resilience](resilience.md) ·
+[Store](store.md) · [Providers](providers.md) · [Resilience](resilience.md) · [Routing](routing.md) ·
 [Testing](testing.md) · [OpenTelemetry](otel.md) · [Scope](scope.md) · [ADRs](adr/README.md)

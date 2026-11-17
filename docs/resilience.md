@@ -26,6 +26,10 @@ Wrappers apply from the inside out. In the example:
 - The limiter paces requests.
 - The local model takes over only after the primary's retries are exhausted.
 
+To choose a different model per request (by prompt size, tools, images, tenant tier, a classifier, or a
+cheap-then-strong cascade) and skip models whose recent calls failed, see [Model routing](routing.md).
+`Router` is a `ChatModel` too, so these wrappers go on each route or around the router.
+
 ### Retry: `with_retry(RetryPolicy)`
 
 - Exponential backoff:
