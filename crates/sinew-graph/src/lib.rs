@@ -44,6 +44,7 @@ mod policy;
 pub mod prebuilt;
 mod pregel;
 pub mod store;
+mod viz;
 
 pub use checkpoint::{
     new_checkpoint_id, Checkpoint, Checkpointer, MemoryCheckpointer, PendingTask,
@@ -59,3 +60,4 @@ pub use graph::{
 };
 pub use policy::{CachePolicy, RetryPolicy};
 pub use store::{InMemoryStore, Store};
+pub use viz::{EdgeKind, GraphEdge, GraphNode, GraphView, NodeKind};
