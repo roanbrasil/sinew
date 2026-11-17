@@ -44,6 +44,7 @@ tower-http = { version = "0.7", features = ["cors"] }
 tokio-util = "0.7"
 bytes = "1"
 sinew-serve = { path = "crates/sinew-serve", version = "0.1.0", default-features = false }
+sinew-memory = { path = "crates/sinew-memory", version = "0.1.0", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

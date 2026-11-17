@@ -4,6 +4,9 @@ Checkpoints belong to one thread. A **store** holds what must outlive a
 thread: user preferences, facts learned in earlier conversations, shared
 notes. It plays the role of LangGraph's `BaseStore`.
 
+For extraction, deduplication and recall of user memories on top of a store,
+see [long-term memory](memory.md) (`sinew-memory`).
+
 Items are JSON values addressed by a hierarchical **namespace** and a
 **key**:
 

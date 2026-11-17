@@ -171,6 +171,11 @@ returns `Allow`, `Ask(reason)` or `Deny(reason)`. `after_tool` can rewrite
 the output. Hooks run in registration order; the most restrictive verdict
 of all hooks and the policy wins.
 
+`sinew_memory::MemoryHook` (crate `sinew-memory`, feature `harness`) is a
+ready-made hook for long-term memory: it recalls a user's memories into the
+system message before a turn and extracts new ones when the turn ends. See
+[long-term memory](memory.md#harness-hook).
+
 ## Permissions
 
 ```rust

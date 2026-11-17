@@ -1,0 +1,36 @@
+[package]
+name = "sinew-memory"
+description = "Long-term memory for Sinew agents: extract, deduplicate and recall facts across threads on top of a Store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["llm", "agents", "memory", "langgraph", "mem0"]
+categories = ["asynchronous", "science"]
+
+[features]
+default = []
+# `MemoryHook`: a `sinew-harness` hook that recalls before a turn and saves after it.
+harness = ["dep:sinew-harness"]
+
+[dependencies]
+sinew-core.workspace = true
+sinew-graph.workspace = true
+sinew-rag.workspace = true
+sinew-harness = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+tokio = { version = "1", default-features = false, features = ["rt", "sync"] }
+
+[dev-dependencies]
+tokio.workspace = true
+sinew-checkpoint = { workspace = true, features = ["sqlite"] }
+
+[lints]
+workspace = true
