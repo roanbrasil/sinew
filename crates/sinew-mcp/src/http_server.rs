@@ -9,8 +9,13 @@
 //!   requests must send it back (`400` without it, `404` once it expired).
 //!   [`McpHttpConfig::stateless`] turns sessions off for horizontally scaled
 //!   deployments behind a load balancer.
-//! - `DELETE` ends the session. `GET` answers `405`: this server never pushes
-//!   messages on its own, so it offers no standalone SSE stream.
+//! - `GET` (with the session id and `Accept: text/event-stream`) opens the
+//!   session's server-to-client SSE stream, which carries
+//!   `notifications/resources/updated` for the session's subscriptions and
+//!   the `list_changed` notifications. One stream per session; a new `GET`
+//!   replaces the old one. Notifications sent while no stream is open are
+//!   dropped. In stateless mode `GET` answers `405`.
+//! - `DELETE` ends the session (and closes its stream).
 //! - Optional bearer-token auth, an `Origin` allow-list (DNS-rebinding
 //!   protection) and an unauthenticated `GET /health`.
 //!
@@ -34,6 +39,7 @@
 
 use std::{
     collections::HashMap,
+    convert::Infallible,
     future::Future,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -43,7 +49,10 @@ use axum::{
     body::Bytes,
     extract::State,
     http::{header, HeaderMap, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
     routing::get,
     Router,
 };
@@ -130,17 +139,33 @@ struct Shared {
 }
 
 impl Shared {
+    /// Opens a session and registers it as a notification peer (without a
+    /// stream until the client sends `GET`).
     fn open_session(&self) -> String {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let mut s = self.sessions.lock().unwrap();
         let now = Instant::now();
-        s.retain(|_, seen| now.duration_since(*seen) < self.config.session_ttl);
+        let mut gone = Vec::new();
+        s.retain(|k, seen| {
+            let alive = now.duration_since(*seen) < self.config.session_ttl;
+            if !alive {
+                gone.push(k.clone());
+            }
+            alive
+        });
         if s.len() >= self.config.max_sessions {
             if let Some(oldest) = s.iter().min_by_key(|(_, t)| **t).map(|(k, _)| k.clone()) {
                 s.remove(&oldest);
+                gone.push(oldest);
             }
         }
         s.insert(id.clone(), now);
+        drop(s);
+        let hub = self.server.hub();
+        for g in gone {
+            hub.remove_peer(&g);
+        }
+        hub.add_peer(&id, None);
         id
     }
 
@@ -155,10 +180,19 @@ impl Shared {
             }
             Some(_) => {
                 s.remove(id);
+                drop(s);
+                self.server.hub().remove_peer(id);
                 false
             }
             None => false,
         }
+    }
+
+    /// Ends a session; false if it was unknown.
+    fn close_session(&self, id: &str) -> bool {
+        let existed = self.sessions.lock().unwrap().remove(id).is_some();
+        self.server.hub().remove_peer(id);
+        existed
     }
 }
 
@@ -271,9 +305,13 @@ async fn post(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: Bytes
     let initializing = messages.iter().any(|m| m["method"] == "initialize");
 
     let mut new_session = None;
+    // The session the messages belong to, used for resource subscriptions.
+    let mut peer = None;
     if !shared.config.stateless {
         if initializing {
-            new_session = Some(shared.open_session());
+            let id = shared.open_session();
+            peer = Some(id.clone());
+            new_session = Some(id);
         } else {
             match session_of(&headers) {
                 None => {
@@ -282,14 +320,14 @@ async fn post(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: Bytes
                 Some(id) if !shared.touch(id) => {
                     return rpc_error(StatusCode::NOT_FOUND, -32001, "session not found")
                 }
-                Some(_) => {}
+                Some(id) => peer = Some(id.to_string()),
             }
         }
     }
 
     let mut replies = Vec::new();
     for m in messages {
-        if let Some(r) = shared.server.handle_message(m).await {
+        if let Some(r) = shared.server.handle_message_from(peer.as_deref(), m).await {
             replies.push(r);
         }
     }
@@ -309,14 +347,52 @@ async fn post(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: Bytes
     resp
 }
 
+/// `GET`: the session's server-to-client SSE stream. Notifications for the
+/// session (resource updates, list changes) are sent here. A new `GET`
+/// replaces the previous stream of the same session.
 async fn get_endpoint(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
     if let Some(r) = guard(&shared, &headers) {
         return r;
     }
-    let mut r = StatusCode::METHOD_NOT_ALLOWED.into_response();
-    r.headers_mut()
-        .insert(header::ALLOW, HeaderValue::from_static("POST, DELETE"));
-    r
+    if shared.config.stateless {
+        // No sessions, so nothing to address notifications to.
+        let mut r = StatusCode::METHOD_NOT_ALLOWED.into_response();
+        r.headers_mut()
+            .insert(header::ALLOW, HeaderValue::from_static("POST"));
+        return r;
+    }
+    let accepts_sse = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|a| a.contains("text/event-stream") || a.contains("*/*"));
+    if !accepts_sse {
+        return rpc_error(
+            StatusCode::NOT_ACCEPTABLE,
+            -32600,
+            "GET must accept text/event-stream",
+        );
+    }
+    let id = match session_of(&headers) {
+        None => return rpc_error(StatusCode::BAD_REQUEST, -32600, "missing Mcp-Session-Id"),
+        Some(id) if !shared.touch(id) => {
+            return rpc_error(StatusCode::NOT_FOUND, -32001, "session not found")
+        }
+        Some(id) => id,
+    };
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+    if !shared.server.hub().attach(id, tx) {
+        return rpc_error(StatusCode::NOT_FOUND, -32001, "session not found");
+    }
+    // The stream ends when the session is closed, evicted or replaced (the
+    // sender is dropped), or when the client disconnects.
+    let events = futures_util::stream::unfold(rx, |mut rx| async move {
+        let msg = rx.recv().await?;
+        let event = Event::default().event("message").data(msg.to_string());
+        Some((Ok::<_, Infallible>(event), rx))
+    });
+    Sse::new(events)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 async fn delete(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Response {
@@ -327,9 +403,7 @@ async fn delete(State(shared): State<Arc<Shared>>, headers: HeaderMap) -> Respon
         return StatusCode::METHOD_NOT_ALLOWED.into_response();
     }
     match session_of(&headers) {
-        Some(id) if shared.sessions.lock().unwrap().remove(id).is_some() => {
-            StatusCode::OK.into_response()
-        }
+        Some(id) if shared.close_session(id) => StatusCode::OK.into_response(),
         Some(_) => StatusCode::NOT_FOUND.into_response(),
         None => StatusCode::BAD_REQUEST.into_response(),
     }

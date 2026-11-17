@@ -1,16 +1,19 @@
-//! JSON-RPC 2.0 framing and the subset of MCP message types Sinew uses,
-//! plus the mapping between MCP tool results and Sinew tool values.
+//! JSON-RPC 2.0 framing and the subset of MCP message types Sinew uses
+//! (tools, resources, prompts), plus the mapping between MCP results and
+//! Sinew values.
+
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use sinew_core::ToolSpec;
+use sinew_core::{ContentPart, Message, Role, ToolSpec};
 
 /// Protocol version this crate speaks by default.
 pub const LATEST_PROTOCOL_VERSION: &str = "2025-06-18";
 
-/// Every protocol version this crate accepts, newest first. The tool surface
-/// we use (`initialize`, `tools/list`, `tools/call`, `ping`) is unchanged
-/// across these revisions.
+/// Every protocol version this crate accepts, newest first. The messages we
+/// use (`initialize`, `ping`, tools, resources and prompts) are compatible
+/// across these revisions; fields added later (such as `title`) are optional.
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
 /// Standard JSON-RPC 2.0 error codes.
@@ -20,6 +23,8 @@ pub mod error_code {
     pub const METHOD_NOT_FOUND: i64 = -32601;
     pub const INVALID_PARAMS: i64 = -32602;
     pub const INTERNAL_ERROR: i64 = -32603;
+    /// MCP: `resources/read` (or `resources/subscribe`) for an unknown URI.
+    pub const RESOURCE_NOT_FOUND: i64 = -32002;
 }
 
 /// A JSON-RPC error object.
@@ -37,6 +42,26 @@ impl RpcError {
             code,
             message: message.into(),
             data: None,
+        }
+    }
+
+    /// `-32602`: the request parameters are invalid (missing prompt argument,
+    /// unknown prompt name, bad cursor).
+    pub fn invalid_params(message: impl Into<String>) -> Self {
+        Self::new(error_code::INVALID_PARAMS, message)
+    }
+
+    /// `-32603`: the handler failed.
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::new(error_code::INTERNAL_ERROR, message)
+    }
+
+    /// `-32002` with `data: {"uri": ...}`, the MCP error for an unknown resource.
+    pub fn resource_not_found(uri: &str) -> Self {
+        Self {
+            code: error_code::RESOURCE_NOT_FOUND,
+            message: format!("resource not found: {uri}"),
+            data: Some(json!({ "uri": uri })),
         }
     }
 }
@@ -415,9 +440,632 @@ impl CallToolResult {
     }
 }
 
+/// A resource as described by `resources/list`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpResource {
+    pub uri: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// Size of the raw content in bytes, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<Value>,
+}
+
+impl McpResource {
+    pub fn new(uri: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            uri: uri.into(),
+            name: name.into(),
+            title: None,
+            description: None,
+            mime_type: None,
+            size: None,
+            annotations: None,
+        }
+    }
+
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        self.mime_type = Some(mime_type.into());
+        self
+    }
+
+    pub fn with_size(mut self, size: u64) -> Self {
+        self.size = Some(size);
+        self
+    }
+}
+
+/// A parameterized resource as described by `resources/templates/list`.
+/// `uri_template` is an RFC 6570 URI template such as `notes://{title}`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpResourceTemplate {
+    pub uri_template: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<Value>,
+}
+
+impl McpResourceTemplate {
+    pub fn new(uri_template: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            uri_template: uri_template.into(),
+            name: name.into(),
+            title: None,
+            description: None,
+            mime_type: None,
+            annotations: None,
+        }
+    }
+
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        self.mime_type = Some(mime_type.into());
+        self
+    }
+}
+
+/// One item of a `resources/read` result: either `text` or `blob` (base64)
+/// is set.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceContents {
+    pub uri: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Base64-encoded binary content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blob: Option<String>,
+}
+
+impl ResourceContents {
+    /// Text contents.
+    pub fn text(uri: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            uri: uri.into(),
+            mime_type: None,
+            text: Some(text.into()),
+            blob: None,
+        }
+    }
+
+    /// Binary contents, already base64-encoded.
+    pub fn blob(
+        uri: impl Into<String>,
+        mime_type: impl Into<String>,
+        base64: impl Into<String>,
+    ) -> Self {
+        Self {
+            uri: uri.into(),
+            mime_type: Some(mime_type.into()),
+            text: None,
+            blob: Some(base64.into()),
+        }
+    }
+
+    /// Binary contents from raw bytes (encoded as base64).
+    pub fn blob_bytes(uri: impl Into<String>, mime_type: impl Into<String>, bytes: &[u8]) -> Self {
+        Self::blob(uri, mime_type, sinew_core::message::base64_encode(bytes))
+    }
+
+    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        self.mime_type = Some(mime_type.into());
+        self
+    }
+
+    /// Whether this is binary (`blob`) content.
+    pub fn is_blob(&self) -> bool {
+        self.text.is_none() && self.blob.is_some()
+    }
+
+    /// Converts text contents into a `sinew_rag` [`Document`](sinew_rag::Document)
+    /// whose id and `source` metadata are the URI, plus `mime_type` metadata
+    /// when known. Blob contents return `None`. Requires the `rag` feature.
+    #[cfg(feature = "rag")]
+    pub fn to_document(&self) -> Option<sinew_rag::Document> {
+        let text = self.text.as_ref()?;
+        let mut doc = sinew_rag::Document::new(text.clone())
+            .with_id(self.uri.clone())
+            .with_metadata("source", self.uri.clone());
+        if let Some(m) = &self.mime_type {
+            doc = doc.with_metadata("mime_type", m.clone());
+        }
+        Some(doc)
+    }
+}
+
+/// An argument a prompt accepts. Argument values are always strings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PromptArgument {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+}
+
+/// A prompt as described by `prompts/list`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct McpPrompt {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub arguments: Vec<PromptArgument>,
+}
+
+impl McpPrompt {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            title: None,
+            description: None,
+            arguments: Vec::new(),
+        }
+    }
+
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Adds an argument.
+    pub fn with_argument(
+        mut self,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        required: bool,
+    ) -> Self {
+        self.arguments.push(PromptArgument {
+            name: name.into(),
+            title: None,
+            description: Some(description.into()),
+            required,
+        });
+        self
+    }
+}
+
+/// The role of a prompt message. MCP prompts only carry user and assistant
+/// turns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PromptRole {
+    User,
+    Assistant,
+}
+
+impl From<PromptRole> for Role {
+    fn from(r: PromptRole) -> Self {
+        match r {
+            PromptRole::User => Role::User,
+            PromptRole::Assistant => Role::Assistant,
+        }
+    }
+}
+
+/// One message of a `prompts/get` result.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromptMessage {
+    pub role: PromptRole,
+    pub content: Content,
+}
+
+impl PromptMessage {
+    pub fn user(text: impl Into<String>) -> Self {
+        Self {
+            role: PromptRole::User,
+            content: Content::Text(text.into()),
+        }
+    }
+
+    pub fn assistant(text: impl Into<String>) -> Self {
+        Self {
+            role: PromptRole::Assistant,
+            content: Content::Text(text.into()),
+        }
+    }
+
+    /// The message as a Sinew [`Message`]. An image in a user message becomes
+    /// an image part; other content becomes text as in
+    /// [`Content::to_model_text`].
+    pub fn to_message(&self) -> Message {
+        match (self.role, &self.content) {
+            (PromptRole::User, Content::Image { mime_type, data }) => Message::user_with_parts(
+                "",
+                [ContentPart::image_base64(mime_type.clone(), data.clone())],
+            ),
+            (PromptRole::User, c) => Message::user(c.to_model_text()),
+            (PromptRole::Assistant, c) => Message::assistant(c.to_model_text()),
+        }
+    }
+}
+
+/// Result of `prompts/get`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GetPromptResult {
+    pub description: Option<String>,
+    pub messages: Vec<PromptMessage>,
+}
+
+impl GetPromptResult {
+    /// A result with the given messages.
+    pub fn new(messages: impl IntoIterator<Item = PromptMessage>) -> Self {
+        Self {
+            description: None,
+            messages: messages.into_iter().collect(),
+        }
+    }
+
+    /// A result with one user text message.
+    pub fn user(text: impl Into<String>) -> Self {
+        Self::new([PromptMessage::user(text)])
+    }
+
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Parses a `prompts/get` result.
+    pub fn from_json(v: &Value) -> Result<Self, String> {
+        let items = v
+            .get("messages")
+            .and_then(Value::as_array)
+            .ok_or("prompts/get result has no `messages`")?;
+        let messages = items
+            .iter()
+            .map(|m| {
+                let role = serde_json::from_value(m.get("role").cloned().unwrap_or_default())
+                    .map_err(|e| format!("bad prompt message role: {e}"))?;
+                let content = Content::from_json(m.get("content").unwrap_or(&Value::Null));
+                Ok(PromptMessage { role, content })
+            })
+            .collect::<Result<_, String>>()?;
+        Ok(Self {
+            description: v
+                .get("description")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            messages,
+        })
+    }
+
+    pub fn to_json(&self) -> Value {
+        let mut m = Map::new();
+        if let Some(d) = &self.description {
+            m.insert("description".into(), json!(d));
+        }
+        m.insert(
+            "messages".into(),
+            Value::Array(
+                self.messages
+                    .iter()
+                    .map(|p| json!({ "role": p.role, "content": p.content.to_json() }))
+                    .collect(),
+            ),
+        );
+        Value::Object(m)
+    }
+
+    /// The messages as Sinew [`Message`]s, ready for a chat model.
+    pub fn to_messages(&self) -> Vec<Message> {
+        self.messages
+            .iter()
+            .map(PromptMessage::to_message)
+            .collect()
+    }
+}
+
+/// A notification sent by the server, as delivered by
+/// [`McpClient::notifications`](crate::McpClient::notifications).
+#[derive(Debug, Clone, PartialEq)]
+pub enum McpNotification {
+    /// `notifications/resources/updated`: a subscribed resource changed.
+    ResourceUpdated { uri: String },
+    /// `notifications/resources/list_changed`.
+    ResourceListChanged,
+    /// `notifications/prompts/list_changed`.
+    PromptListChanged,
+    /// `notifications/tools/list_changed`.
+    ToolListChanged,
+    /// Any other notification (logging, progress, ...), kept raw.
+    Other { method: String, params: Value },
+}
+
+impl McpNotification {
+    /// Classifies a notification by method name.
+    pub fn from_message(method: &str, params: &Value) -> Self {
+        let other = || McpNotification::Other {
+            method: method.into(),
+            params: params.clone(),
+        };
+        match method {
+            "notifications/resources/updated" => match params.get("uri").and_then(Value::as_str) {
+                Some(uri) => McpNotification::ResourceUpdated { uri: uri.into() },
+                None => other(),
+            },
+            "notifications/resources/list_changed" => McpNotification::ResourceListChanged,
+            "notifications/prompts/list_changed" => McpNotification::PromptListChanged,
+            "notifications/tools/list_changed" => McpNotification::ToolListChanged,
+            _ => other(),
+        }
+    }
+}
+
+/// A matcher for the RFC 6570 URI templates resource templates use.
+///
+/// Supported expressions: `{name}` (one value without `/`, `?` or `#`),
+/// `{+name}` and `{#name}` (any characters, including `/`). Other operators
+/// (`{?x}`, `{/x}`, `{.x}`, ...) and multi-variable expressions are accepted
+/// but match one segment per variable name, without the operator prefix.
+/// Matched values are percent-decoded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UriTemplate {
+    template: String,
+    parts: Vec<TemplatePart>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TemplatePart {
+    Literal(String),
+    Var { name: String, greedy: bool },
+}
+
+impl UriTemplate {
+    /// Parses `template`. Fails on an unclosed `{` or an empty expression.
+    pub fn new(template: impl Into<String>) -> Result<Self, String> {
+        let template = template.into();
+        let mut parts = Vec::new();
+        let mut rest = template.as_str();
+        while let Some(open) = rest.find('{') {
+            if open > 0 {
+                parts.push(TemplatePart::Literal(rest[..open].to_string()));
+            }
+            let close = rest[open..]
+                .find('}')
+                .ok_or_else(|| format!("unclosed `{{` in URI template `{template}`"))?;
+            let expr = &rest[open + 1..open + close];
+            let (greedy, names) = match expr.chars().next() {
+                Some('+') | Some('#') => (true, &expr[1..]),
+                Some('?' | '&' | '/' | '.' | ';') => (false, &expr[1..]),
+                _ => (false, expr),
+            };
+            let names: Vec<&str> = names
+                .split(',')
+                .map(|n| n.trim().trim_end_matches('*'))
+                .filter(|n| !n.is_empty())
+                .collect();
+            if names.is_empty() {
+                return Err(format!("empty expression in URI template `{template}`"));
+            }
+            for (i, n) in names.iter().enumerate() {
+                if i > 0 {
+                    parts.push(TemplatePart::Literal(",".into()));
+                }
+                parts.push(TemplatePart::Var {
+                    name: (*n).to_string(),
+                    greedy,
+                });
+            }
+            rest = &rest[open + close + 1..];
+        }
+        if !rest.is_empty() {
+            parts.push(TemplatePart::Literal(rest.to_string()));
+        }
+        Ok(Self { template, parts })
+    }
+
+    /// The template string.
+    pub fn as_str(&self) -> &str {
+        &self.template
+    }
+
+    /// Variable names in order.
+    pub fn variables(&self) -> Vec<&str> {
+        self.parts
+            .iter()
+            .filter_map(|p| match p {
+                TemplatePart::Var { name, .. } => Some(name.as_str()),
+                TemplatePart::Literal(_) => None,
+            })
+            .collect()
+    }
+
+    /// Matches `uri` against the template and returns the variable values,
+    /// or `None` if it does not match.
+    pub fn matches(&self, uri: &str) -> Option<HashMap<String, String>> {
+        let mut vars = HashMap::new();
+        if match_parts(&self.parts, uri, &mut vars) {
+            Some(vars)
+        } else {
+            None
+        }
+    }
+
+    /// Expands the template with `vars` (values are inserted as given;
+    /// missing variables expand to an empty string).
+    pub fn expand(&self, vars: &HashMap<String, String>) -> String {
+        let mut out = String::new();
+        for p in &self.parts {
+            match p {
+                TemplatePart::Literal(l) => out.push_str(l),
+                TemplatePart::Var { name, .. } => {
+                    out.push_str(vars.get(name).map(String::as_str).unwrap_or(""))
+                }
+            }
+        }
+        out
+    }
+}
+
+fn match_parts(parts: &[TemplatePart], s: &str, vars: &mut HashMap<String, String>) -> bool {
+    match parts.split_first() {
+        None => s.is_empty(),
+        Some((TemplatePart::Literal(l), rest)) => s
+            .strip_prefix(l.as_str())
+            .is_some_and(|tail| match_parts(rest, tail, vars)),
+        Some((TemplatePart::Var { name, greedy }, rest)) => {
+            // Try the longest candidate first; backtrack on failure.
+            let limit = if *greedy {
+                s.len()
+            } else {
+                s.find(['/', '?', '#']).unwrap_or(s.len())
+            };
+            for end in (1..=limit).rev() {
+                if !s.is_char_boundary(end) {
+                    continue;
+                }
+                if match_parts(rest, &s[end..], vars) {
+                    vars.insert(name.clone(), percent_decode(&s[..end]));
+                    return true;
+                }
+            }
+            false
+        }
+    }
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+            if let Some(b) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uri_templates_match_and_expand() {
+        let t = UriTemplate::new("notes://{title}").unwrap();
+        assert_eq!(t.variables(), ["title"]);
+        assert_eq!(t.matches("notes://standup").unwrap()["title"], "standup");
+        assert_eq!(t.matches("notes://a%20b").unwrap()["title"], "a b");
+        assert!(t.matches("notes://a/b").is_none());
+        assert!(t.matches("notes://").is_none());
+        assert!(t.matches("other://x").is_none());
+        let g = UriTemplate::new("file:///{+path}").unwrap();
+        assert_eq!(g.matches("file:///a/b.txt").unwrap()["path"], "a/b.txt");
+        let two = UriTemplate::new("db://{table}/rows/{id}").unwrap();
+        let m = two.matches("db://users/rows/42").unwrap();
+        assert_eq!((m["table"].as_str(), m["id"].as_str()), ("users", "42"));
+        assert_eq!(two.expand(&m), "db://users/rows/42");
+        assert!(UriTemplate::new("x://{oops").is_err());
+        assert!(UriTemplate::new("x://{}").is_err());
+    }
+
+    #[test]
+    fn prompt_results_round_trip() {
+        let r = GetPromptResult::new([
+            PromptMessage::user("Review this"),
+            PromptMessage::assistant("Sure"),
+            PromptMessage {
+                role: PromptRole::User,
+                content: Content::Image {
+                    mime_type: "image/png".into(),
+                    data: "AAAA".into(),
+                },
+            },
+        ])
+        .with_description("code review");
+        let wire = r.to_json();
+        assert_eq!(wire["messages"][0]["role"], "user");
+        assert_eq!(wire["messages"][1]["content"]["text"], "Sure");
+        assert_eq!(GetPromptResult::from_json(&wire).unwrap(), r);
+        let msgs = r.to_messages();
+        assert_eq!(msgs[0].role, Role::User);
+        assert_eq!(msgs[1].role, Role::Assistant);
+        assert!(msgs[2].has_media());
+        assert!(GetPromptResult::from_json(&json!({})).is_err());
+        assert!(GetPromptResult::from_json(&json!({"messages": [{"role": "system"}]})).is_err());
+    }
+
+    #[test]
+    fn resource_types_use_camel_case() {
+        let r = McpResource::new("a://b", "b").with_mime_type("text/plain");
+        let wire = serde_json::to_value(&r).unwrap();
+        assert_eq!(
+            wire,
+            json!({"uri": "a://b", "name": "b", "mimeType": "text/plain"})
+        );
+        let t = serde_json::to_value(McpResourceTemplate::new("a://{x}", "x")).unwrap();
+        assert_eq!(t["uriTemplate"], "a://{x}");
+        let c = ResourceContents::blob_bytes("a://b", "application/octet-stream", b"hi");
+        assert_eq!(c.blob.as_deref(), Some("aGk="));
+        assert!(c.is_blob());
+        let p = serde_json::to_value(McpPrompt::new("p").with_argument("x", "d", true)).unwrap();
+        assert_eq!(
+            p["arguments"][0],
+            json!({"name": "x", "description": "d", "required": true})
+        );
+        assert_eq!(
+            McpNotification::from_message(
+                "notifications/resources/updated",
+                &json!({"uri": "a://b"})
+            ),
+            McpNotification::ResourceUpdated {
+                uri: "a://b".into()
+            }
+        );
+    }
 
     #[test]
     fn classifies_messages() {

@@ -2,6 +2,8 @@
 //! raw HTTP requests against a server on 127.0.0.1:0.
 #![cfg(all(feature = "http", feature = "http-server"))]
 
+mod common;
+
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -122,7 +124,26 @@ async fn sessions_are_issued_required_and_ended() {
         .unwrap();
     assert_eq!(n.status(), 202);
 
-    assert_eq!(http.get(&url).send().await.unwrap().status(), 405);
+    // GET opens the session's SSE stream: it needs a valid session and must
+    // accept text/event-stream.
+    let sse = |sid: &str, accept: &str| {
+        http.get(&url)
+            .header("mcp-session-id", sid)
+            .header("accept", accept)
+            .send()
+    };
+    assert_eq!(http.get(&url).send().await.unwrap().status(), 400);
+    assert_eq!(
+        sse("nope", "text/event-stream").await.unwrap().status(),
+        404
+    );
+    assert_eq!(sse(&sid, "application/json").await.unwrap().status(), 406);
+    let stream = sse(&sid, "text/event-stream").await.unwrap();
+    assert_eq!(stream.status(), 200);
+    assert!(stream.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/event-stream"));
     let del = http
         .delete(&url)
         .header("mcp-session-id", &sid)
@@ -245,4 +266,101 @@ async fn stateless_mode_needs_no_session_and_merges_into_an_app() {
         .await
         .unwrap();
     assert_eq!(batch.as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn stateless_mode_has_no_get_stream_and_accepts_subscriptions() {
+    let mcp = common::docs_server().http_router(McpHttpConfig::default().stateless());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, mcp).await });
+    let http = reqwest::Client::new();
+    let get = http
+        .get(&url)
+        .header("accept", "text/event-stream")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(get.status(), 405);
+    // The Sinew client treats a missing GET stream as "no notifications".
+    let client = McpClient::connect_http(&url).await.unwrap();
+    client.subscribe_resource("docs://readme").await.unwrap();
+    let license = client.read_resource("docs://license").await.unwrap();
+    assert_eq!(license[0].text.as_deref(), Some("MIT"));
+    client.close().await;
+}
+
+async fn spawn_docs() -> (String, McpServer, oneshot::Sender<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let (tx, rx) = oneshot::channel::<()>();
+    let server = common::docs_server();
+    let handle = server.clone();
+    tokio::spawn(
+        server.serve_http_with(listener, McpHttpConfig::default(), async {
+            let _ = rx.await;
+        }),
+    );
+    (url, handle, tx)
+}
+
+#[tokio::test]
+async fn every_resource_and_prompt_method_over_http() {
+    let (url, _handle, _stop) = spawn_docs().await;
+    let client = McpClient::connect_http(&url).await.unwrap();
+    common::exercise_resources_and_prompts(&client).await;
+    client.close().await;
+}
+
+#[tokio::test]
+async fn notifications_arrive_on_the_get_stream() {
+    let (url, handle, _stop) = spawn_docs().await;
+    let client = McpClient::connect_http(&url).await.unwrap();
+    common::exercise_notifications(&client, &handle).await;
+
+    // Closing the session (DELETE) drops its stream and subscriptions.
+    client.close().await;
+    assert_eq!(handle.notify_resource_list_changed(), 0);
+}
+
+#[tokio::test]
+async fn raw_http_subscription_and_sse_event() {
+    let (url, handle, _stop) = spawn_docs().await;
+    let http = reqwest::Client::new();
+    let r = init(&http, &url, None).await;
+    let sid = r.headers()["mcp-session-id"].to_str().unwrap().to_string();
+    let mut stream = http
+        .get(&url)
+        .header("mcp-session-id", &sid)
+        .header("accept", "text/event-stream")
+        .send()
+        .await
+        .unwrap();
+    let sub: Value = http
+        .post(&url)
+        .header("mcp-session-id", &sid)
+        .json(
+            &json!({"jsonrpc": "2.0", "id": 2, "method": "resources/subscribe",
+            "params": {"uri": "docs://pages/intro"}}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(sub["result"], json!({}));
+    assert_eq!(handle.notify_resource_updated("docs://pages/intro"), 1);
+    let mut body = String::new();
+    while !body.contains("\n\n") {
+        let chunk = tokio::time::timeout(Duration::from_secs(5), stream.chunk())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        body.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    assert!(body.contains("event: message"));
+    assert!(body.contains(r#""method":"notifications/resources/updated""#));
+    assert!(body.contains(r#""uri":"docs://pages/intro""#));
 }

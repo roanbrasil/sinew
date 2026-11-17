@@ -16,7 +16,9 @@ default = []
 # Streamable HTTP client transport (uses reqwest, already a dependency of sinew-core).
 http = ["dep:reqwest"]
 # Streamable HTTP server transport: `McpServer::http_router` / `serve_http` (axum).
-http-server = ["dep:axum", "dep:uuid", "tokio/net"]
+http-server = ["dep:axum", "dep:uuid", "dep:futures-util", "tokio/net"]
+# `ResourceContents::to_document` and `McpClient::read_resource_documents` (sinew-rag `Document`s).
+rag = ["dep:sinew-rag"]
 
 [[bin]]
 name = "sinew-mcp"
@@ -34,6 +36,8 @@ tokio = { workspace = true, features = ["process", "io-util", "io-std"] }
 reqwest = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+sinew-rag = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["net"] }

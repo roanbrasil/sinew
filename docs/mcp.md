@@ -5,8 +5,8 @@ It has three parts:
 
 | Part | What it does |
 |---|---|
-| `McpClient` | Connects to an MCP server and turns its tools into Sinew `Tool`s, so a `react_agent` can call them like any local tool. |
-| `McpServer` | Serves any Sinew `ToolBox`, and optionally an agent graph as one tool, to MCP clients such as Claude Code. |
+| `McpClient` | Connects to an MCP server and turns its tools into Sinew `Tool`s, so a `react_agent` can call them like any local tool. Reads resources, subscribes to their changes, and loads prompts as `Message`s or `PromptTemplate`s. |
+| `McpServer` | Serves any Sinew `ToolBox`, optionally an agent graph as one tool, and resources, resource templates and prompts, to MCP clients such as Claude Code. |
 | `sinew-mcp` binary | An MCP server that lets an assistant read your Sinew traces (`list_traces`, `get_trace`, `search_runs`). |
 
 The crate speaks protocol version `2025-06-18` and also accepts `2025-03-26` and `2024-11-05`.
@@ -83,6 +83,155 @@ McpServer::new("calculator", "0.1.0")
 `serve(reader, writer)` serves any byte streams. `handle_message(json)` answers a single message, if
 you want to plug in your own transport.
 
+## Resources and prompts
+
+Besides tools, an MCP server can offer **resources** (data a client reads by URI, such as files, records
+or documentation) and **prompts** (named message templates with arguments, which clients usually show as
+slash commands). `McpServer` serves both; `McpClient` reads them.
+
+### Serving resources
+
+```rust
+use sinew_mcp::{McpResource, McpResourceTemplate, McpServer, ResourceContents, ResourceRequest, RpcError};
+
+let server = McpServer::new("docs", "1.0")
+    // Fixed text.
+    .with_text_resource(
+        McpResource::new("docs://readme", "readme").with_mime_type("text/markdown"),
+        "# My service",
+    )
+    // Computed on every read; text or binary (`ResourceContents::blob_bytes`).
+    .with_resource(McpResource::new("docs://status", "status"), |r: ResourceRequest| async move {
+        Ok(vec![ResourceContents::text(r.uri, "all systems normal")])
+    })
+    // A URI template: any `docs://pages/<slug>` URI calls the handler with `params["slug"]`.
+    .with_resource_template(
+        McpResourceTemplate::new("docs://pages/{slug}", "page").with_mime_type("text/plain"),
+        |r: ResourceRequest| async move {
+            match load_page(&r.params["slug"]).await {
+                Some(text) => Ok(vec![ResourceContents::text(r.uri, text)]),
+                None => Err(RpcError::resource_not_found(&r.uri)),
+            }
+        },
+    );
+```
+
+| Method | Behavior |
+|---|---|
+| `resources/list` | Static resources. Paginated with `nextCursor` when `with_page_size(n)` is set; otherwise one page |
+| `resources/templates/list` | Resource templates, paginated the same way |
+| `resources/read` | Static resources match by exact URI first, then templates in registration order. An unknown URI is error `-32002` with `data: {"uri": ...}`; a handler can return the same with `RpcError::resource_not_found`, or `RpcError::internal` (`-32603`) |
+| `resources/subscribe` / `unsubscribe` | Per connection (stdio) or per session (HTTP). Unknown URIs are `-32002` |
+
+URI templates follow RFC 6570 for the forms resource templates use: `{name}` matches one value without
+`/`, `?` or `#`; `{+name}` and `{#name}` match anything, including `/`. Matched values are
+percent-decoded. `UriTemplate` is public if you need the matcher elsewhere.
+
+### Serving prompts
+
+```rust
+use sinew_core::PromptTemplate;
+use sinew_mcp::{GetPromptResult, McpPrompt, PromptMessage, PromptRequest};
+
+let server = server
+    // Every template variable becomes a required argument; the result is one user message.
+    .with_prompt_template(
+        "summarize",
+        "Summarize a text",
+        PromptTemplate::new("Summarize in a {style} style:\n{text}")?,
+    )
+    // Full control: optional arguments, several messages, assistant turns.
+    .with_prompt(
+        McpPrompt::new("review")
+            .with_argument("code", "The code to review", true)
+            .with_argument("focus", "What to focus on", false),
+        |r: PromptRequest| async move {
+            let focus = r.arguments.get("focus").map_or("bugs", String::as_str).to_string();
+            Ok(GetPromptResult::new([
+                PromptMessage::user(format!("Review for {focus}:\n{}", r.arguments["code"])),
+                PromptMessage::assistant("I will review it."),
+            ]))
+        },
+    );
+```
+
+The server checks arguments before the handler runs: an unknown prompt, a non-string argument value or a
+missing required argument is error `-32602` naming the problem.
+
+The `resources` capability (`{"subscribe": true, "listChanged": true}`) and the `prompts` capability
+(`{"listChanged": true}`) are advertised in `initialize` only when at least one resource (or template) or
+prompt is registered at that moment. Servers without them answer the methods with `-32601`, as before.
+
+### Changing resources and prompts at runtime
+
+Clones of an `McpServer` share their resources, prompts and connected clients (tools are copied). Keep a
+clone before calling `serve_*`:
+
+```rust
+let handle = server.clone();
+tokio::spawn(server.serve_stdio());
+
+handle.add_resource(McpResource::new("docs://new", "new"), handler);  // sends resources/list_changed
+handle.remove_prompt("review");                                       // sends prompts/list_changed
+handle.notify_resource_updated("docs://status");                      // to subscribers of that URI
+```
+
+`add_resource`, `add_resource_template` and `add_prompt` replace an entry with the same URI, template or
+name. `notify_resource_updated`, `notify_resource_list_changed` and `notify_prompt_list_changed` return how
+many clients received the notification.
+
+### Reading resources and prompts from a client
+
+```rust
+let resources = client.list_resources().await?;            // follows pagination
+let templates = client.list_resource_templates().await?;
+let contents = client.read_resource("docs://readme").await?; // Vec<ResourceContents> (text or base64 blob)
+
+let prompts = client.list_prompts().await?;
+let result = client.get_prompt("review", json!({"code": "fn f() {}"})).await?;   // GetPromptResult
+let messages = client.get_prompt_messages("review", json!({"code": "..."})).await?; // Vec<Message>
+let template = client.prompt_template("summarize").await?;         // sinew_core::PromptTemplate
+let chat = client.chat_prompt_template("review").await?;           // sinew_core::ChatPromptTemplate
+```
+
+Errors from the server arrive as `McpError::Rpc` with the code (`-32002` for an unknown resource,
+`-32602` for an unknown prompt or a missing argument).
+
+`get_prompt_messages` maps user and assistant messages to Sinew `Message`s; an image in a user message
+becomes an image part, and other non-text content becomes text as in the tool result table above.
+
+`prompt_template` and `chat_prompt_template` turn a server prompt into a local template: they fetch the
+prompt once with a placeholder for each argument, escape literal braces, and put `{argument}` where the
+placeholders came back. This works when the server inserts argument values verbatim, which most prompts
+do. A server that validates or transforms arguments (enumerations, numbers, case changes) can reject or
+alter the placeholders; call `get_prompt` with real values for those.
+
+With the `rag` feature (enabled by the `sinew` umbrella's `rag` feature when `mcp` is on),
+`client.read_resource_documents(uri)` returns `sinew_rag::Document`s, one per text item, with the URI as
+id and `source` metadata and the MIME type as `mime_type` metadata. Blob items are skipped.
+`ResourceContents::to_document()` converts a single item.
+
+### Subscriptions and notifications
+
+```rust
+let mut rx = client.notifications().await?;    // tokio broadcast receiver
+client.subscribe_resource("docs://status").await?;
+while let Ok(n) = rx.recv().await {
+    match n {
+        McpNotification::ResourceUpdated { uri } => { let fresh = client.read_resource(&uri).await?; }
+        McpNotification::ResourceListChanged | McpNotification::PromptListChanged => { /* list again */ }
+        _ => {}
+    }
+}
+```
+
+Over stdio the notifications arrive on the same pipe. Over Streamable HTTP, `notifications()` and
+`subscribe_resource` open the server-to-client `GET` stream first (once per client) and return after the
+server accepted it, so a notification sent afterwards is delivered. A server that answers that `GET` with
+`405` (stateless servers, or servers without the stream) simply delivers no notifications. Each
+`notifications()` call returns an independent receiver; a receiver that falls more than 256 messages
+behind gets `RecvError::Lagged`.
+
 ## MCP in a microservice (Streamable HTTP)
 
 With the `http-server` feature (umbrella: `mcp-http`), `McpServer::http_router` returns an axum
@@ -121,7 +270,8 @@ axum::serve(tokio::net::TcpListener::bind("0.0.0.0:8080").await?, app).await?;
 | `POST /mcp` | One JSON-RPC message (batches from older clients are accepted). Requests get `application/json`; notifications and responses get `202` |
 | Sessions | `initialize` returns `Mcp-Session-Id`; later requests without it get `400`, with an unknown or expired one `404`. Idle TTL (default 1 h) and a cap on open sessions |
 | `stateless()` | No sessions, so any replica behind a load balancer can answer any request |
-| `DELETE /mcp` | Ends the session. `GET /mcp` answers `405` (no server-initiated stream) |
+| `GET /mcp` | With `Mcp-Session-Id` and `Accept: text/event-stream`: the session's SSE stream for server notifications (resource updates for the session's subscriptions, list changes), with keep-alive comments. One stream per session; a new `GET` replaces the previous one. Notifications sent while no stream is open are dropped. `400` without a session, `404` for an unknown one, `406` without `text/event-stream`, `405` in stateless mode |
+| `DELETE /mcp` | Ends the session, its subscriptions and its stream |
 | Auth | `with_bearer_token` (repeatable, for rotation; constant-time compare, `401` + `WWW-Authenticate`) |
 | Origin | `with_allowed_origins([...])` rejects browser requests from other origins (`403`), against DNS rebinding |
 | Version | An unsupported `MCP-Protocol-Version` header gets `400` |
@@ -195,19 +345,20 @@ today?". Claude will call `list_traces`, `get_trace` and `search_runs`. Remove t
 ## Design: our own JSON-RPC layer instead of `rmcp`
 
 The official Rust SDK, `rmcp`, implements the whole protocol: resources, prompts, sampling, elicitation
-and OAuth. With it come proc macros, `schemars` and a large dependency tree. Sinew only needs the tool
-surface: `initialize`, `tools/list`, `tools/call`, `ping` and cancellation. That is a few hundred lines
-of JSON-RPC over tokio. Writing it ourselves means:
+and OAuth. With it come proc macros, `schemars` and a large dependency tree. Sinew uses the server
+features (tools, resources, prompts), `ping`, cancellation and server notifications. That is JSON-RPC
+over tokio. Writing it ourselves means:
 
 - no new dependencies: everything the crate uses is already in the workspace;
-- an exact mapping to Sinew's `Tool` and `ToolBox`;
+- an exact mapping to Sinew's `Tool`, `ToolBox`, `Message` and `PromptTemplate`;
 - a small surface to keep in sync with the spec.
 
-Resources or prompts would be added in `protocol.rs`, `client.rs` and `server.rs`.
+Message types live in `protocol.rs`; the server and client logic in `server.rs` and `client.rs`.
 
 Known limits: the client does not offer sampling, roots or elicitation (it answers such server requests
-with `-32601`). The HTTP client does not open the optional server-to-client GET stream. There is no HTTP
-server transport yet.
+with `-32601`). The server does not implement `completion/complete` (argument autocompletion) or
+`logging/setLevel`. Over HTTP, server notifications go only to sessions with an open `GET` stream; there
+is no event replay (`Last-Event-ID`) after a reconnect.
 
 ## Examples and tests
 
@@ -215,9 +366,11 @@ server transport yet.
 cargo run -p sinew-mcp --example mcp_agent                    # offline, scripted model, tools over MCP
 SINEW_MODEL=qwen3:4b-instruct-2507-q4_K_M \
   cargo run -p sinew-mcp --example mcp_agent -- --ollama      # local Ollama
+cargo run -p sample-11-mcp                                    # tools, a resource template and a prompt over stdio
 cargo test -p sinew-mcp                                       # unit + stdio + in-process tests
-cargo test -p sinew-mcp --features http                       # adds the Streamable HTTP test
+cargo test -p sinew-mcp --all-features                        # adds the Streamable HTTP and rag tests
 ```
 
 `mcp_agent` runs both sides. It spawns itself with `--serve` as an MCP server, connects with `McpClient`,
-and gives the remote tools to a `react_agent`.
+and gives the remote tools to a `react_agent`. [Sample 11](../samples/11-mcp/src/main.rs) does the same
+and then reads a resource and renders a prompt.

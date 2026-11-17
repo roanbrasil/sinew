@@ -1,9 +1,11 @@
 //! Model Context Protocol, both directions:
 //!
-//! - **server**: `--serve` exposes a Sinew `ToolBox` as an MCP server over
-//!   stdio, usable from Claude Code, Cursor or any MCP client;
+//! - **server**: `--serve` exposes a Sinew `ToolBox`, a resource, a resource
+//!   template and a prompt as an MCP server over stdio, usable from Claude
+//!   Code, Cursor or any MCP client;
 //! - **client**: the default mode spawns that server as a child process,
-//!   lists its tools and hands them to a `react_agent` like local tools.
+//!   hands its tools to a `react_agent` like local tools, then reads a
+//!   resource and renders the prompt.
 //!
 //! ```bash
 //! cargo run -p sample-11-mcp
@@ -16,12 +18,17 @@ use std::{collections::BTreeMap, sync::Mutex};
 
 use sample_common::{pick_model, BoxError};
 use serde_json::{json, Value};
-use sinew::mcp::{McpClient, McpServer};
+use sinew::mcp::{
+    McpClient, McpResource, McpResourceTemplate, McpServer, ResourceContents, ResourceRequest,
+    RpcError,
+};
 use sinew::prelude::*;
+
+/// The notes the server stores, shared by its tools and resources.
+static NOTES: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
 
 /// A tiny notes service: the tools the MCP server exposes.
 fn notes_tools() -> ToolBox {
-    static NOTES: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
     let text = |v: &Value, k: &str| v[k].as_str().unwrap_or_default().to_string();
     ToolBox::new()
         .with(FnTool::new(
@@ -47,6 +54,27 @@ async fn main() -> Result<(), BoxError> {
         // stdout carries the protocol, so never print to it in server mode.
         McpServer::new("sinew-notes", "0.1.0")
             .with_tools(notes_tools())
+            // A static resource and a template: every note is readable as `notes://<title>`.
+            .with_text_resource(
+                McpResource::new("notes://readme", "readme").with_mime_type("text/plain"),
+                "Notes are saved with save_note and readable as notes://<title>.",
+            )
+            .with_resource_template(
+                McpResourceTemplate::new("notes://{title}", "note").with_mime_type("text/plain"),
+                |r: ResourceRequest| async move {
+                    let body = NOTES.lock().unwrap().get(&r.params["title"]).cloned();
+                    match body {
+                        Some(b) => Ok(vec![ResourceContents::text(r.uri, b)]),
+                        None => Err(RpcError::resource_not_found(&r.uri)),
+                    }
+                },
+            )
+            // A prompt with one required argument, rendered from a Sinew template.
+            .with_prompt_template(
+                "standup",
+                "Draft a stand-up update about a topic",
+                PromptTemplate::new("Write a two-line stand-up update about {topic}.")?,
+            )
             .serve_stdio()
             .await?;
         return Ok(());
@@ -101,6 +129,29 @@ async fn main() -> Result<(), BoxError> {
             _ => println!("\n{}", m.content),
         }
     }
+
+    // Resources: list them, then read the note the agent just saved.
+    let resources = client.list_resources().await?;
+    let templates = client.list_resource_templates().await?;
+    println!(
+        "\nresources: {:?}, templates: {:?}",
+        resources.iter().map(|r| &r.uri).collect::<Vec<_>>(),
+        templates
+            .iter()
+            .map(|t| &t.uri_template)
+            .collect::<Vec<_>>()
+    );
+    for c in client.read_resource("notes://standup").await? {
+        println!("notes://standup → {}", c.text.unwrap_or_default());
+    }
+
+    // Prompts: render on the server, or load as a local Sinew template.
+    let messages = client
+        .get_prompt_messages("standup", json!({"topic": "MCP resources"}))
+        .await?;
+    println!("prompt standup → {}", messages[0].content);
+    let template = client.prompt_template("standup").await?;
+    println!("as PromptTemplate, variables {:?}", template.variables());
     client.close().await;
     Ok(())
 }

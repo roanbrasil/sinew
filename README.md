@@ -23,7 +23,7 @@ as one typed, async, low-latency workspace.
 | [`sinew-trace`](crates/sinew-trace) | LangSmith SDK | Run tree with timings, I/O, tokens, cost and time to first token; JSONL, memory, HTTP and OpenTelemetry (OTLP JSON / protobuf, GenAI conventions) sinks |
 | [`sinew-scope`](crates/sinew-scope) | LangSmith app | Self-hosted server and web UI: traces and waterfall, full-text run search, prompt hub, feedback and annotation queues, datasets and experiments, monitoring dashboards (latency percentiles, TTFT, errors, cost), online evaluator rules and alerts, OTLP ingest, retention |
 | [`sinew-eval`](crates/sinew-eval) | LangSmith evaluation | Datasets, evaluators (exact, contains, regex, JSON field, numeric, LLM judge), experiments with repetitions and summary metrics, pairwise A/B, prompt hub client |
-| [`sinew-mcp`](crates/sinew-mcp) | MCP adapters | Model Context Protocol client and server over stdio or Streamable HTTP (an axum router to merge into a microservice, with sessions, bearer auth and origin checks); `sinew-mcp --traces` lets coding assistants inspect traces |
+| [`sinew-mcp`](crates/sinew-mcp) | MCP adapters | Model Context Protocol client and server (tools, resources, prompts) over stdio or Streamable HTTP (an axum router to merge into a microservice, with sessions, bearer auth and origin checks); `sinew-mcp --traces` lets coding assistants inspect traces |
 | [`sinew-a2a`](crates/sinew-a2a) | A2A | Agent2Agent protocol (0.3) server and client; serve any model or graph as an A2A agent, delegate to remote agents as a tool |
 | [`sinew-macros`](crates/sinew-macros) | — | `#[sinew::tool]`: functions become tools, with `#[state]` injection |
 | [`sinew`](crates/sinew) | umbrella | Re-exports and a `prelude`, with a feature per optional crate |
