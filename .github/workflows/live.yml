@@ -1,0 +1,101 @@
+name: Live
+# Nightly tests against real services: a local model in Ollama, vector stores and
+# Postgres in containers, and hosted providers whose API keys are configured as
+# repository secrets. Recorded payloads drift from real APIs; this catches it.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  local:
+    name: Ollama, Qdrant, pgvector, Postgres
+    if: github.repository_owner == 'roanbrasil'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      ollama:
+        image: ollama/ollama:latest
+        ports: ["11434:11434"]
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports: ["6333:6333"]
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: sinew
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 20
+    env:
+      # Small enough for a CPU runner, still able to call tools.
+      SINEW_MODEL: qwen3:1.7b
+      SINEW_EMBED_MODEL: all-minilm
+      SINEW_QDRANT_URL: http://127.0.0.1:6333
+      SINEW_PGVECTOR_URL: postgres://postgres:sinew@127.0.0.1:5432/postgres
+      SINEW_TEST_PG_URL: postgres://postgres:sinew@127.0.0.1:5432/postgres
+      SINEW_LIVE_SPECS: ollama:qwen3:1.7b
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Pull models
+        run: |
+          for m in "$SINEW_MODEL" "$SINEW_EMBED_MODEL"; do
+            curl -sf http://127.0.0.1:11434/api/pull -d "{\"model\": \"$m\", \"stream\": false}" >/dev/null
+          done
+      - name: Live tests
+        run: |
+          cargo test -p sinew-core --test live_ollama --test live_providers -- --ignored
+          cargo test -p sinew-harness --test live_ollama -- --ignored
+          cargo test -p sinew-rag --all-features --test live_ollama --test stores -- --ignored
+          cargo test -p sinew-checkpoint --features postgres --test postgres
+      - name: Open an issue on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./.github/scripts/live-failure-issue.sh "local services"
+
+  hosted:
+    name: Hosted providers
+    if: github.repository_owner == 'roanbrasil'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Pick providers with keys
+        id: specs
+        run: |
+          specs=""
+          add() { if [ -n "${!1}" ]; then specs="${specs:+$specs,}$2"; fi; }
+          add ANTHROPIC_API_KEY anthropic:claude-haiku-4-5
+          add OPENAI_API_KEY openai:gpt-4.1-mini
+          add GEMINI_API_KEY gemini:gemini-2.5-flash
+          add XAI_API_KEY xai:grok-3-mini
+          add GROQ_API_KEY groq:llama-3.3-70b-versatile
+          add MISTRAL_API_KEY mistral:mistral-small-latest
+          echo "specs=$specs" >> "$GITHUB_OUTPUT"
+          echo "Providers: ${specs:-none (no API key secrets set)}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Live tests
+        if: steps.specs.outputs.specs != ''
+        env:
+          SINEW_LIVE_SPECS: ${{ steps.specs.outputs.specs }}
+        run: cargo test -p sinew-core --test live_providers -- --ignored
+      - name: Open an issue on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./.github/scripts/live-failure-issue.sh "hosted providers"

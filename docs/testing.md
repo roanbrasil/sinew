@@ -114,4 +114,26 @@ Mark tests that call a real model with `#[ignore]` and run them on demand:
 cargo test -- --ignored        # e.g. against local Ollama
 ```
 
-The workspace's own live tests use `OLLAMA_HOST` and skip when no model is reachable.
+The workspace's own live tests use a local Ollama (`SINEW_MODEL`, `SINEW_EMBED_MODEL`), Qdrant
+(`SINEW_QDRANT_URL`), Postgres with pgvector (`SINEW_PGVECTOR_URL`, `SINEW_TEST_PG_URL`), and hosted providers listed
+in `SINEW_LIVE_SPECS`:
+
+```bash
+SINEW_LIVE_SPECS=anthropic:claude-haiku-4-5,ollama:qwen3:4b cargo test -p sinew-core --test live_providers -- --ignored
+```
+
+`live_providers` checks, for every spec, a chat with usage, a stream ending in `Done`, and a forced tool call when
+the provider supports tools.
+
+### Nightly
+
+`.github/workflows/live.yml` runs every night (and on demand from the Actions tab):
+
+- **local services**: Ollama with a small model, Qdrant and Postgres/pgvector as service containers; runs all live
+  tests of core, harness, RAG and the Postgres checkpointer;
+- **hosted providers**: runs `live_providers` for each provider whose API key is set as a repository secret
+  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`); with no
+  secrets the job passes and says so in its summary.
+
+A failing scheduled run opens one issue per job ("Nightly live tests failing: ...") and comments on it on later
+failures instead of opening duplicates.
