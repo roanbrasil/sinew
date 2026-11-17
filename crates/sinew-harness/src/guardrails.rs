@@ -7,7 +7,7 @@
 //!
 //! Two are built in:
 //!
-//! - [`PiiRedactor`]: replaces e-mail addresses, phone numbers and card-like
+//! - [`PiiRedactor`]: replaces e-mail addresses, phone numbers and card
 //!   numbers (Luhn-checked) with placeholders.
 //! - [`InjectionDetector`]: flags tool outputs that look like prompt-injection
 //!   attempts ("ignore previous instructions", chat-template tokens...) by
@@ -17,6 +17,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use sinew_trace::redact;
 
 /// Where a guardrail runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,34 +62,16 @@ pub fn apply_guardrails(
     Ok(current)
 }
 
-static EMAIL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}").unwrap());
-static CARD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(?:\d[ -]?){12,18}\d\b").unwrap());
-static PHONE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)|\b\d{2,4})[\s.-]?\d{3,4}[\s.-]?\d{4}\b")
-        .unwrap()
-});
+// Patterns and validators are shared with trace redaction (`sinew_trace::redact`).
+static EMAIL: LazyLock<Regex> = LazyLock::new(|| Regex::new(redact::EMAIL_PATTERN).unwrap());
+static CARD: LazyLock<Regex> = LazyLock::new(|| Regex::new(redact::CARD_PATTERN).unwrap());
+static PHONE: LazyLock<Regex> = LazyLock::new(|| Regex::new(redact::PHONE_PATTERN).unwrap());
 
-fn luhn(digits: &str) -> bool {
-    let mut sum = 0;
-    let mut double = false;
-    for c in digits.chars().rev() {
-        let Some(mut d) = c.to_digit(10) else {
-            return false;
-        };
-        if double {
-            d *= 2;
-            if d > 9 {
-                d -= 9;
-            }
-        }
-        sum += d;
-        double = !double;
-    }
-    sum % 10 == 0
-}
-
-/// Redacts e-mails, phone numbers and card-like numbers.
+/// Redacts e-mails, phone numbers and card numbers (Luhn-checked, see
+/// [`sinew_trace::redact::is_card_number`]).
+///
+/// To redact traces rather than agent messages, use
+/// [`sinew_trace::Redactor`] on the tracer.
 #[derive(Debug, Clone)]
 pub struct PiiRedactor {
     pub emails: bool,
@@ -133,8 +116,7 @@ impl PiiRedactor {
         if self.cards {
             out = CARD
                 .replace_all(&out, |c: &regex::Captures<'_>| {
-                    let digits: String = c[0].chars().filter(char::is_ascii_digit).collect();
-                    if (13..=19).contains(&digits.len()) && luhn(&digits) {
+                    if redact::is_card_number(&c[0]) {
                         "[REDACTED_CARD]".to_string()
                     } else {
                         c[0].to_string()
@@ -145,8 +127,7 @@ impl PiiRedactor {
         if self.phones {
             out = PHONE
                 .replace_all(&out, |c: &regex::Captures<'_>| {
-                    let n = c[0].chars().filter(char::is_ascii_digit).count();
-                    if (10..=15).contains(&n) {
+                    if redact::is_phone_number(&c[0]) {
                         "[REDACTED_PHONE]".to_string()
                     } else {
                         c[0].to_string()

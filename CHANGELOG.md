@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Secret and PII redaction in traces: `sinew_trace::Redactor`, set with `Tracer::with_redactor`, rewrites every run's `inputs`, `outputs`, `error` and `metadata` before any sink (JSONL, memory, HTTP, OTLP) sees it. Built-in rules for API keys and tokens (`sk-`, `sk-ant-`, `xai-`, `gsk_`, `AIza`, `ghp_`/`github_pat_`, AWS `AKIA`, Slack, `Bearer`, JWTs, PEM private keys), e-mail addresses, Luhn-checked card numbers and (opt-in) phone numbers, each toggleable; custom regex rules; field rules by key name (`password`, `api_key`, `authorization`, `cookie`, ...); an allow-list of paths. The harness `PiiRedactor` now shares its patterns and validators from `sinew_trace::redact` (#45). Guide: [docs/redaction.md](docs/redaction.md).
 - `#[sinew::tool]` attribute (new crate `sinew-macros`, feature `macros`, on by default in `sinew`): a plain sync or async function becomes a `Tool`; name from the function, description from the doc comment, JSON Schema from the argument types (argument doc comments, `Option`, enums, `#[serde]`/`#[schemars]` attributes), `#[state]` for injected application state, helpful compile errors. `tools![...]` builds a `ToolBox` (#4).
 - Guide: [docs/tools.md](docs/tools.md).
 - Durable tool calls: a tool ledger in the checkpointer (`ToolEntry`, `Checkpointer::{supports_tool_ledger, get_tool_entry, put_tool_entry}`, implemented by the memory, SQLite and Postgres checkpointers) so calls that finished before a crash are replayed instead of re-run; `Tool::side_effects` and `#[tool(side_effects)]`; `sinew_core::tool::idempotency_key()`; `UnknownOutcome::{Fail, Retry, Interrupt}` on `ReactAgent` and the harness; `sinew_graph::durable::{durable_tool_call, durable_run}`; `harness::Agent::recover` (#25). Guide: [docs/durable-execution.md](docs/durable-execution.md).
@@ -34,6 +35,7 @@ All notable changes to this project are documented here. The format follows
 - Samples 03 and 22 use `#[sinew::tool]`.
 - `sinew-harness`: loop detection is on by default (see above).
 - `ReactAgent`: the `tools` node now routes with `Command::goto("agent")` instead of a static edge.
+- `sinew-harness`: `PiiRedactor` only masks Luhn-valid card numbers that start with 2–6, so Luhn-valid identifiers and millisecond timestamps starting with 1 are kept (#45).
 
 ## [0.1.0] - 2026-11-16
 
