@@ -34,6 +34,8 @@ ScopeClient::new("http://127.0.0.1:7878").upload_experiment(&ds, &report).await?
 
 `ExactMatch`, `Contains`, `RegexMatch`, `JsonFieldEquals`, `NumericTolerance` and `LlmJudge` (any `ChatModel` as the judge). Implement `Evaluator` for your own.
 
+For agents, trajectory evaluators score the tool calls as well as the answer: `TrajectoryMatch` (exact, unordered, in-order subsequence, superset, subset; optional JSON-subset argument matching), `ToolUsage`, `TrajectoryBudget`, `RelativeEfficiency`, `NoRepeatedCalls` and `TrajectoryJudge`. Build a `Trajectory` from messages or from trace runs.
+
 Upload datasets and reports to [`sinew-scope`](../sinew-scope) with `ScopeClient` to compare experiments in the browser. See the [evaluation guide](../../docs/evaluation.md).
 
 How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).

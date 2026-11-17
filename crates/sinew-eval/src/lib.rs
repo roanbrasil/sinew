@@ -8,6 +8,9 @@
 //! 4. Optionally upload dataset and report to `sinew-scope serve` with
 //!    [`ScopeClient`] to browse and compare experiments in the web UI.
 //!
+//! For agents, the [`trajectory`] module scores the path as well as the
+//! answer: which tools were called, in which order, and at what cost.
+//!
 //! ```no_run
 //! # async fn demo() -> Result<(), sinew_eval::EvalError> {
 //! use serde_json::{json, Value};
@@ -38,6 +41,7 @@ mod evaluators;
 pub mod hub;
 pub mod pairwise;
 pub mod summary;
+pub mod trajectory;
 
 use std::{
     collections::BTreeMap,
@@ -62,6 +66,11 @@ pub use pairwise::{
     PairwiseInput, PairwiseReport, PairwiseResult, PairwiseScore, PairwiseStats, Preference,
 };
 pub use summary::{ClassificationF1, FnSummary, PassRate, SummaryEvaluator};
+pub use trajectory::{
+    json_subset, ArgumentMatch, EfficiencyMetric, NoRepeatedCalls, RelativeEfficiency, ToolStep,
+    ToolUsage, Trajectory, TrajectoryBudget, TrajectoryEvaluator, TrajectoryInput, TrajectoryJudge,
+    TrajectoryMatch,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EvalError {
@@ -258,13 +267,14 @@ where
     Fut: Future<Output = Result<Value, E>>,
     E: Display,
 {
-    run_experiment(target, dataset, evaluators, &[], 1, concurrency).await
+    run_experiment(target, dataset, evaluators, &[], &[], 1, concurrency).await
 }
 
 async fn run_experiment<F, Fut, E>(
     target: F,
     dataset: &Dataset,
     evaluators: &[Box<dyn Evaluator>],
+    trajectory_evaluators: &[Box<dyn TrajectoryEvaluator>],
     summary_evaluators: &[Box<dyn SummaryEvaluator>],
     repetitions: usize,
     concurrency: usize,
@@ -302,6 +312,26 @@ where
                             })
                             .await,
                         );
+                    }
+                    if !trajectory_evaluators.is_empty() {
+                        let trajectory = Trajectory::from_output(&output);
+                        for e in trajectory_evaluators {
+                            scores.push(match &trajectory {
+                                Some(t) => {
+                                    e.evaluate(TrajectoryInput {
+                                        inputs: &ex.inputs,
+                                        output: &output,
+                                        trajectory: t,
+                                        expected: ex.expected_trajectory.as_ref(),
+                                        reference: ex.reference.as_ref(),
+                                    })
+                                    .await
+                                }
+                                None => Score::new(e.name(), 0.0).with_reason(
+                                    "output has no trajectory (return Trajectory::into_output)",
+                                ),
+                            });
+                        }
                     }
                     (Some(output), None, scores)
                 }
@@ -362,6 +392,7 @@ where
 pub struct Experiment<'a> {
     dataset: &'a Dataset,
     evaluators: Vec<Box<dyn Evaluator>>,
+    trajectory_evaluators: Vec<Box<dyn TrajectoryEvaluator>>,
     summary: Vec<Box<dyn SummaryEvaluator>>,
     repetitions: usize,
     concurrency: usize,
@@ -374,6 +405,7 @@ impl<'a> Experiment<'a> {
         Self {
             dataset,
             evaluators: Vec::new(),
+            trajectory_evaluators: Vec::new(),
             summary: Vec::new(),
             repetitions: 1,
             concurrency: 4,
@@ -389,6 +421,48 @@ impl<'a> Experiment<'a> {
 
     pub fn evaluators(mut self, list: Vec<Box<dyn Evaluator>>) -> Self {
         self.evaluators.extend(list);
+        self
+    }
+
+    /// Adds a [`TrajectoryEvaluator`]. The target must return an output that
+    /// carries a trajectory ([`Trajectory::into_output`]); the evaluator
+    /// receives it with the example's `expected_trajectory`. Outputs without
+    /// a trajectory score 0 with a reason.
+    ///
+    /// ```no_run
+    /// # async fn demo(ds: sinew_eval::Dataset) {
+    /// use serde_json::{json, Value};
+    /// use sinew_eval::{Experiment, NoRepeatedCalls, Trajectory, TrajectoryMatch};
+    ///
+    /// let report = Experiment::new(&ds)
+    ///     .trajectory_evaluator(TrajectoryMatch::subsequence())
+    ///     .trajectory_evaluator(NoRepeatedCalls::new())
+    ///     .run(|inputs: Value| async move {
+    ///         let trajectory = Trajectory::new().tool("search", inputs).with_final_answer("...");
+    ///         Ok::<_, String>(trajectory.into_output())
+    ///     })
+    ///     .await;
+    /// println!("{:?}", report.mean("trajectory_subsequence"));
+    /// # }
+    /// ```
+    pub fn trajectory_evaluator(mut self, e: impl TrajectoryEvaluator + 'static) -> Self {
+        self.trajectory_evaluators.push(Box::new(e));
+        self
+    }
+
+    /// Adds several [`TrajectoryEvaluator`]s.
+    ///
+    /// ```no_run
+    /// # fn demo(ds: sinew_eval::Dataset) {
+    /// use sinew_eval::{Experiment, ToolUsage, TrajectoryEvaluator, TrajectoryMatch};
+    ///
+    /// let list: Vec<Box<dyn TrajectoryEvaluator>> =
+    ///     vec![Box::new(TrajectoryMatch::exact()), Box::new(ToolUsage::new().forbid("shell"))];
+    /// let experiment = Experiment::new(&ds).trajectory_evaluators(list);
+    /// # }
+    /// ```
+    pub fn trajectory_evaluators(mut self, list: Vec<Box<dyn TrajectoryEvaluator>>) -> Self {
+        self.trajectory_evaluators.extend(list);
         self
     }
 
@@ -430,6 +504,7 @@ impl<'a> Experiment<'a> {
             target,
             self.dataset,
             &self.evaluators,
+            &self.trajectory_evaluators,
             &self.summary,
             self.repetitions,
             self.concurrency,
@@ -501,6 +576,79 @@ mod tests {
         let back: ExperimentReport =
             serde_json::from_str(&serde_json::to_string(&report).unwrap()).unwrap();
         assert_eq!(back, report);
+    }
+
+    #[tokio::test]
+    async fn trajectory_evaluators_run_in_experiments() {
+        use sinew_core::{mock::ScriptedModel, Message, ToolCall};
+        let ds = Dataset::new("weather")
+            .with_example(
+                Example::new(json!({"city": "Paris"}))
+                    .with_id("paris")
+                    .with_reference(json!("sunny"))
+                    .with_expected_trajectory(
+                        Trajectory::new().tool("get_weather", json!({"city": "Paris"})),
+                    ),
+            )
+            .with_example(
+                Example::new(json!({"city": "Lyon"}))
+                    .with_id("lyon")
+                    .with_expected_trajectory(
+                        Trajectory::new().tool("get_weather", json!({"city": "Lyon"})),
+                    ),
+            )
+            .with_example(Example::new(json!({"city": "none"})).with_id("plain"));
+        let judge =
+            Arc::new(ScriptedModel::new((0..3).map(|_| {
+                Message::assistant(r#"{"score": 1, "reasoning": "fine"}"#)
+            })));
+        let report = Experiment::new(&ds)
+            .evaluator(JsonFieldEquals::expecting("answer", json!("sunny")))
+            .trajectory_evaluator(TrajectoryMatch::exact().arguments(ArgumentMatch::Subset))
+            .trajectory_evaluator(NoRepeatedCalls::new())
+            .trajectory_evaluator(TrajectoryJudge::new(judge, "ok?"))
+            .concurrency(1)
+            .run(|inputs: Value| async move {
+                let city = inputs["city"].as_str().unwrap_or_default().to_string();
+                if city == "none" {
+                    return Ok::<_, String>(json!("plain text"));
+                }
+                // Lyon loops: the same call twice.
+                let n = if city == "Lyon" { 2 } else { 1 };
+                let mut messages = vec![Message::user(format!("weather in {city}?"))];
+                for i in 0..n {
+                    messages.push(Message::assistant_with_tools(
+                        "",
+                        vec![ToolCall {
+                            id: format!("c{i}"),
+                            name: "get_weather".into(),
+                            arguments: json!({"city": city, "units": "metric"}),
+                        }],
+                    ));
+                    messages.push(Message::tool_result(format!("c{i}"), "sunny"));
+                }
+                messages.push(Message::assistant("sunny"));
+                Ok(Trajectory::from_messages(&messages).into_output())
+            })
+            .await;
+        let paris = &report.results[0];
+        assert_eq!(paris.score("json_field:answer"), Some(1.0));
+        assert_eq!(paris.score("trajectory_exact"), Some(1.0));
+        assert_eq!(paris.score("no_repeated_calls"), Some(1.0));
+        assert_eq!(paris.score("trajectory_judge"), Some(1.0));
+        let lyon = &report.results[1];
+        assert_eq!(lyon.score("trajectory_exact"), Some(0.0));
+        assert_eq!(lyon.score("no_repeated_calls"), Some(0.0));
+        let plain = &report.results[2];
+        let s = plain
+            .scores
+            .iter()
+            .find(|s| s.key == "trajectory_exact")
+            .unwrap();
+        assert_eq!(s.score, 0.0);
+        assert!(s.reason.as_deref().unwrap().contains("no trajectory"));
+        assert!((report.mean("trajectory_exact").unwrap() - 1.0 / 3.0).abs() < 1e-9);
+        assert_eq!(report.aggregates.scores["trajectory_judge"].count, 3);
     }
 
     #[tokio::test]

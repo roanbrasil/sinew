@@ -1063,6 +1063,7 @@ impl Store {
                         .try_get::<Option<String>, _>("reference")?
                         .map(|s| from_json(&s)),
                     metadata: from_json(&r.try_get::<String, _>("metadata")?),
+                    expected_trajectory: None,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -1098,6 +1099,7 @@ impl Store {
                         inputs: x.inputs.clone(),
                         reference: x.reference.clone(),
                         metadata: Value::Null,
+                        expected_trajectory: None,
                     })
                     .collect(),
             };
