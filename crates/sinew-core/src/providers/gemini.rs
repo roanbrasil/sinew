@@ -413,6 +413,9 @@ impl ChatModel for Gemini {
     fn name(&self) -> &str {
         &self.model
     }
+    fn capabilities(&self) -> crate::Capabilities {
+        crate::Capabilities::all()
+    }
 
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
         let body = encode_request(&request);

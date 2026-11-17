@@ -23,6 +23,7 @@ pub struct OpenAiCompat {
     query: Vec<(String, String)>,
     model: String,
     stream_usage: bool,
+    capabilities: crate::Capabilities,
     client: reqwest::Client,
 }
 
@@ -36,8 +37,16 @@ impl OpenAiCompat {
             query: Vec::new(),
             model: model.into(),
             stream_usage: true,
+            capabilities: crate::Capabilities::all(),
             client: super::shared_client(),
         }
+    }
+
+    /// Declares what this endpoint supports (presets set it; the default
+    /// assumes everything the Chat Completions format can express).
+    pub fn with_capabilities(mut self, capabilities: crate::Capabilities) -> Self {
+        self.capabilities = capabilities;
+        self
     }
 
     /// OpenAI itself; reads `OPENAI_API_KEY`.
@@ -56,6 +65,7 @@ impl OpenAiCompat {
             format!("http://{host}")
         };
         Self::new(format!("{}/v1", host.trim_end_matches('/')), model)
+            .with_capabilities(super::capabilities_for("ollama", "").unwrap_or_default())
     }
 
     pub fn with_api_key(mut self, key: impl Into<String>) -> Self {
@@ -406,6 +416,9 @@ pub(crate) fn decode_response(model: &str, v: &Value) -> Result<ChatResponse> {
 impl ChatModel for OpenAiCompat {
     fn name(&self) -> &str {
         &self.model
+    }
+    fn capabilities(&self) -> crate::Capabilities {
+        self.capabilities
     }
 
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {

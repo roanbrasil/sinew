@@ -210,6 +210,16 @@ pub(crate) fn encode_request(model: &str, default_max: u32, req: &ChatRequest) -
 
 /// Claude models whose request surface removed sampling parameters
 /// (`temperature`, `top_p`, `top_k`): sending them returns a 400.
+/// What the Messages API supports for `model` through this client.
+pub(crate) fn anthropic_capabilities(model: &str) -> crate::Capabilities {
+    crate::Capabilities::all()
+        .with_audio(false)
+        // StructuredOutput uses a forced tool (or a steer) instead.
+        .with_json_schema(false)
+        .with_sampling(accepts_sampling(model))
+        .with_forced_tool_choice(accepts_forced_tool_choice(model))
+}
+
 fn accepts_sampling(model: &str) -> bool {
     const NO_SAMPLING: &[&str] = &[
         "claude-fable",
@@ -451,6 +461,9 @@ pub(crate) fn decode_response(model: &str, v: &Value) -> Result<ChatResponse> {
 impl ChatModel for Anthropic {
     fn name(&self) -> &str {
         &self.model
+    }
+    fn capabilities(&self) -> crate::Capabilities {
+        anthropic_capabilities(&self.model)
     }
 
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {

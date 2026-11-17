@@ -195,6 +195,9 @@ impl<M: ChatModel> ChatModel for WithRetry<M> {
     fn name(&self) -> &str {
         self.inner.name()
     }
+    fn capabilities(&self) -> crate::Capabilities {
+        self.inner.capabilities()
+    }
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
         self.policy.run(|| self.inner.chat(request.clone())).await
     }
@@ -225,6 +228,9 @@ impl<M> WithFallbacks<M> {
 impl<M: ChatModel> ChatModel for WithFallbacks<M> {
     fn name(&self) -> &str {
         self.primary.name()
+    }
+    fn capabilities(&self) -> crate::Capabilities {
+        self.primary.capabilities()
     }
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
         let mut err = match self.primary.chat(request.clone()).await {
@@ -404,6 +410,9 @@ impl<M: ChatModel> ChatModel for RateLimited<M> {
     fn name(&self) -> &str {
         self.inner.name()
     }
+    fn capabilities(&self) -> crate::Capabilities {
+        self.inner.capabilities()
+    }
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
         let est = estimate_request_tokens(&request);
         self.limiter.acquire(est).await;
@@ -439,6 +448,9 @@ impl<M> WithTimeout<M> {
 impl<M: ChatModel> ChatModel for WithTimeout<M> {
     fn name(&self) -> &str {
         self.inner.name()
+    }
+    fn capabilities(&self) -> crate::Capabilities {
+        self.inner.capabilities()
     }
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
         tokio::time::timeout(self.timeout, self.inner.chat(request))

@@ -18,7 +18,7 @@ Part of [Sinew](https://github.com/roanbrasil/sinew): LLM chains, agent graphs, 
 | OpenAI-compatible, hosted | OpenAI, xAI Grok, Groq, Mistral, DeepSeek, OpenRouter, Together, Fireworks, Perplexity, Cerebras, NVIDIA NIM, Hugging Face router |
 | OpenAI-compatible, local | Ollama, LM Studio, llama.cpp, vLLM, SGLang, LocalAI, Jan, llamafile, TGI, or any URL |
 
-Every provider streams tokens, calls tools and supports structured output. Pick one in code or from a string:
+Every provider streams tokens and supports structured output; what else each one accepts (tools, images, PDF, audio, JSON schema, cached tokens) is in the [capability matrix](https://github.com/roanbrasil/sinew/blob/main/docs/providers.md) and at run time in `model.capabilities()`. Pick one in code or from a string:
 
 ```rust
 use sinew_core::{providers::from_spec, ChatRequest, Message};

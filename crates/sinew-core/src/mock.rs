@@ -37,6 +37,10 @@ impl ChatModel for ScriptedModel {
     fn name(&self) -> &str {
         "scripted"
     }
+    /// Scripted models can play any provider.
+    fn capabilities(&self) -> crate::Capabilities {
+        crate::Capabilities::all()
+    }
 
     async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
         let input_tokens = request

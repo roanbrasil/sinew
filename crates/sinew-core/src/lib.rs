@@ -33,7 +33,9 @@ pub mod vcr;
 pub use cache::{CachedModel, InMemoryCache, ResponseCache};
 pub use error::{Error, Result};
 pub use message::{ContentPart, ImageDetail, MediaSource, Message, Role, ToolCall};
-pub use model::{ChatModel, ChatRequest, ChatResponse, ResponseFormat, ToolChoice, Usage};
+pub use model::{
+    Capabilities, ChatModel, ChatRequest, ChatResponse, ResponseFormat, ToolChoice, Usage,
+};
 pub use parsers::{JsonOutputParser, ListOutputParser, StrOutputParser};
 pub use prompt::PromptTemplate;
 pub use resilience::{ChatModelExt, RateLimiter, RetryPolicy};
