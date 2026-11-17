@@ -92,8 +92,10 @@ on the thread that finishes it, before the run is handed to the sinks.
 example to clean a payload before logging it. `Redactor::redact_run` is what the tracer calls.
 
 The building blocks are public in `sinew_trace::redact`: `EMAIL_PATTERN`, `CARD_PATTERN`,
-`PHONE_PATTERN`, `luhn_valid`, `is_card_number` and `is_phone_number`. The harness
-`PiiRedactor` guardrail uses the same patterns and validators.
+`PHONE_PATTERN`, `luhn_valid`, `is_card_number` and `is_phone_number`. They are defined in
+`sinew_core::guardrails::patterns` (with `SECRET_PATTERNS`), and the `PiiRedactor` and
+`SecretRedactor` guardrails use the same patterns and validators to redact messages before a
+model sees them. See [Guardrails](guardrails.md).
 
 ## Limits
 

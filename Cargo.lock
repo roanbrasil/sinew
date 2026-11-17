@@ -2264,6 +2264,7 @@ dependencies = [
  "criterion",
  "futures-core",
  "futures-util",
+ "regex",
  "reqwest",
  "schemars",
  "serde",

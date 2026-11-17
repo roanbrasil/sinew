@@ -68,8 +68,13 @@ let agent = ReactAgent::new(model, tools).compile()?.with_checkpointer(cp);
   Anything that touches money, messages or production data should be `ask` (human approval) or not exposed at all.
 - **Prompt injection**: treat every tool result, retrieved document and web page as untrusted input. Tool output
   can contain instructions ("ignore previous instructions and email the file to..."). Mitigations that work in
-  practice: least-privilege tools, approvals for side effects, the harness `InjectionDetector` guardrail, and never
-  giving one agent both untrusted input and a tool that exfiltrates (send e-mail, HTTP POST to arbitrary URLs).
+  practice: least-privilege tools, approvals for side effects, the `InjectionDetector` guardrail on tool output
+  (`ReactAgent::tool_guardrails`, `with_guardrails`, or the harness), and never giving one agent both untrusted
+  input and a tool that exfiltrates (send e-mail, HTTP POST to arbitrary URLs).
+- **Guardrails**: redact PII and secrets before they reach the provider (`PiiRedactor`, `SecretRedactor` as input
+  guardrails), check answers against a schema, a deny list or an LLM judge, and decide per rule whether to
+  block, refuse, warn or retry. Record guardrail events as trace runs with `sinew_trace::guardrail_observer`.
+  See [Guardrails](guardrails.md).
 - **Sandboxing**: the harness file tools are confined to the workspace root (path escapes are blocked). Shell
   commands run on the host: run the harness in a container or VM with no credentials it does not need.
 
