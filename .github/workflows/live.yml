@@ -32,14 +32,15 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 20
     env:
-      # Small enough for a CPU runner, calls tools, and does not spend the token
+      # A 4B instruct model: agentic harness tests need it (1.5B models fail them),
+      # it runs on a CPU runner, and it does not spend the token
       # budget on hidden reasoning (thinking models return empty content at low max_tokens).
-      SINEW_MODEL: qwen2.5:1.5b
+      SINEW_MODEL: qwen3:4b-instruct-2507-q4_K_M
       SINEW_EMBED_MODEL: all-minilm
       SINEW_QDRANT_URL: http://127.0.0.1:6333
       SINEW_PGVECTOR_URL: postgres://postgres:sinew@127.0.0.1:5432/postgres
       SINEW_TEST_PG_URL: postgres://postgres:sinew@127.0.0.1:5432/postgres
-      SINEW_LIVE_SPECS: ollama:qwen2.5:1.5b
+      SINEW_LIVE_SPECS: ollama:qwen3:4b-instruct-2507-q4_K_M
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
