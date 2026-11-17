@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/roanbrasil/sinew/actions/workflows/ci.yml/badge.svg)](https://github.com/roanbrasil/sinew/actions/workflows/ci.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![MSRV 1.88](https://img.shields.io/badge/MSRV-1.88-orange.svg)](Cargo.toml)
+[![MSRV 1.94](https://img.shields.io/badge/MSRV-1.94-orange.svg)](Cargo.toml)
 [![crates.io](https://img.shields.io/crates/v/sinew.svg)](https://crates.io/crates/sinew)
 [![docs.rs](https://img.shields.io/docsrs/sinew)](https://docs.rs/sinew)
 

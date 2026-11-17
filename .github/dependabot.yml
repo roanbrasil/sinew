@@ -12,6 +12,6 @@ updates:
     schedule:
       interval: monthly
     ignore:
-      # Its tags are Rust versions: `@stable` follows releases and `@1.88` is the
+      # Its tags are Rust versions: `@stable` follows releases and `@1.94` is the
       # MSRV pin, which must only change together with `rust-version`.
       - dependency-name: dtolnay/rust-toolchain

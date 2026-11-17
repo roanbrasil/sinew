@@ -546,10 +546,12 @@ impl Store {
     pub async fn delete_prompt(&self, name: &str) -> Result<bool> {
         let mut tx = self.pool().begin().await?;
         for table in ["prompt_tags", "prompt_versions"] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE name = ?"))
-                .bind(name)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {table} WHERE name = ?"
+            )))
+            .bind(name)
+            .execute(&mut *tx)
+            .await?;
         }
         let r = sqlx::query("DELETE FROM prompts WHERE name = ?")
             .bind(name)

@@ -9,10 +9,11 @@ yanked = "deny"
 # reviewed when bumping; only direct dependencies fail the check.
 unmaintained = "workspace"
 ignore = [
-  # Bundled SQLite < 3.54 (via sqlx 0.8 -> libsqlite3-sys 0.30). Only reachable when
-  # opening a database plus `-wal` file written by an untrusted party. Fixed by
-  # moving to sqlx 0.9 (needs Rust 1.94); tracked in CHANGELOG "Unreleased".
-  { id = "RUSTSEC-2026-0459", reason = "local-only, pending sqlx 0.9 upgrade" },
+  # Bundled SQLite in libsqlite3-sys < 0.39 (CVE-2026-119375). Exploitable only by
+  # opening a database plus `-wal` file written by an untrusted party. sqlx-sqlite
+  # (0.8 and 0.9.0) caps libsqlite3-sys below 0.38, so no sqlx release fixes it yet.
+  # Tracked in #9.
+  { id = "RUSTSEC-2026-0459", reason = "local-only; waiting for sqlx-sqlite to allow libsqlite3-sys >= 0.39 (#9)" },
 ]
 
 [licenses]

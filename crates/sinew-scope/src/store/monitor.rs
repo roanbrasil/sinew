@@ -190,7 +190,7 @@ fn parse_cursor(c: &str) -> Option<(i64, String)> {
 }
 
 impl Store {
-    fn push_run_filters(&self, qb: &mut QueryBuilder<'_, Sqlite>, q: &RunQuery) {
+    fn push_run_filters(&self, qb: &mut QueryBuilder<Sqlite>, q: &RunQuery) {
         if let Some(p) = q.project.as_ref().filter(|p| !p.is_empty()) {
             qb.push(" AND runs.project = ").push_bind(p.clone());
         }
@@ -268,7 +268,7 @@ impl Store {
     /// pages stay as fast as the first one.
     pub async fn search_runs(&self, q: &RunQuery) -> Result<RunPage> {
         let limit = q.limit.unwrap_or(50).clamp(1, 500);
-        let mut qb: QueryBuilder<'_, Sqlite> = QueryBuilder::new(
+        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(
             "SELECT runs.id, runs.trace_id, runs.parent_id, runs.project, runs.name, runs.kind, \
              runs.start_ms, runs.end_ms, runs.error, runs.input_tokens, runs.output_tokens, \
              runs.model, runs.cost_usd, runs.ttft_ms, json_extract(runs.metadata, '$.tags') AS tags, \
@@ -341,7 +341,7 @@ impl Store {
             "kind" => "kind",
             _ => "name",
         };
-        let mut qb: QueryBuilder<'_, Sqlite> = if level == "trace" {
+        let mut qb: QueryBuilder<Sqlite> = if level == "trace" {
             let group = if group_by == "model" {
                 "name"
             } else {

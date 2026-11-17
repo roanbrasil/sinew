@@ -20,6 +20,8 @@ use sinew_graph::{Checkpoint, Checkpointer};
 use crate::api::{Thread, ThreadQuery, ThreadStatus};
 
 /// Name of the table the SQL stores create for thread records.
+/// Table names below are the only values interpolated into SQL strings
+/// (`AssertSqlSafe`); everything else is bound.
 pub const THREADS_TABLE: &str = "sinew_serve_threads";
 
 /// Storage failure.
@@ -212,7 +214,7 @@ mod sqlite {
 
         /// Uses an existing checkpointer (and its pool).
         pub async fn new(checkpoints: SqliteCheckpointer) -> Result<Self, StoreError> {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "CREATE TABLE IF NOT EXISTS {THREADS_TABLE} (
                     thread_id TEXT PRIMARY KEY,
                     assistant_id TEXT,
@@ -220,12 +222,12 @@ mod sqlite {
                     metadata TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL)"
-            ))
+            )))
             .execute(checkpoints.pool())
             .await?;
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "CREATE INDEX IF NOT EXISTS {THREADS_TABLE}_updated ON {THREADS_TABLE} (updated_at)"
-            ))
+            )))
             .execute(checkpoints.pool())
             .await?;
             Ok(Self { checkpoints })
@@ -250,10 +252,10 @@ mod sqlite {
         }
 
         async fn create_thread(&self, t: &Thread) -> Result<bool, StoreError> {
-            let res = sqlx::query(&format!(
+            let res = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO {THREADS_TABLE} (thread_id, assistant_id, status, metadata, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(thread_id) DO NOTHING"
-            ))
+            )))
             .bind(&t.thread_id)
             .bind(&t.assistant_id)
             .bind(t.status.as_str())
@@ -266,9 +268,9 @@ mod sqlite {
         }
 
         async fn get_thread(&self, thread_id: &str) -> Result<Option<Thread>, StoreError> {
-            let row = sqlx::query(&format!(
+            let row = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "SELECT * FROM {THREADS_TABLE} WHERE thread_id = ?"
-            ))
+            )))
             .bind(thread_id)
             .fetch_optional(self.checkpoints.pool())
             .await?;
@@ -276,10 +278,10 @@ mod sqlite {
         }
 
         async fn update_thread(&self, t: &Thread) -> Result<(), StoreError> {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {THREADS_TABLE} SET assistant_id = ?, status = ?, metadata = ?, updated_at = ?
                  WHERE thread_id = ?"
-            ))
+            )))
             .bind(&t.assistant_id)
             .bind(t.status.as_str())
             .bind(t.metadata.to_string())
@@ -292,11 +294,11 @@ mod sqlite {
 
         async fn list_threads(&self, q: &ThreadQuery) -> Result<Vec<Thread>, StoreError> {
             let (limit, offset) = page(q);
-            let rows = sqlx::query(&format!(
+            let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "SELECT * FROM {THREADS_TABLE}
                  WHERE (? IS NULL OR assistant_id = ?) AND (? IS NULL OR status = ?)
                  ORDER BY updated_at DESC, thread_id DESC LIMIT ? OFFSET ?"
-            ))
+            )))
             .bind(&q.assistant_id)
             .bind(&q.assistant_id)
             .bind(q.status.map(ThreadStatus::as_str))
@@ -310,10 +312,12 @@ mod sqlite {
 
         async fn delete_thread(&self, thread_id: &str) -> Result<bool, StoreError> {
             let cps = self.checkpoints.delete_thread(thread_id).await?;
-            let res = sqlx::query(&format!("DELETE FROM {THREADS_TABLE} WHERE thread_id = ?"))
-                .bind(thread_id)
-                .execute(self.checkpoints.pool())
-                .await?;
+            let res = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {THREADS_TABLE} WHERE thread_id = ?"
+            )))
+            .bind(thread_id)
+            .execute(self.checkpoints.pool())
+            .await?;
             Ok(res.rows_affected() > 0 || cps > 0)
         }
 
@@ -351,7 +355,7 @@ mod postgres {
 
         /// Uses an existing checkpointer (and its pool).
         pub async fn new(checkpoints: PostgresCheckpointer) -> Result<Self, StoreError> {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "CREATE TABLE IF NOT EXISTS {THREADS_TABLE} (
                     thread_id TEXT PRIMARY KEY,
                     assistant_id TEXT,
@@ -359,12 +363,12 @@ mod postgres {
                     metadata TEXT NOT NULL,
                     created_at BIGINT NOT NULL,
                     updated_at BIGINT NOT NULL)"
-            ))
+            )))
             .execute(checkpoints.pool())
             .await?;
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "CREATE INDEX IF NOT EXISTS {THREADS_TABLE}_updated ON {THREADS_TABLE} (updated_at)"
-            ))
+            )))
             .execute(checkpoints.pool())
             .await?;
             Ok(Self { checkpoints })
@@ -389,10 +393,10 @@ mod postgres {
         }
 
         async fn create_thread(&self, t: &Thread) -> Result<bool, StoreError> {
-            let res = sqlx::query(&format!(
+            let res = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO {THREADS_TABLE} (thread_id, assistant_id, status, metadata, created_at, updated_at)
                  VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (thread_id) DO NOTHING"
-            ))
+            )))
             .bind(&t.thread_id)
             .bind(&t.assistant_id)
             .bind(t.status.as_str())
@@ -405,9 +409,9 @@ mod postgres {
         }
 
         async fn get_thread(&self, thread_id: &str) -> Result<Option<Thread>, StoreError> {
-            let row = sqlx::query(&format!(
+            let row = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "SELECT * FROM {THREADS_TABLE} WHERE thread_id = $1"
-            ))
+            )))
             .bind(thread_id)
             .fetch_optional(self.checkpoints.pool())
             .await?;
@@ -415,10 +419,10 @@ mod postgres {
         }
 
         async fn update_thread(&self, t: &Thread) -> Result<(), StoreError> {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {THREADS_TABLE} SET assistant_id = $1, status = $2, metadata = $3, updated_at = $4
                  WHERE thread_id = $5"
-            ))
+            )))
             .bind(&t.assistant_id)
             .bind(t.status.as_str())
             .bind(t.metadata.to_string())
@@ -431,11 +435,11 @@ mod postgres {
 
         async fn list_threads(&self, q: &ThreadQuery) -> Result<Vec<Thread>, StoreError> {
             let (limit, offset) = page(q);
-            let rows = sqlx::query(&format!(
+            let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "SELECT * FROM {THREADS_TABLE}
                  WHERE ($1::TEXT IS NULL OR assistant_id = $1) AND ($2::TEXT IS NULL OR status = $2)
                  ORDER BY updated_at DESC, thread_id DESC LIMIT $3 OFFSET $4"
-            ))
+            )))
             .bind(&q.assistant_id)
             .bind(q.status.map(ThreadStatus::as_str))
             .bind(limit as i64)
@@ -447,10 +451,12 @@ mod postgres {
 
         async fn delete_thread(&self, thread_id: &str) -> Result<bool, StoreError> {
             let cps = self.checkpoints.delete_thread(thread_id).await?;
-            let res = sqlx::query(&format!("DELETE FROM {THREADS_TABLE} WHERE thread_id = $1"))
-                .bind(thread_id)
-                .execute(self.checkpoints.pool())
-                .await?;
+            let res = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {THREADS_TABLE} WHERE thread_id = $1"
+            )))
+            .bind(thread_id)
+            .execute(self.checkpoints.pool())
+            .await?;
             Ok(res.rows_affected() > 0 || cps > 0)
         }
 

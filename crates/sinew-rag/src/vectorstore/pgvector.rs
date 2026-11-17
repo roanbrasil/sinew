@@ -63,7 +63,7 @@ impl PgVectorStore {
             .execute(&mut *tx)
             .await?;
         for stmt in SCHEMA {
-            sqlx::query(stmt).execute(&mut *tx).await?;
+            sqlx::query(*stmt).execute(&mut *tx).await?;
         }
         tx.commit().await?;
         Ok(Self {
@@ -103,7 +103,10 @@ impl PgVectorStore {
             "CREATE INDEX IF NOT EXISTS sinew_pgvector_hnsw_{n} ON sinew_pgvector \
              USING hnsw ((embedding::vector({n})) vector_cosine_ops)"
         );
-        sqlx::query(&sql).execute(&self.pool).await?;
+        // `n` is a number we control, not user text.
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -153,8 +156,8 @@ fn parse_vector(s: &str) -> Vec<f32> {
         .collect()
 }
 
-fn push_filter(qb: &mut QueryBuilder<'_, Postgres>, f: &Filter) {
-    let num_cmp = |qb: &mut QueryBuilder<'_, Postgres>, k: &str, op: &str, x: f64| {
+fn push_filter(qb: &mut QueryBuilder<Postgres>, f: &Filter) {
+    let num_cmp = |qb: &mut QueryBuilder<Postgres>, k: &str, op: &str, x: f64| {
         qb.push("(CASE WHEN jsonb_typeof(metadata->")
             .push_bind(k.to_string())
             .push(") = 'number' THEN (metadata->>")
@@ -163,7 +166,7 @@ fn push_filter(qb: &mut QueryBuilder<'_, Postgres>, f: &Filter) {
             .push_bind(x)
             .push(" ELSE FALSE END)");
     };
-    let contains = |qb: &mut QueryBuilder<'_, Postgres>, k: &str, v: &serde_json::Value| {
+    let contains = |qb: &mut QueryBuilder<Postgres>, k: &str, v: &serde_json::Value| {
         qb.push("metadata @> ")
             .push_bind(json!({ k: v }).to_string())
             .push("::jsonb");
@@ -388,7 +391,7 @@ mod tests {
                 .and(Filter::gte("year", 2020.0))
                 .and(Filter::is_in("tag", ["a", "b"]).not()),
         );
-        let sql = qb.sql().to_string();
+        let sql = qb.sql().as_str().to_string();
         assert!(sql.starts_with("(metadata @> $1::jsonb AND (CASE WHEN jsonb_typeof(metadata->$2)"));
         assert!(sql.contains("NOT ((metadata @> $5::jsonb OR metadata @> $6::jsonb))"));
     }
