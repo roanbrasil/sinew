@@ -73,6 +73,7 @@ pub use events::{AgentEvent, AgentOutcome, AgentStream, RunResult};
 pub use guardrails::{Guardrail, GuardrailStage, GuardrailVerdict, InjectionDetector, PiiRedactor};
 pub use hooks::{Hook, HookContext, ToolDecision};
 pub use permissions::{Permission, PermissionPolicy, PermissionRule};
+pub use sinew_graph::prebuilt::{LoopAction, LoopGuard};
 pub use state::{
     ApprovalDecision, ApprovalRequest, CallDecision, HarnessState, StopReason, Todo, TodoStatus,
     UsageTotals,

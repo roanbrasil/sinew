@@ -10,11 +10,14 @@ All notable changes to this project are documented here. The format follows
 
 - `#[sinew::tool]` attribute (new crate `sinew-macros`, feature `macros`, on by default in `sinew`): a plain sync or async function becomes a `Tool`; name from the function, description from the doc comment, JSON Schema from the argument types (argument doc comments, `Option`, enums, `#[serde]`/`#[schemars]` attributes), `#[state]` for injected application state, helpful compile errors. `tools![...]` builds a `ToolBox` (#4).
 - Guide: [docs/tools.md](docs/tools.md).
+- `LoopGuard` for tool-calling agents: catches repeated identical tool calls and turns whose tools keep failing, then nudges the model, stops the run or asks a human (`LoopAction`). Opt-in on `ReactAgent::loop_guard`, on by default in `sinew-harness` (`AgentBuilder::loop_guard`, `None` to disable). Detections are emitted as `loop_detected` custom events (#26). Guide: [docs/loop-detection.md](docs/loop-detection.md).
 
 ### Changed
 
 - Tool parameter schemas from `TypedTool` and `#[tool]` inline nested types instead of using `$ref`/`$defs`, which several providers reject.
 - Samples 03 and 22 use `#[sinew::tool]`.
+- `sinew-harness`: loop detection is on by default (see above).
+- `ReactAgent`: the `tools` node now routes with `Command::goto("agent")` instead of a static edge.
 
 ## [0.1.0] - 2026-11-16
 

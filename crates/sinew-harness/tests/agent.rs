@@ -960,3 +960,91 @@ async fn cancelled_stream_leaves_a_resumable_thread() {
     );
     assert!(msgs[3].content.contains("not executed"));
 }
+
+fn search_tool(
+    calls: Arc<AtomicUsize>,
+    fail: bool,
+) -> FnTool<impl Fn(Value) -> sinew_core::Result<Value> + Send + Sync> {
+    FnTool::new(
+        "search",
+        "search",
+        json!({"type": "object"}),
+        move |_: Value| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            if fail {
+                Err(sinew_core::Error::Tool {
+                    name: "search".into(),
+                    message: "down".into(),
+                })
+            } else {
+                Ok(json!("nothing"))
+            }
+        },
+    )
+}
+
+#[tokio::test]
+async fn loop_guard_is_on_by_default_and_nudges_repeated_calls() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let model = Arc::new(ScriptedModel::new([
+        tool_msg(vec![call("1", "search", json!({"q": "x"}))]),
+        tool_msg(vec![call("2", "search", json!({"q": "x"}))]),
+        tool_msg(vec![call("3", "search", json!({"q": "x"}))]),
+        Message::assistant("Nothing found."),
+    ]));
+    let agent = Agent::builder()
+        .model_arc(model)
+        .tool(search_tool(calls.clone(), false))
+        .build()
+        .unwrap();
+    let AgentOutcome::Completed(r) = agent.run("t", "find x").await.unwrap() else {
+        panic!("expected completion")
+    };
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(r.text, "Nothing found.");
+    let state = agent.state("t").await.unwrap().unwrap();
+    let results = tool_results(&state.messages);
+    assert!(results[2].contains("loop detected"), "{}", results[2]);
+
+    // Turned off, the third call runs.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let model = Arc::new(ScriptedModel::new([
+        tool_msg(vec![call("1", "search", json!({"q": "x"}))]),
+        tool_msg(vec![call("2", "search", json!({"q": "x"}))]),
+        tool_msg(vec![call("3", "search", json!({"q": "x"}))]),
+        Message::assistant("Nothing found."),
+    ]));
+    let agent = Agent::builder()
+        .model_arc(model)
+        .tool(search_tool(calls.clone(), false))
+        .loop_guard(None)
+        .build()
+        .unwrap();
+    agent.run("t", "find x").await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn loop_guard_stops_a_turn_whose_tools_keep_failing() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let model = Arc::new(ScriptedModel::new([
+        tool_msg(vec![call("1", "search", json!({"q": "a"}))]),
+        tool_msg(vec![call("2", "search", json!({"q": "b"}))]),
+        tool_msg(vec![call("3", "search", json!({"q": "c"}))]),
+        tool_msg(vec![call("4", "search", json!({"q": "d"}))]),
+        Message::assistant("unreachable"),
+    ]));
+    let agent = Agent::builder()
+        .model_arc(model)
+        .tool(search_tool(calls.clone(), true))
+        .build()
+        .unwrap();
+    let AgentOutcome::Completed(r) = agent.run("t", "find").await.unwrap() else {
+        panic!("expected completion")
+    };
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert!(matches!(&r.stop, Some(StopReason::Guardrail(m)) if m.contains("loop detected")));
+    // The thread stays valid: every tool call has a result.
+    let state = agent.state("t").await.unwrap().unwrap();
+    assert_eq!(tool_results(&state.messages).len(), 4);
+}

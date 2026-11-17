@@ -8,6 +8,7 @@ use sinew_core::{
     providers::from_spec, ChatModel, ChatRequest, Message, Role, StreamEvent, StructuredOutput,
     Tool, ToolBox, ToolSpec,
 };
+use sinew_graph::prebuilt::{LoopAction, LoopGuard, LOOP_STOP_REPLY};
 use sinew_graph::{
     BoxError, Checkpointer, CompiledGraph, GraphEvent, MemoryCheckpointer, NodeContext, RunOutcome,
     StateGraph, END,
@@ -61,6 +62,7 @@ pub(crate) struct Config {
     offload_dir: PathBuf,
     offload_display: String,
     budget: Budget,
+    loop_guard: Option<LoopGuard>,
     pricing: Option<Pricing>,
     guardrails: Vec<Arc<dyn Guardrail>>,
     output: Option<StructuredOutput>,
@@ -81,6 +83,7 @@ pub(crate) struct SubagentContext {
     context: ContextConfig,
     offload: (PathBuf, String),
     budget: Budget,
+    loop_guard: Option<LoopGuard>,
     pricing: Option<Pricing>,
     guardrails: Vec<Arc<dyn Guardrail>>,
     tracer: Option<Tracer>,
@@ -125,6 +128,7 @@ pub(crate) fn build_subagent(ctx: &SubagentContext, spec: &SubagentSpec) -> Resu
         context: ctx.context.clone(),
         offload: Some(ctx.offload.clone()),
         budget,
+        loop_guard: ctx.loop_guard.clone(),
         pricing: ctx.pricing,
         guardrails: ctx.guardrails.clone(),
         tracer: ctx.tracer.clone(),
@@ -185,6 +189,7 @@ pub struct AgentBuilder {
     context: ContextConfig,
     offload: Option<(PathBuf, String)>,
     budget: Budget,
+    loop_guard: Option<LoopGuard>,
     pricing: Option<Pricing>,
     guardrails: Vec<Arc<dyn Guardrail>>,
     project_instructions: bool,
@@ -227,6 +232,7 @@ impl AgentBuilder {
             context: ContextConfig::default(),
             offload: None,
             budget: Budget::default(),
+            loop_guard: Some(LoopGuard::default()),
             pricing: None,
             guardrails: Vec::new(),
             project_instructions: false,
@@ -437,6 +443,17 @@ impl AgentBuilder {
         self
     }
 
+    /// Loop detection for tool calls (on by default with
+    /// [`LoopGuard::default`]): a call repeated with the same arguments is
+    /// answered with a nudge instead of running, and a turn whose tool calls
+    /// keep failing stops with [`StopReason::Guardrail`]. With
+    /// [`LoopAction::Interrupt`] the repeated calls go to approval instead.
+    /// Pass `None` to turn it off.
+    pub fn loop_guard(mut self, guard: impl Into<Option<LoopGuard>>) -> Self {
+        self.loop_guard = guard.into();
+        self
+    }
+
     pub fn max_steps(mut self, n: u32) -> Self {
         self.budget.max_steps = n;
         self
@@ -579,6 +596,7 @@ impl AgentBuilder {
                 context: self.context.clone(),
                 offload: offload.clone(),
                 budget: self.budget.clone(),
+                loop_guard: self.loop_guard.clone(),
                 pricing: self.pricing,
                 guardrails: self.guardrails.clone(),
                 tracer: self.tracer.clone(),
@@ -640,6 +658,7 @@ impl AgentBuilder {
             offload_dir: offload.0,
             offload_display: offload.1,
             budget: self.budget.clone(),
+            loop_guard: self.loop_guard.clone(),
             pricing: self.pricing,
             guardrails: self.guardrails.clone(),
             output: self.output.clone(),
@@ -1238,6 +1257,55 @@ async fn agent_node(cfg: &Config, mut s: HarnessState, ctx: NodeContext) -> Resu
         });
     }
     s.messages.push(msg);
+    if let Some(guard) = &cfg.loop_guard {
+        let check = guard.check(&s.messages);
+        if check.is_loop() {
+            if check.stuck && guard.action != LoopAction::Interrupt
+                || guard.action == LoopAction::Stop
+            {
+                for p in &pending {
+                    s.messages.push(Message::tool_result(
+                        p.call.id.clone(),
+                        "skipped: the turn was stopped by the loop guard",
+                    ));
+                }
+                s.messages.push(Message::assistant(LOOP_STOP_REPLY));
+                s.turn.stop = Some(StopReason::Guardrail(if check.stuck {
+                    format!(
+                        "loop detected: {} failing tool calls in a row",
+                        check.consecutive_errors
+                    )
+                } else {
+                    "loop detected: repeated tool calls".into()
+                }));
+                return Ok(s);
+            }
+            for r in &check.repeated {
+                if let Some(p) = pending.iter_mut().find(|p| p.call.id == r.id) {
+                    let reason = LoopGuard::nudge_message(r)
+                        .trim_start_matches("error: ")
+                        .to_string();
+                    p.decision = match guard.action {
+                        LoopAction::Interrupt => CallDecision::Ask { reason },
+                        _ => CallDecision::Deny { reason },
+                    };
+                }
+            }
+            if check.stuck {
+                // Interrupt mode: ask about every call of a stuck turn.
+                for p in &mut pending {
+                    if p.decision == CallDecision::Allow {
+                        p.decision = CallDecision::Ask {
+                            reason: format!(
+                                "loop detected: {} failing tool calls in a row",
+                                check.consecutive_errors
+                            ),
+                        };
+                    }
+                }
+            }
+        }
+    }
     s.pending = pending;
     Ok(s)
 }

@@ -3,6 +3,7 @@
 //! and a [`Swarm`] of agents that hand off to each other.
 
 mod handoff;
+mod loop_guard;
 mod supervisor;
 mod swarm;
 
@@ -16,6 +17,7 @@ use sinew_core::{
 use sinew_trace::{traced_chat, traced_chat_stream, traced_tool};
 
 pub use handoff::{create_handoff_tool, Handoff};
+pub use loop_guard::{LoopAction, LoopCheck, LoopGuard, RepeatedCall, LOOP_STOP_REPLY};
 pub use supervisor::{create_supervisor, NamedAgent, OutputMode, Supervisor};
 pub use swarm::{create_swarm, Swarm, SwarmState};
 
@@ -77,6 +79,7 @@ pub struct ReactAgent {
     response_format: Option<StructuredOutput>,
     max_iterations: Option<usize>,
     handoffs: Vec<Handoff>,
+    loop_guard: Option<LoopGuard>,
 }
 
 impl ReactAgent {
@@ -90,6 +93,7 @@ impl ReactAgent {
             response_format: None,
             max_iterations: None,
             handoffs: Vec::new(),
+            loop_guard: None,
         }
     }
 
@@ -135,6 +139,16 @@ impl ReactAgent {
     /// [`MAX_ITERATIONS_REPLY`] instead of calling the model again.
     pub fn max_iterations(mut self, n: usize) -> Self {
         self.max_iterations = Some(n);
+        self
+    }
+
+    /// Catches the agent repeating the same tool call or failing over and
+    /// over: the repeated call is answered with a nudge, the run stops, or a
+    /// human is asked, depending on [`LoopGuard::action`]. Each detection is
+    /// also emitted as a [`GraphEvent::Custom`](crate::GraphEvent::Custom)
+    /// with a `loop_detected` field.
+    pub fn loop_guard(mut self, guard: LoopGuard) -> Self {
+        self.loop_guard = Some(guard);
         self
     }
 
@@ -201,13 +215,55 @@ impl ReactAgent {
 
         let tools = self.tools.clone();
         let handoffs = self.handoffs.clone();
-        g.add_command_node("tools", ["agent"], move |mut s: AgentState, ctx| {
+        let guard = self.loop_guard.clone();
+        g.add_command_node("tools", ["agent", END], move |mut s: AgentState, ctx| {
             let tools = tools.clone();
             let handoffs = handoffs.clone();
+            let guard = guard.clone();
             async move {
                 let calls = s.last().map(|m| m.tool_calls.clone()).unwrap_or_default();
+                let mut nudged: Vec<RepeatedCall> = Vec::new();
+                if let Some(g) = &guard {
+                    let check = g.check(&s.messages);
+                    if check.is_loop() {
+                        ctx.emit(json!({ "loop_detected": &check }));
+                        let action = match g.action {
+                            LoopAction::Nudge if check.stuck => LoopAction::Stop,
+                            a => a,
+                        };
+                        let stop = match action {
+                            LoopAction::Nudge => {
+                                nudged = check.repeated.clone();
+                                false
+                            }
+                            LoopAction::Stop => true,
+                            LoopAction::Interrupt => {
+                                let proceed: bool =
+                                    ctx.interrupt(json!({ "loop_detected": &check }))?;
+                                !proceed
+                            }
+                        };
+                        if stop {
+                            for call in &calls {
+                                s.messages.push(Message::tool_result(
+                                    call.id.clone(),
+                                    "skipped: the run was stopped by the loop guard",
+                                ));
+                            }
+                            s.messages.push(Message::assistant(LOOP_STOP_REPLY));
+                            return Ok(Command::goto(END).with_update(s));
+                        }
+                    }
+                }
                 let mut target = None;
                 for call in &calls {
+                    if let Some(r) = nudged.iter().find(|r| r.id == call.id) {
+                        s.messages.push(Message::tool_result(
+                            call.id.clone(),
+                            LoopGuard::nudge_message(r),
+                        ));
+                        continue;
+                    }
                     if let Some(h) = handoffs.iter().find(|h| h.tool_name == call.name) {
                         let reply = if target.is_none() {
                             target = Some(h.agent.clone());
@@ -232,7 +288,7 @@ impl ReactAgent {
                             "active_agent": agent,
                         }))
                         .to_parent(),
-                    None => Command::update(s),
+                    None => Command::goto("agent").with_update(s),
                 })
             }
         });
@@ -265,7 +321,6 @@ impl ReactAgent {
                 g.add_conditional_edges("agent", route, targets);
             }
         }
-        g.add_edge("tools", "agent");
 
         if let Some(format) = self.response_format {
             let model = self.model.clone();

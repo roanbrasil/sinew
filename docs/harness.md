@@ -282,3 +282,7 @@ ignored by default:
 ```bash
 cargo test -p sinew-harness --test live_ollama -- --ignored --test-threads=1
 ```
+
+## Loop detection
+
+On by default: a tool call repeated with the same arguments is denied with a nudge, and a turn whose tool calls keep failing stops with `StopReason::Guardrail`. Configure it with `.loop_guard(LoopGuard::default().max_repeats(3))` or turn it off with `.loop_guard(None)`. See [Loop detection](loop-detection.md).
