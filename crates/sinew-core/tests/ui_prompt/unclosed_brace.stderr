@@ -1,0 +1,5 @@
+error: invalid prompt template: unclosed `{` at byte 10; write `{{` for a literal brace
+ --> tests/ui_prompt/unclosed_brace.rs:2:33
+  |
+2 |     let _ = sinew_core::prompt!("Summarize {text in French").format();
+  |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^

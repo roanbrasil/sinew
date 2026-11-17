@@ -1,0 +1,12 @@
+error[E0599]: no method named `txt` found for struct `Prompt<__T0>` in the current scope
+ --> tests/ui_prompt/unknown_variable.rs:2:53
+  |
+2 |     let _ = sinew_core::prompt!("Summarize {text}").txt("doc").format();
+  |             --------------------------------------- ^^^
+  |             |
+  |             method `txt` not found for this struct
+  |
+help: there is a method `text` with a similar name
+  |
+2 |     let _ = sinew_core::prompt!("Summarize {text}").text("doc").format();
+  |                                                      +

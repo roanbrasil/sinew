@@ -1,6 +1,6 @@
 [package]
 name = "sinew-macros"
-description = "Procedural macros for Sinew: #[sinew::tool] turns a function into an LLM tool"
+description = "Procedural macros for Sinew: #[sinew::tool], #[derive(State)] and compile-time checked prompt! templates"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

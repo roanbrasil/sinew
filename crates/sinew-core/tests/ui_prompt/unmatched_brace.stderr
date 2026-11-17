@@ -1,0 +1,5 @@
+error: invalid prompt template: unmatched `}` at byte 19; write `}}` for a literal brace
+ --> tests/ui_prompt/unmatched_brace.rs:2:33
+  |
+2 |     let _ = sinew_core::prompt!("Reply with {answer}} only").format();
+  |                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^

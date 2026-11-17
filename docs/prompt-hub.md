@@ -12,6 +12,9 @@ record exactly which version produced it.
 - Pushing content identical to the latest version stores nothing (`created: false`).
 - **Tags** (`prod`, `staging`, `canary`, ...) point at a commit and can be moved at any time.
 
+Templates kept in code can use [`prompt!`](prompts.md#using-it-with-runnables-and-the-prompt-hub),
+which checks their variables at compile time and converts to the `PromptTemplate` the hub stores.
+
 ## References
 
 | Reference | Resolves to |

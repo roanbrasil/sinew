@@ -1,0 +1,5 @@
+error: cannot read prompt file `prompts/does_not_exist.txt` (paths are relative to the crate's CARGO_MANIFEST_DIR): file not found
+ --> tests/ui_prompt/missing_file.rs:2:40
+  |
+2 |     let _ = sinew_core::prompt!(file = "prompts/does_not_exist.txt").format();
+  |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

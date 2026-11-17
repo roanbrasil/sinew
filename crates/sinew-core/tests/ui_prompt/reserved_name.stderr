@@ -1,0 +1,5 @@
+error: invalid prompt template: variable name `format` collides with the `format()` method of the generated prompt type; rename the variable
+ --> tests/ui_prompt/reserved_name.rs:2:33
+  |
+2 |     let _ = sinew_core::prompt!("Output {format}").format();
+  |                                 ^^^^^^^^^^^^^^^^^

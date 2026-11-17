@@ -24,8 +24,12 @@ let tools = ToolBox::new().with(get_order::tool(db));
 
 - `#[tool]`: a function becomes a tool; name from the function, description from the doc comment, JSON
   Schema from the argument types, `#[state]` for injected application state.
+- `prompt!` / `chat_prompt!`: prompt templates checked at compile time; a missing or misspelled variable is
+  a compile error. `prompt!("Summarize {text}").text(doc).format()`.
+- `#[derive(State)]`: field-wise reducers for graph state (re-exported by `sinew-graph`).
 
-Full guide: [docs/tools.md](https://github.com/roanbrasil/sinew/blob/main/docs/tools.md).
+Guides: [docs/tools.md](https://github.com/roanbrasil/sinew/blob/main/docs/tools.md) ·
+[docs/prompts.md](https://github.com/roanbrasil/sinew/blob/main/docs/prompts.md).
 
 How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).
 

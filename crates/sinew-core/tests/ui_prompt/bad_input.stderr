@@ -1,0 +1,5 @@
+error: prompt! expects a string literal template or `file = "path"`
+ --> tests/ui_prompt/bad_input.rs:2:33
+  |
+2 |     let _ = sinew_core::prompt!(path = "x.txt").format();
+  |                                 ^^^^
