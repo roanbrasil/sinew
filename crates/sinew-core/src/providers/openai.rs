@@ -59,12 +59,9 @@ impl OpenAiCompat {
     /// Local Ollama (`OLLAMA_HOST` or 127.0.0.1:11434).
     pub fn ollama(model: impl Into<String>) -> Self {
         let host = std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://127.0.0.1:11434".into());
-        let host = if host.starts_with("http") {
-            host
-        } else {
-            format!("http://{host}")
-        };
-        Self::new(format!("{}/v1", host.trim_end_matches('/')), model)
+        // Same normalization as `from_spec("ollama:...")`: scheme optional,
+        // trailing `/` or `/v1` accepted.
+        Self::new(super::presets::local_url(host), model)
             .with_capabilities(super::capabilities_for("ollama", "").unwrap_or_default())
     }
 
