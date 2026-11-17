@@ -1,0 +1,46 @@
+{
+  "query": "rust async runtime",
+  "number_of_results": 0,
+  "results": [
+    {
+      "url": "https://tokio.rs/",
+      "title": "Tokio - An asynchronous Rust runtime",
+      "content": "Tokio is an asynchronous runtime for the Rust programming language.",
+      "engine": "duckduckgo",
+      "parsed_url": ["https", "tokio.rs", "/", "", "", ""],
+      "template": "default.html",
+      "engines": ["duckduckgo", "brave"],
+      "positions": [1, 1],
+      "score": 4.0,
+      "category": "general"
+    },
+    {
+      "url": "https://docs.rs/async-std",
+      "title": "async_std - Rust",
+      "content": "Async version of the Rust standard library.",
+      "engine": "brave",
+      "parsed_url": ["https", "docs.rs", "/async-std", "", "", ""],
+      "template": "default.html",
+      "engines": ["brave"],
+      "positions": [3],
+      "score": 0.33,
+      "category": "general",
+      "publishedDate": "2024-06-01T00:00:00"
+    },
+    {
+      "url": "https://smol.example/",
+      "title": "smol",
+      "content": "",
+      "engine": "brave",
+      "engines": ["brave"],
+      "positions": [9],
+      "score": 0.1,
+      "category": "general"
+    }
+  ],
+  "answers": [],
+  "corrections": [],
+  "infoboxes": [],
+  "suggestions": ["rust tokio"],
+  "unresponsive_engines": []
+}

@@ -1,0 +1,64 @@
+[package]
+name = "sinew-tools"
+description = "Built-in tools for Sinew agents: web search, web fetch, Wikipedia, calculator, date/time, HTTP requests and e-mail, one cargo feature per family"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["llm", "agents", "tools", "web-search", "ai"]
+categories = ["asynchronous", "web-programming"]
+
+[features]
+default = []
+# `calculator`: arithmetic expression evaluator (no code execution).
+calculator = []
+# `current_time`, `date_add`, `date_diff` with IANA time zones (jiff).
+datetime = ["dep:jiff"]
+# `HttpRequestTool`: HTTP requests restricted to an allow-list of hosts.
+http = []
+# `web_fetch`: download a page and extract its main text (readability).
+web-fetch = ["dep:dom_smoothie"]
+# `web_search`: Tavily, Brave Search or SearXNG.
+web-search = []
+# `wikipedia_search` and `wikipedia_summary`.
+wikipedia = []
+# `send_email` over SMTP (lettre, rustls).
+email-smtp = ["dep:lettre"]
+# `email_list` and `email_read` over IMAP (async-imap, rustls), read-only.
+email-imap = ["dep:async-imap", "dep:tokio-rustls", "dep:webpki-roots", "dep:mailparse", "dep:futures-util"]
+# Both e-mail families.
+email = ["email-smtp", "email-imap"]
+# Every tool family.
+full = ["calculator", "datetime", "http", "web-fetch", "web-search", "wikipedia", "email"]
+
+[dependencies]
+sinew-core = { workspace = true, features = ["macros"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true
+url = "2"
+tokio = { version = "1", default-features = false, features = ["net", "time", "rt"] }
+jiff = { version = "1", optional = true }
+dom_smoothie = { version = "0.19", optional = true }
+lettre = { version = "0.11", optional = true, default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "hostname"] }
+async-imap = { version = "0.12", optional = true, default-features = false, features = ["runtime-tokio"] }
+tokio-rustls = { version = "0.26", optional = true, default-features = false, features = ["ring", "tls12"] }
+webpki-roots = { version = "1", optional = true }
+mailparse = { version = "0.18", optional = true }
+futures-util = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net", "io-util"] }
+axum.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true

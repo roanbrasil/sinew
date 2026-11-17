@@ -6,6 +6,7 @@
 //! | `sqlite` / `postgres` | `checkpoint`: durable checkpointers |
 //! | `rag` (`pgvector`, `qdrant`, `pdf`) | `rag`: embeddings, loaders, splitters, vector stores, retrievers |
 //! | `harness` | `harness`: agent harness with built-in tools, subagents, permissions |
+//! | `tools` | `builtin_tools`: web search, web fetch, Wikipedia, calculator, date/time, HTTP requests, e-mail (all `sinew-tools` families) |
 //! | `memory` | `memory`: long-term memory across threads (extraction, dedup, recall; `MemoryHook` with `harness`) |
 //! | `serve` | `serve`: deployment server, client and OpenAI-compatible endpoint |
 //! | `a2a` | `a2a`: Agent2Agent protocol client and server |
@@ -46,6 +47,8 @@ pub use sinew_memory as memory;
 pub use sinew_rag as rag;
 #[cfg(feature = "serve")]
 pub use sinew_serve as serve;
+#[cfg(feature = "tools")]
+pub use sinew_tools as builtin_tools;
 
 pub mod prelude {
     #[cfg(feature = "macros")]

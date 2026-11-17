@@ -123,9 +123,12 @@ container.
 
 GET with a timeout and a byte limit read in chunks. HTML is reduced to text
 (scripts, styles and comments dropped, block tags become line breaks,
-entities decoded). `localhost`, private, loopback and link-local IP literals
-are refused unless `allow_private` is set; `allowed_hosts` restricts the
-hosts further.
+entities decoded). `localhost`, private, loopback, link-local and other
+non-public addresses are refused unless `allow_private` is set, whether they are
+written as IP literals, reached through DNS or through a redirect (the SSRF guard
+from `sinew-tools`, see [Built-in tools](builtin-tools.md#ssrf-protection));
+`allowed_hosts` restricts the hosts further. For Readability extraction, web
+search and other ready-made tools, add tools from `sinew-tools`.
 
 ### `write_todos` and `think`
 

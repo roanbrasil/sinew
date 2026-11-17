@@ -1,11 +1,12 @@
 //! `http_fetch`: HTTP GET with a size limit and HTML-to-text extraction.
 
-use std::{net::IpAddr, sync::LazyLock, time::Duration};
+use std::{sync::LazyLock, time::Duration};
 
 use async_trait::async_trait;
 use regex::Regex;
 use serde_json::{json, Value};
 use sinew_core::{Tool, ToolSpec};
+use sinew_tools::{net::HostPolicy, ToolError};
 
 use super::{arg_str, arg_u64, tool_err, truncate_middle};
 
@@ -17,8 +18,11 @@ pub struct HttpOptions {
     /// Characters returned to the model (default 20 000).
     pub max_chars: usize,
     pub timeout: Duration,
-    /// Allow `localhost`, private and link-local IP literals (default false).
-    /// Host names are not resolved, so this is a guard, not a firewall.
+    /// Allow `localhost`, private, link-local and other non-public addresses
+    /// (default false). Checked on IP literals, on every DNS answer at
+    /// connection time and on every redirect, with the guard shared with
+    /// `sinew-tools` ([`sinew_tools::net::HostPolicy`]). Environment proxies
+    /// are not used.
     pub allow_private: bool,
     /// If non-empty, only these hosts (and their subdomains) may be fetched.
     pub allowed_hosts: Vec<String>,
@@ -58,66 +62,33 @@ impl HttpOptions {
 /// The `http_fetch` tool.
 #[derive(Debug, Clone)]
 pub struct HttpFetchTool {
-    client: reqwest::Client,
+    /// `Err` only if the TLS backend could not be initialized; then every
+    /// call fails instead of falling back to an unguarded client.
+    client: Result<reqwest::Client, String>,
+    policy: HostPolicy,
     options: HttpOptions,
 }
 
 impl HttpFetchTool {
     pub fn new(options: HttpOptions) -> Self {
-        let client = reqwest::Client::builder()
+        let policy = HostPolicy::new()
+            .allow_hosts(&options.allowed_hosts)
+            .allow_private(options.allow_private);
+        let client = policy
+            .client_builder()
             .timeout(options.timeout)
             .user_agent(options.user_agent.clone())
             .build()
-            .unwrap_or_default();
-        Self { client, options }
+            .map_err(|e| format!("cannot build the HTTP client: {e}"));
+        Self {
+            client,
+            policy,
+            options,
+        }
     }
 
     fn check_url(&self, raw: &str) -> Result<reqwest::Url, String> {
-        let url = reqwest::Url::parse(raw).map_err(|e| format!("invalid URL: {e}"))?;
-        if !matches!(url.scheme(), "http" | "https") {
-            return Err("only http and https URLs are allowed".into());
-        }
-        let host = url
-            .host_str()
-            .ok_or("URL has no host")?
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .to_ascii_lowercase();
-        if !self.options.allowed_hosts.is_empty()
-            && !self
-                .options
-                .allowed_hosts
-                .iter()
-                .any(|h| host == *h || host.ends_with(&format!(".{h}")))
-        {
-            return Err(format!("host `{host}` is not in the allowed hosts"));
-        }
-        if !self.options.allow_private && is_private_host(&host) {
-            return Err(format!("host `{host}` is local or private"));
-        }
-        Ok(url)
-    }
-}
-
-fn is_private_host(host: &str) -> bool {
-    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") {
-        return true;
-    }
-    match host.parse::<IpAddr>() {
-        Ok(IpAddr::V4(ip)) => {
-            ip.is_loopback()
-                || ip.is_private()
-                || ip.is_link_local()
-                || ip.is_unspecified()
-                || ip.octets()[0] == 0
-        }
-        Ok(IpAddr::V6(ip)) => {
-            ip.is_loopback()
-                || ip.is_unspecified()
-                || (ip.segments()[0] & 0xfe00) == 0xfc00
-                || (ip.segments()[0] & 0xffc0) == 0xfe80
-        }
-        Err(_) => false,
+        self.policy.check_url_str(raw).map_err(|e| e.to_string())
     }
 }
 
@@ -211,12 +182,12 @@ impl Tool for HttpFetchTool {
         let max_chars = arg_u64(&args, "max_chars").map_or(self.options.max_chars, |n| {
             (n as usize).min(self.options.max_chars)
         });
-        let mut resp = self
-            .client
+        let client = self.client.as_ref().map_err(|e| tool_err(name, e))?;
+        let mut resp = client
             .get(url.clone())
             .send()
             .await
-            .map_err(|e| tool_err(name, e))?;
+            .map_err(|e| tool_err(name, ToolError::from_reqwest(&e)))?;
         let status = resp.status();
         let content_type = resp
             .headers()
@@ -284,6 +255,11 @@ mod tests {
         assert!(t.check_url("http://localhost/").is_err());
         assert!(t.check_url("http://192.168.1.2/").is_err());
         assert!(t.check_url("http://[::1]/").is_err());
+        assert!(t.check_url("http://[::ffff:127.0.0.1]/").is_err());
+        assert!(t
+            .check_url("http://169.254.169.254/latest/meta-data/")
+            .is_err());
+        assert!(t.check_url("http://100.64.0.1/").is_err());
         assert!(t.check_url("file:///etc/passwd").is_err());
         assert!(t.check_url("https://example.com/").is_ok());
         let t = HttpFetchTool::new(HttpOptions::default().allow_host("docs.rs"));
