@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "samples/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.88"
 authors = ["Roan Brasil"]
@@ -23,18 +23,18 @@ tempfile = "3"
 futures-core = "0.3"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 schemars = "1"
-sinew-core = { path = "crates/sinew-core", version = "0.1.0" }
-sinew-macros = { path = "crates/sinew-macros", version = "0.1.0" }
-sinew-graph = { path = "crates/sinew-graph", version = "0.1.0" }
-sinew-trace = { path = "crates/sinew-trace", version = "0.1.0" }
-sinew-checkpoint = { path = "crates/sinew-checkpoint", version = "0.1.0", default-features = false }
-sinew-eval = { path = "crates/sinew-eval", version = "0.1.0" }
+sinew-core = { path = "crates/sinew-core", version = "0.1.1" }
+sinew-macros = { path = "crates/sinew-macros", version = "0.1.1" }
+sinew-graph = { path = "crates/sinew-graph", version = "0.1.1" }
+sinew-trace = { path = "crates/sinew-trace", version = "0.1.1" }
+sinew-checkpoint = { path = "crates/sinew-checkpoint", version = "0.1.1", default-features = false }
+sinew-eval = { path = "crates/sinew-eval", version = "0.1.1" }
 axum = "0.8"
 futures = "0.3"
 regex = "1"
-sinew-mcp = { path = "crates/sinew-mcp", version = "0.1.0" }
-sinew-harness = { path = "crates/sinew-harness", version = "0.1.0", default-features = false }
-sinew-rag = { path = "crates/sinew-rag", version = "0.1.0", default-features = false }
+sinew-mcp = { path = "crates/sinew-mcp", version = "0.1.1" }
+sinew-harness = { path = "crates/sinew-harness", version = "0.1.1", default-features = false }
+sinew-rag = { path = "crates/sinew-rag", version = "0.1.1", default-features = false }
 globset = { version = "0.4", default-features = false }
 walkdir = "2"
 csv = "1"
@@ -43,7 +43,7 @@ criterion = { version = "0.8", default-features = false, features = ["cargo_benc
 tower-http = { version = "0.7", features = ["cors"] }
 tokio-util = "0.7"
 bytes = "1"
-sinew-serve = { path = "crates/sinew-serve", version = "0.1.0", default-features = false }
+sinew-serve = { path = "crates/sinew-serve", version = "0.1.1", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
