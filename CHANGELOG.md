@@ -41,6 +41,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- `sinew-mcp`: `UriTemplate` matching was exponential in the number of variables (backtracking without memory); failed states are now memoized. `percent_decode` accepted a sign as a hex digit (`%+1`); escapes now need exactly two hex digits (#184).
 - `SseParser`: an empty chunk between a `\r` and its `\n` made the `\n` a second line ending, splitting one event in two (found by the `sse_parser` fuzz target, #96).
 - Anthropic and Gemini decoders (streaming, non-streaming, Anthropic batch status): token counts near `u32::MAX` overflowed when summed (a panic in debug builds) and counts above it were truncated; they now saturate, also for OpenAI-compatible usage (#96).
 - `sinew-trace` OTLP protobuf decoder (`proto::decode_request`, used by `sinew-scope` ingest): nested `arrayValue` / `kvlistValue`s recursed without a limit, so a small request could overflow the stack; nesting deeper than 32 levels is now an error (#96).
