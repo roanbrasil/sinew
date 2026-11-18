@@ -11,6 +11,10 @@
 //! For agents, the [`trajectory`] module scores the path as well as the
 //! answer: which tools were called, in which order, and at what cost.
 //!
+//! For security, the [`security`] module runs attack scenarios against an
+//! agent, without and with its controls, mapped to the OWASP Top 10 for
+//! Agentic Applications, and reports which attacks the controls stopped.
+//!
 //! For retrieval-augmented generation, the `rag` module (feature `rag`)
 //! scores faithfulness, answer relevance, context precision and recall,
 //! citation accuracy, semantic similarity and ranking quality, and writes
@@ -47,6 +51,7 @@ pub mod hub;
 pub mod pairwise;
 #[cfg(feature = "rag")]
 pub mod rag;
+pub mod security;
 pub mod summary;
 pub mod trajectory;
 

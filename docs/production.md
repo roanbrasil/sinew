@@ -81,6 +81,10 @@ let agent = ReactAgent::new(model, tools).compile()?.with_checkpointer(cp);
   and audit event for every decision. See [Governance](governance.md).
 - **Sandboxing**: the harness file tools are confined to the workspace root (path escapes are blocked). Shell
   commands run on the host: run the harness in a container or VM with no credentials it does not need.
+- **Security review**: [OWASP agentic controls map](security-owasp.md) maps each risk of the OWASP Top 10 for
+  Agentic Applications to these controls, with configuration and known gaps. Run the attack suite
+  (`cargo run -p sample-23-owasp-agentic`, or your own `sinew_eval::security` scenarios) in CI so a control that
+  stops working fails the build.
 
 ## 4. Serving
 
@@ -148,6 +152,7 @@ Copy into your PR template:
 - [ ] Agents registered in a control plane with owners and allowed tools; kill switch wired to an admin endpoint or alert
 - [ ] No agent holds both untrusted input and an exfiltration-capable tool
 - [ ] Shell / code tools run in a sandbox without unneeded credentials
+- [ ] OWASP agentic attack scenarios for this agent run in CI ([controls map](docs/security-owasp.md))
 - [ ] Server behind TLS, API keys required, CORS and MCP origins restricted, health/ready probes wired
 - [ ] Public MCP endpoints use OAuth (`with_oauth`): audience = public URL, short-lived tokens, per-tool scopes
 - [ ] Graceful shutdown grace period ≥ typical run length

@@ -3161,6 +3161,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sample-23-owasp-agentic"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "serde_json",
+ "sinew",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "sample-common"
 version = "0.0.0"
 dependencies = [

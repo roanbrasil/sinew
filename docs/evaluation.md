@@ -474,6 +474,30 @@ judges). `crates/sinew-eval/tests/rag.rs` checks every metric against hand-compu
 scripted judges and `FakeEmbeddings`, validates the retrieval metrics on a small labeled set with
 a BM25 retriever, and runs the generator and a full experiment.
 
+## Security attack scenarios
+
+The `security` module runs attack scenarios against an agent and reports which controls stopped them, mapped to
+the OWASP Top 10 for Agentic Applications for 2026 (`AgenticRisk::GoalHijack` = `ASI01` ... `RogueAgents` =
+`ASI10`). An `AttackScenario` builds the agent under test in a `setup` closure, delivers attacker-controlled input
+(user message, poisoned tool result, retrieved document, memory or tool description), and a `Detector` decides
+from the resulting `Observation` (thread, final answer, side effects that actually ran, memories) whether the
+attack succeeded. `SecuritySuite::run` runs every scenario twice, without and with the mapped controls, and returns
+a `SecurityReport` (`to_markdown`, `to_json`, `passed`, `gaps`, per-risk coverage). Offline, the agent's model is a
+`VulnerableModel` or `ScriptedModel` script that falls for the attack, so the suite tests the controls;
+`SuiteMode::Live` (or `SINEW_SECURITY_LIVE=provider:model`) runs the same scenarios against a real model.
+
+```rust
+use sinew_eval::security::*;
+
+let report = SecuritySuite::new("my-agent").scenarios(my_scenarios()).run().await;
+println!("{}", report.to_markdown());
+assert!(report.passed());
+```
+
+`samples/23-owasp-agentic` has sixteen scenarios, at least one per risk, against `ReactAgent`, the harness,
+`MemoryAgent` and an MCP server. The controls map, with the configuration for each risk and the known gaps, is in
+[security-owasp.md](security-owasp.md).
+
 ## Uploading to sinew-scope
 
 ```rust
