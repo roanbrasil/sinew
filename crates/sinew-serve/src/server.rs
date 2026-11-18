@@ -795,12 +795,40 @@ async fn search_threads(State(app): State<App>, b: Bytes) -> ApiResult<Vec<Threa
 }
 
 async fn threads_page(app: &App, q: &ThreadQuery) -> ApiResult<Vec<Thread>> {
-    let mut list = app.store.list_threads(q).await?;
-    for t in &mut list {
-        if app.runs.thread_busy(&t.thread_id) {
-            t.status = ThreadStatus::Busy;
+    let Some(status) = q.status else {
+        let mut list = app.store.list_threads(q).await?;
+        for t in &mut list {
+            if app.runs.thread_busy(&t.thread_id) {
+                t.status = ThreadStatus::Busy;
+            }
         }
-    }
+        return Ok(Json(list));
+    };
+    // `busy` is not stored: it comes from the runs in flight. Filter on the
+    // effective status here (the store would never match `busy`, and would
+    // return busy threads for their stored status), then page.
+    let (limit, offset) = crate::store::page(q);
+    let wide = ThreadQuery {
+        status: (status != ThreadStatus::Busy).then_some(status),
+        limit: Some(crate::store::MAX_LIMIT),
+        offset: None,
+        ..q.clone()
+    };
+    let list = app
+        .store
+        .list_threads(&wide)
+        .await?
+        .into_iter()
+        .map(|mut t| {
+            if app.runs.thread_busy(&t.thread_id) {
+                t.status = ThreadStatus::Busy;
+            }
+            t
+        })
+        .filter(|t| t.status == status)
+        .skip(offset)
+        .take(limit)
+        .collect();
     Ok(Json(list))
 }
 

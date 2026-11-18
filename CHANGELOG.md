@@ -48,8 +48,18 @@ All notable changes to this project are documented here. The format follows
 
 - `OpenAiCompat::ollama` accepts an `OLLAMA_HOST` ending in `/v1` (it produced `/v1/v1`), like `from_spec("ollama:...")`.
 - `sinew-scope`: opening a database that needs schema migrations could panic in sqlx (`index out of bounds`) when a pooled connection had cached a statement prepared before the `ALTER TABLE`; migrations now run on a separate connection.
+- Bugs found while raising test coverage (#139):
+  - `sinew-core`: a `Retry-After` header with a huge number of seconds (e.g. `1e30`) panicked inside `Duration::from_secs_f64`; it now saturates to `Duration::MAX` (capped by `RetryPolicy::with_max_retry_after`).
+  - `sinew-core`: `Error::is_retryable` returned `false` for a connection dropped while reading a response body (e.g. an SSE stream cut midway), although connection errors are documented as retryable.
+  - `sinew-core`: Anthropic `batch_status` and `batch_results` mapped HTTP errors with `error_for_status`, losing the error body and `Retry-After`; they now return `Error::Provider` / `Error::RateLimited` like every other provider call.
+  - `sinew-core`: `providers::capabilities_for` matched the provider name case-sensitively (`"Ollama"` gave `None`) while `from_spec` does not.
+  - `sinew-serve`: `GET /threads?status=busy` (and `POST /threads/search`) never matched, because `busy` comes from the runs in flight and is not stored, and `status=idle` listed busy threads; the filter now applies to the effective status before paging.
+  - `sinew-scope view`: a trace id with multi-byte characters could panic (cut at byte 8), run names were printed lowercased, and token totals could overflow `u32`.
+  - `sinew-agent`: `--max-steps` above `u32::MAX` silently wrapped (`4294967297` became `1`); it is now rejected.
 
 ### Changed
+
+- CI coverage: samples are now actually excluded from the report (`--exclude-from-report 'samples/*'` matched no package and is rejected by `cargo llvm-cov report`, an error the job hid behind `| tee`), and the job fails below 85% line coverage (`--fail-under-lines 85`). New offline tests for provider HTTP errors and streams cut midway, the Qdrant store and embedding clients against local mock servers, `sinew-scope` and `sinew-serve` API error paths, and the `sinew-scope` / `sinew-agent` command lines (#139).
 
 - `sinew-harness`'s `http_fetch` uses the `sinew-tools` SSRF guard (#70): with `allow_private` off (the default), host names that resolve to loopback, private or link-local addresses, redirects to such addresses, IPv4-mapped IPv6 literals and CGNAT / reserved ranges are now refused, and proxies from the environment are no longer used. `HttpOptions` is unchanged.
 - CONTRIBUTING.md documents the protected-branch workflow and commit signing; `.github/CODEOWNERS` added (#104).

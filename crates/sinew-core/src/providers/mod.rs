@@ -110,6 +110,24 @@ pub(crate) async fn post_json(
     Ok(serde_json::from_slice(&bytes)?)
 }
 
+/// Sends a request without a body (e.g. a `GET`) and returns the response
+/// once the status is OK, mapping failures like [`post_json`] does
+/// ([`Error::Provider`](crate::Error::Provider) with the body, or
+/// [`Error::RateLimited`](crate::Error::RateLimited) with `Retry-After`).
+pub(crate) async fn send_checked(
+    provider: &str,
+    req: reqwest::RequestBuilder,
+) -> crate::Result<reqwest::Response> {
+    let resp = req.send().await?;
+    let status = resp.status();
+    if !status.is_success() {
+        let headers = resp.headers().clone();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(status_error(provider, &headers, status.as_u16(), text));
+    }
+    Ok(resp)
+}
+
 /// Sends a streaming request and returns the response once the status is OK.
 pub(crate) async fn post_sse(
     provider: &str,

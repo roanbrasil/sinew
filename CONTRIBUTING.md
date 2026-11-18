@@ -12,6 +12,9 @@ cargo deny check   # optional locally: cargo install cargo-deny
 
 - Keep crates small and dependency-light; new heavy dependencies go behind a cargo feature.
 - Provider request/response mapping must be covered by offline unit tests (no network in `cargo test`).
+- Line coverage must stay at or above 85% (the `coverage` job fails below it). Check locally with
+  `cargo llvm-cov --workspace --all-features --ignore-filename-regex '/samples/' --summary-only`
+  (`cargo install cargo-llvm-cov`).
 - Public items need doc comments. Examples in docs should compile.
 - Add an entry to `CHANGELOG.md` under "Unreleased".
 - Hot paths (streaming decoders, graph supersteps, vector search) must not regress; run the benches (`cargo bench -p <crate>`) when touching them.

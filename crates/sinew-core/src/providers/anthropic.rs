@@ -667,22 +667,14 @@ impl crate::batch::BatchModel for Anthropic {
     }
 
     async fn batch_status(&self, id: &str) -> Result<crate::batch::BatchStatus> {
-        let resp = self
-            .get(&format!("{}/messages/batches/{id}", self.base_url))
-            .send()
-            .await?
-            .error_for_status()?;
-        decode_batch_status(&resp.json().await?)
+        let req = self.get(&format!("{}/messages/batches/{id}", self.base_url));
+        let resp = super::send_checked("anthropic", req).await?;
+        decode_batch_status(&serde_json::from_slice(&resp.bytes().await?)?)
     }
 
     async fn batch_results(&self, id: &str) -> Result<Vec<Result<ChatResponse>>> {
-        let text = self
-            .get(&format!("{}/messages/batches/{id}/results", self.base_url))
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
+        let req = self.get(&format!("{}/messages/batches/{id}/results", self.base_url));
+        let text = super::send_checked("anthropic", req).await?.text().await?;
         decode_batch_results(&self.model, &text)
     }
 }

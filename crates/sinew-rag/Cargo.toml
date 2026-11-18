@@ -37,7 +37,8 @@ sqlx = { workspace = true, optional = true }
 pdf-extract = { workspace = true, optional = true }
 
 [dev-dependencies]
-tokio.workspace = true
+tokio = { workspace = true, features = ["net"] }
+axum.workspace = true
 tempfile.workspace = true
 criterion.workspace = true
 
