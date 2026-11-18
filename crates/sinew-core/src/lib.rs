@@ -272,6 +272,44 @@ macro_rules! tools {
     };
 }
 
+/// Entry points for the fuzz targets in `fuzz/`. Not public API: no
+/// stability guarantees, may change in any release.
+#[doc(hidden)]
+pub mod __fuzz {
+    use crate::{
+        providers::{
+            anthropic::AnthropicStreamDecoder, gemini::GeminiStreamDecoder,
+            openai::OpenAiStreamDecoder,
+        },
+        stream::decode_chunks,
+        Result, StreamEvent,
+    };
+
+    /// A provider stream decoder.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum StreamDecoder {
+        Anthropic,
+        OpenAi,
+        Gemini,
+    }
+
+    /// Decodes an SSE body delivered in `chunks` with the provider's
+    /// decoder, as `chat_stream` would.
+    pub fn decode_stream(decoder: StreamDecoder, chunks: &[&[u8]]) -> Result<Vec<StreamEvent>> {
+        let chunks = chunks.iter().copied();
+        match decoder {
+            StreamDecoder::Anthropic => decode_chunks(AnthropicStreamDecoder::new("m"), chunks),
+            StreamDecoder::OpenAi => decode_chunks(OpenAiStreamDecoder::new("m"), chunks),
+            StreamDecoder::Gemini => decode_chunks(GeminiStreamDecoder::new("m"), chunks),
+        }
+    }
+
+    /// The JSON found in a model reply (fences and prose stripped).
+    pub fn extract_json(raw: &str) -> Option<&str> {
+        crate::structured::extract_json(raw)
+    }
+}
+
 /// Support code for macro expansions. Not public API.
 #[doc(hidden)]
 #[cfg(feature = "macros")]

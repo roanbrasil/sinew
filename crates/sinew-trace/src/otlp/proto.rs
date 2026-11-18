@@ -197,6 +197,12 @@ pub fn encode_request(req: &Value) -> Vec<u8> {
 
 // ---------- decoding ----------
 
+/// Deepest `arrayValue` / `kvlistValue` nesting [`decode_request`] accepts.
+/// Each level costs two bytes of input, so without a limit a small body could
+/// overflow the stack; the limit also keeps the decoded JSON within
+/// `serde_json`'s default recursion limit when it is parsed again.
+const MAX_ANY_DEPTH: usize = 32;
+
 enum Field<'a> {
     Varint(u64),
     Fixed64(u64),
@@ -262,7 +268,12 @@ fn utf8(b: &[u8]) -> String {
     String::from_utf8_lossy(b).into_owned()
 }
 
-fn dec_any(buf: &[u8]) -> Result<Value> {
+fn dec_any(buf: &[u8], depth: usize) -> Result<Value> {
+    if depth > MAX_ANY_DEPTH {
+        return Err(ProtoError(format!(
+            "AnyValue nested deeper than {MAX_ANY_DEPTH} levels"
+        )));
+    }
     let mut out = json!({});
     for (n, f) in fields(buf)? {
         out = match (n, f) {
@@ -274,12 +285,14 @@ fn dec_any(buf: &[u8]) -> Result<Value> {
                 let mut values = Vec::new();
                 for (k, f) in fields(b)? {
                     if let (1, Field::Bytes(x)) = (k, f) {
-                        values.push(dec_any(x)?);
+                        values.push(dec_any(x, depth + 1)?);
                     }
                 }
                 json!({ "arrayValue": { "values": values } })
             }
-            (6, Field::Bytes(b)) => json!({ "kvlistValue": { "values": dec_kvs(b, 1)? } }),
+            (6, Field::Bytes(b)) => {
+                json!({ "kvlistValue": { "values": dec_kvs(b, 1, depth + 1)? } })
+            }
             (7, Field::Bytes(b)) => json!({ "bytesValue": base64_encode(b) }),
             _ => continue,
         };
@@ -287,12 +300,12 @@ fn dec_any(buf: &[u8]) -> Result<Value> {
     Ok(out)
 }
 
-fn dec_kv(buf: &[u8]) -> Result<Value> {
+fn dec_kv(buf: &[u8], depth: usize) -> Result<Value> {
     let (mut key, mut value) = (String::new(), json!({}));
     for (n, f) in fields(buf)? {
         match (n, f) {
             (1, Field::Bytes(b)) => key = utf8(b),
-            (2, Field::Bytes(b)) => value = dec_any(b)?,
+            (2, Field::Bytes(b)) => value = dec_any(b, depth)?,
             _ => {}
         }
     }
@@ -300,12 +313,12 @@ fn dec_kv(buf: &[u8]) -> Result<Value> {
 }
 
 /// Decodes every KeyValue found in repeated field `field` of `buf`.
-fn dec_kvs(buf: &[u8], field: u32) -> Result<Vec<Value>> {
+fn dec_kvs(buf: &[u8], field: u32, depth: usize) -> Result<Vec<Value>> {
     let mut out = Vec::new();
     for (n, f) in fields(buf)? {
         if let (k, Field::Bytes(b)) = (n, f) {
             if k == field {
-                out.push(dec_kv(b)?);
+                out.push(dec_kv(b, depth)?);
             }
         }
     }
@@ -342,7 +355,7 @@ fn dec_span(buf: &[u8]) -> Result<Value> {
             (8, Field::Fixed64(v)) => {
                 s.insert("endTimeUnixNano".into(), json!(v.to_string()));
             }
-            (9, Field::Bytes(b)) => attrs.push(dec_kv(b)?),
+            (9, Field::Bytes(b)) => attrs.push(dec_kv(b, 0)?),
             (11, Field::Bytes(b)) => {
                 let mut ev = Map::new();
                 let mut ev_attrs = Vec::new();
@@ -354,7 +367,7 @@ fn dec_span(buf: &[u8]) -> Result<Value> {
                         (2, Field::Bytes(x)) => {
                             ev.insert("name".into(), json!(utf8(x)));
                         }
-                        (3, Field::Bytes(x)) => ev_attrs.push(dec_kv(x)?),
+                        (3, Field::Bytes(x)) => ev_attrs.push(dec_kv(x, 0)?),
                         _ => {}
                     }
                 }
@@ -400,7 +413,7 @@ pub fn decode_request(buf: &[u8]) -> Result<Value> {
         let mut scope_spans = Vec::new();
         for (k, f) in fields(rs)? {
             match (k, f) {
-                (1, Field::Bytes(b)) => resource = json!({ "attributes": dec_kvs(b, 1)? }),
+                (1, Field::Bytes(b)) => resource = json!({ "attributes": dec_kvs(b, 1, 0)? }),
                 (2, Field::Bytes(b)) => {
                     let mut scope = json!({});
                     let mut spans = Vec::new();
@@ -496,7 +509,7 @@ mod tests {
             json!({"kvlistValue": {"values": [{"key": "k", "value": {"boolValue": false}}]}}),
             json!({"bytesValue": "AAEC"}),
         ] {
-            assert_eq!(dec_any(&enc_any(&v)).unwrap(), v);
+            assert_eq!(dec_any(&enc_any(&v), 0).unwrap(), v);
         }
     }
 
@@ -505,5 +518,43 @@ mod tests {
         assert!(decode_request(&[0x0a, 0xff]).is_err());
         assert!(decode_request(&[0x0f]).is_err());
         assert_eq!(decode_request(&[]).unwrap(), json!({"resourceSpans": []}));
+    }
+
+    /// Found while writing the `otlp_proto` fuzz target: nested `arrayValue`s cost two
+    /// bytes per level, so a small body recursed until the stack overflowed.
+    #[test]
+    fn deeply_nested_any_values_are_rejected() {
+        /// An AnyValue that is `depth` nested arrays around a bool.
+        fn nested(depth: usize) -> Vec<u8> {
+            let mut any = Vec::new();
+            put_uint(&mut any, 2, 1);
+            for _ in 0..depth {
+                let mut array = Vec::new();
+                put_bytes(&mut array, 1, &any);
+                any.clear();
+                put_bytes(&mut any, 5, &array);
+            }
+            any
+        }
+        /// A request with one span whose attribute `k` holds `any`.
+        fn request(any: &[u8]) -> Vec<u8> {
+            let mut kv = Vec::new();
+            put_str(&mut kv, 1, "k");
+            put_bytes(&mut kv, 2, any);
+            let mut span = Vec::new();
+            put_bytes(&mut span, 9, &kv);
+            let mut scope_spans = Vec::new();
+            put_bytes(&mut scope_spans, 2, &span);
+            let mut rs = Vec::new();
+            put_bytes(&mut rs, 2, &scope_spans);
+            let mut req = Vec::new();
+            put_bytes(&mut req, 1, &rs);
+            req
+        }
+        assert!(decode_request(&request(&nested(MAX_ANY_DEPTH))).is_ok());
+        let err = decode_request(&request(&nested(MAX_ANY_DEPTH + 1))).unwrap_err();
+        assert!(err.0.contains("nested"), "{err}");
+        // Deep enough to overflow the stack before the fix.
+        assert!(decode_request(&request(&nested(20_000))).is_err());
     }
 }

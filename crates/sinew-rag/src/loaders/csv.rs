@@ -52,14 +52,31 @@ impl CsvLoader {
 
 impl Loader for CsvLoader {
     fn load(&self) -> Result<Vec<Document>> {
-        let mut reader = csv::ReaderBuilder::new()
-            .delimiter(self.delimiter)
-            .flexible(true)
+        let reader = self
+            .reader_builder()
             .from_path(&self.path)
             .map_err(|e| Error::Load {
                 path: self.path.clone(),
                 message: e.to_string(),
             })?;
+        self.documents(reader)
+    }
+}
+
+impl CsvLoader {
+    fn reader_builder(&self) -> csv::ReaderBuilder {
+        let mut b = csv::ReaderBuilder::new();
+        b.delimiter(self.delimiter).flexible(true);
+        b
+    }
+
+    /// Parses CSV `bytes` as if they were the loader's file. Used by the fuzz
+    /// targets.
+    pub(crate) fn documents_from_bytes(&self, bytes: &[u8]) -> Result<Vec<Document>> {
+        self.documents(self.reader_builder().from_reader(bytes))
+    }
+
+    fn documents<R: std::io::Read>(&self, mut reader: csv::Reader<R>) -> Result<Vec<Document>> {
         let headers = reader.headers()?.clone();
         let find = |name: &str| -> Result<usize> {
             headers

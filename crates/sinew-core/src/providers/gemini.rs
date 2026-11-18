@@ -266,11 +266,11 @@ pub(crate) fn encode_request(req: &ChatRequest) -> Value {
 
 fn usage_of(v: &Value) -> Usage {
     let u = &v["usageMetadata"];
-    let n = |k: &str| u[k].as_u64().unwrap_or(0) as u32;
+    let n = |k: &str| super::token_count(&u[k]).unwrap_or(0);
     Usage {
-        input_tokens: n("promptTokenCount") + n("toolUsePromptTokenCount"),
+        input_tokens: n("promptTokenCount").saturating_add(n("toolUsePromptTokenCount")),
         // Thinking tokens are billed as output.
-        output_tokens: n("candidatesTokenCount") + n("thoughtsTokenCount"),
+        output_tokens: n("candidatesTokenCount").saturating_add(n("thoughtsTokenCount")),
         cached_input_tokens: n("cachedContentTokenCount"),
         cache_creation_input_tokens: 0,
         reasoning_tokens: n("thoughtsTokenCount"),
@@ -591,6 +591,20 @@ data: {"candidates": [{"content": {"parts": [{"functionCall": {"name": "weather"
         assert_eq!(r.message.tool_calls[0].id, "call_0#ts=SIG");
         assert_eq!(r.usage, Usage::new(30, 9));
         assert_eq!(r.model, "gemini-2.5-flash");
+    }
+
+    /// Found while writing the `stream_gemini` fuzz target: token counts near
+    /// `u32::MAX` overflowed the input/output sums (a panic in debug builds).
+    #[test]
+    fn stream_decoder_saturates_huge_usage() {
+        let body = "data: {\"usageMetadata\": {\"promptTokenCount\": 4294967295, \"toolUsePromptTokenCount\": 1, \"candidatesTokenCount\": 99999999999, \"thoughtsTokenCount\": 5}}\n\n";
+        let events = decode_all(GeminiStreamDecoder::new("x"), body).unwrap();
+        let Some(StreamEvent::Usage { usage }) = events.first() else {
+            panic!("expected usage, got {events:?}");
+        };
+        assert_eq!(usage.input_tokens, u32::MAX);
+        assert_eq!(usage.output_tokens, u32::MAX);
+        assert_eq!(usage.reasoning_tokens, 5);
     }
 
     #[test]

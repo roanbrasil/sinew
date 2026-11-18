@@ -258,6 +258,11 @@ impl SseParser {
     }
 
     pub fn push(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
+        // An empty chunk carries nothing; returning early also keeps a
+        // pending `\r` pending, so a following `\n` still pairs with it.
+        if chunk.is_empty() {
+            return Vec::new();
+        }
         let mut chunk = chunk;
         if self.pending_cr && chunk.first() == Some(&b'\n') {
             chunk = &chunk[1..];
@@ -346,16 +351,37 @@ pub(crate) trait SseDecoder: Send + 'static {
 
 /// Feeds a whole recorded SSE body through a decoder. Used by tests.
 #[cfg(test)]
-pub(crate) fn decode_all<D: SseDecoder>(mut decoder: D, body: &str) -> Result<Vec<StreamEvent>> {
+pub(crate) fn decode_all<D: SseDecoder>(decoder: D, body: &str) -> Result<Vec<StreamEvent>> {
+    decode_chunks(decoder, [body.as_bytes()])
+}
+
+/// Feeds an SSE body, delivered in `chunks`, through a decoder the way
+/// [`sse_stream`] does: events are decoded as their chunk arrives, the first
+/// decoder error ends the stream, and the provider's end marker stops reading.
+pub(crate) fn decode_chunks<'a, D: SseDecoder>(
+    mut decoder: D,
+    chunks: impl IntoIterator<Item = &'a [u8]>,
+) -> Result<Vec<StreamEvent>> {
     let mut parser = SseParser::new();
     let mut out = Vec::new();
-    let mut events = parser.push(body.as_bytes());
-    events.extend(parser.finish());
-    for ev in events {
-        out.extend(decoder.on_event(&ev)?);
-        if decoder.is_done() {
+    let mut feed = |events: Vec<SseEvent>, out: &mut Vec<StreamEvent>| -> Result<bool> {
+        for ev in events {
+            out.extend(decoder.on_event(&ev)?);
+            if decoder.is_done() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    };
+    let mut done = false;
+    for chunk in chunks {
+        if feed(parser.push(chunk), &mut out)? {
+            done = true;
             break;
         }
+    }
+    if !done {
+        feed(parser.finish().into_iter().collect(), &mut out)?;
     }
     out.extend(decoder.finish());
     Ok(out)
@@ -479,6 +505,23 @@ mod tests {
         let mut evs = p.push(b"data: a\r");
         evs.extend(p.push(b"\n\r\n"));
         assert_eq!(evs.len(), 1);
+    }
+
+    /// Found by the `sse_parser` fuzz target: an empty chunk between a `\r`
+    /// and its `\n` made the `\n` a second line ending, which split one event
+    /// in two.
+    #[test]
+    fn sse_parser_empty_chunk_keeps_pending_cr() {
+        let body: &[u8] = b"data: a\r\ndata: b\n\n";
+        let mut one_shot = SseParser::new();
+        let expected = one_shot.push(body);
+        assert_eq!(expected.len(), 1);
+        assert_eq!(expected[0].data, "a\nb");
+        let mut p = SseParser::new();
+        let mut evs = p.push(b"data: a\r");
+        evs.extend(p.push(b""));
+        evs.extend(p.push(b"\ndata: b\n\n"));
+        assert_eq!(evs, expected);
     }
 
     #[test]
