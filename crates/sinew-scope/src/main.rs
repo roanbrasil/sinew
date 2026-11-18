@@ -311,6 +311,8 @@ mod tests {
             "30",
             "--no-engine",
             "--metrics-auth",
+            "--playground-providers",
+            "ollama, openai,ollama",
         ])
         .unwrap()
         {
@@ -322,7 +324,12 @@ mod tests {
                 retention_days,
                 no_engine,
                 metrics_auth,
+                playground_providers,
             } => {
+                assert_eq!(
+                    playground_providers,
+                    Some(vec!["ollama".to_string(), "openai".to_string()])
+                );
                 assert_eq!(db, "x.db");
                 assert_eq!(addr, "0.0.0.0:9000");
                 assert_eq!(token.as_deref(), Some("secret"));
@@ -445,6 +452,10 @@ mod tests {
                 Some(format!("invalid --retention-days `{bad}`"))
             );
         }
+        let e = parse(&["serve", "--playground-providers", "nope"])
+            .err()
+            .unwrap();
+        assert!(e.contains("unknown provider `nope`"), "{e}");
         assert_eq!(
             parse(&["serve", "--bogus"]).err().as_deref(),
             Some("unexpected argument `--bogus`")
