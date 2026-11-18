@@ -49,6 +49,7 @@ bytes = "1"
 sinew-serve = { path = "crates/sinew-serve", version = "0.1.0", default-features = false }
 sinew-memory = { path = "crates/sinew-memory", version = "0.1.0", default-features = false }
 sinew-tools = { path = "crates/sinew-tools", version = "0.1.0", default-features = false }
+sinew-govern = { path = "crates/sinew-govern", version = "0.1.0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -26,6 +26,7 @@ flowchart BT
     n_serve["sinew-serve<br/>HTTP deployment"]
     n_memory["sinew-memory<br/>long-term memory"]
     n_tools["sinew-tools<br/>built-in tools"]
+    n_govern["sinew-govern<br/>policies, control plane"]
     n_scope["sinew-scope<br/>trace server + UI"]
     n_umbrella["sinew<br/>umbrella + prelude"]
 
@@ -52,6 +53,10 @@ flowchart BT
     n_memory --> n_graph
     n_memory --> n_rag
     n_memory -. feature harness .-> n_harness
+    n_govern --> n_core
+    n_govern --> n_graph
+    n_govern --> n_trace
+    n_govern -. feature harness .-> n_harness
     n_serve --> n_core
     n_serve --> n_graph
     n_serve --> n_trace
@@ -70,6 +75,7 @@ flowchart BT
     n_umbrella -. features .-> n_harness
     n_umbrella -. features .-> n_serve
     n_umbrella -. features .-> n_memory
+    n_umbrella -. features .-> n_govern
 ```
 
 Read bottom to top:
@@ -82,7 +88,9 @@ Read bottom to top:
 4. **Persistence:** `sinew-checkpoint`, a set of `Checkpointer` / `Store` backends for
    `sinew-graph`.
 5. **Applications and protocols:** `sinew-harness`, `sinew-serve`, `sinew-mcp`, `sinew-a2a`,
-   and `sinew-memory` (long-term memory over a `Store`, with embeddings from `sinew-rag`).
+   `sinew-memory` (long-term memory over a `Store`, with embeddings from `sinew-rag`), and
+   `sinew-govern` (policies and a control plane enforced in `ReactAgent`, the harness, tool boxes
+   and models).
 6. **Tooling:** `sinew-scope` (trace server and UI); it reads traces produced by
    `sinew-trace` and runs evaluations from `sinew-eval`, and does not depend on `sinew-graph`.
 7. **Umbrella:** `sinew` re-exports `core`, `graph` and `trace` always, and every other crate
@@ -106,6 +114,7 @@ about graphs, and graphs carry an optional `Tracer`.
 | `sinew-a2a` | A2A 0.3 server and client, `AgentExecutor`, `TaskStore`, `A2aError` | `sinew-core`, `sinew-graph` | [crates/sinew-a2a/src/lib.rs](../crates/sinew-a2a/src/lib.rs) |
 | `sinew-harness` | `Agent` / `AgentBuilder`, built-in tools, `Hook`, `Guardrail`, permissions, budgets, compaction, `sinew-agent` binary, `HarnessError` | `sinew-core`, `sinew-graph`, `sinew-trace`, `sinew-tools` (SSRF guard only, no tool families), `sinew-mcp` (optional, feature `mcp`) | [crates/sinew-harness/src/lib.rs](../crates/sinew-harness/src/lib.rs) |
 | `sinew-memory` | `MemoryManager` (extract, consolidate, recall, forget over a `Store`), `Memory`, `MemoryAgent` (prebuilt ReAct with memory), `MemoryHook` (feature `harness`), `MemoryError` | `sinew-core`, `sinew-graph`, `sinew-rag`, `sinew-harness` (optional, feature `harness`) | [crates/sinew-memory/src/lib.rs](../crates/sinew-memory/src/lib.rs) |
+| `sinew-govern` | `Policy`, `Decision` / `Verdict`, `Rule`, `Condition`, `RateLimit`, `TimeWindow`, `PolicySet` / `Defaults`, `PolicyFile` (YAML / JSON), `ControlPlane` (registry, kill switch, decision events), `DecisionSink`, `ControlPlaneGate`, `GovernedTool`, `GovernedModel`, `GovernHook` (feature `harness`), `CedarPolicy` (feature `cedar`), `OpaPolicy` (feature `opa`), `GovernError` | `sinew-core`, `sinew-graph`, `sinew-trace`, `sinew-harness` (optional, feature `harness`) | [crates/sinew-govern/src/lib.rs](../crates/sinew-govern/src/lib.rs) |
 | `sinew-tools` | built-in tools (`calculator`, `current_time` / `date_add` / `date_diff`, `web_search`, `web_fetch`, `wikipedia_search` / `wikipedia_summary`, `HttpRequestTool`, `send_email`, `email_list` / `email_read`), one feature per family; `net::HostPolicy` SSRF guard (always compiled); `ToolError` | `sinew-core` | [crates/sinew-tools/src/lib.rs](../crates/sinew-tools/src/lib.rs) |
 | `sinew-serve` | assistants, threads, runs, SSE, OpenAI-compatible endpoint, `ThreadStore`, `ServeClient` | `sinew-core`, `sinew-graph`, `sinew-trace`, `sinew-checkpoint` | [crates/sinew-serve/src/lib.rs](../crates/sinew-serve/src/lib.rs) |
 | `sinew-scope` | trace ingest (`POST /api/runs`, `POST /v1/traces`), SQLite store, web UI, prompt hub, feedback, datasets, monitoring, online evaluators, `sinew-scope` binary | `sinew-core`, `sinew-trace`, `sinew-eval` | [crates/sinew-scope/src/lib.rs](../crates/sinew-scope/src/lib.rs), [server.rs](../crates/sinew-scope/src/server.rs) |
@@ -271,11 +280,14 @@ crate features they turn on:
 | `a2a` | `sinew-a2a` |
 | `harness` | `sinew-harness` without its `cli` feature; with `memory`, also `sinew-memory/harness` |
 | `memory` | `sinew-memory` |
+| `govern` | `sinew-govern` (with `yaml`); with `harness`, also `sinew-govern/harness` |
+| `govern-opa` | `govern` + `sinew-govern/opa` (`OpaPolicy`) |
+| `govern-cedar` | `govern` + `sinew-govern/cedar` (`CedarPolicy`, the `cedar-policy` crate) |
 | `tools` | `sinew-tools/full` (every tool family) |
 | `serve` | `sinew-serve` with `sqlite` |
 | `sqlite-cache` | `sinew-core/sqlite-cache` (`SqliteCache`) |
 | `schemars` | `sinew-core/schemars` |
-| `full` | everything above except `postgres` and `pgvector` |
+| `full` | everything above except `postgres`, `pgvector` and `govern-cedar` |
 
 Crate defaults worth knowing: `sinew-core` turns on `http2`; `sinew-checkpoint`, `sinew-rag` and
 `sinew-serve` turn on `sqlite`; `sinew-harness` turns on `cli` (the `sinew-agent` binary). The
@@ -299,7 +311,10 @@ safe and used as `Arc<dyn Trait>` or `Box<dyn Trait>` somewhere in the workspace
 | `Embeddings` | [sinew-rag/src/embeddings/mod.rs](../crates/sinew-rag/src/embeddings/mod.rs) | `model`, `embed_documents` (optional: `embed_query`) | vector stores |
 | `TraceSink` | [sinew-trace/src/lib.rs](../crates/sinew-trace/src/lib.rs) | `record` (optional: `flush`) | `Tracer::with_sink` |
 | `Guardrail` / `AsyncGuardrail` | [sinew-core/src/guardrails/mod.rs](../crates/sinew-core/src/guardrails/mod.rs) | `name`, `check` → `Pass` / `Modify` / `Block` | `Guarded` models (`with_guardrails`), `GuardStep`, `ReactAgent::tool_guardrails`, harness input, output and tool-output checks ([guide](guardrails.md)) |
-| `Hook` | [sinew-harness/src/hooks.rs](../crates/sinew-harness/src/hooks.rs) | none (all default): `before_model`, `after_model`, `before_tool` → `ToolDecision`, `after_tool` | harness agent loop |
+| `Hook` | [sinew-harness/src/hooks.rs](../crates/sinew-harness/src/hooks.rs) | none (all default): `before_model`, `after_model`, `before_tool` → `ToolDecision`, `after_tool`, `should_stop` | harness agent loop |
+| `AgentGate` | [sinew-graph/src/prebuilt/gate.rs](../crates/sinew-graph/src/prebuilt/gate.rs) | none (all default): `before_model`, `before_tool` → `GateVerdict` | `ReactAgent::gate` ([guide](governance.md)) |
+| `Policy` | [sinew-govern/src/policy.rs](../crates/sinew-govern/src/policy.rs) | `id`, `evaluate` → `Option<Decision>` | `PolicySet`, `ControlPlane` ([guide](governance.md)) |
+| `DecisionSink` | [sinew-govern/src/sink.rs](../crates/sinew-govern/src/sink.rs) | `record` (optional: `record_control`) | `ControlPlaneBuilder::sink` |
 
 Other traits follow the same pattern: `Runnable` and `ResponseCache` (sinew-core); `Retriever`,
 `Loader`, `TextSplitter`, `DocumentCompressor` (sinew-rag); `Evaluator`, `PairwiseEvaluator`,

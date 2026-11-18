@@ -75,6 +75,10 @@ let agent = ReactAgent::new(model, tools).compile()?.with_checkpointer(cp);
   guardrails), check answers against a schema, a deny list or an LLM judge, and decide per rule whether to
   block, refuse, warn or retry. Record guardrail events as trace runs with `sinew_trace::guardrail_observer`.
   See [Guardrails](guardrails.md).
+- **Governance**: with several agents, users or tenants, move tool permissions out of code into a control
+  plane: policies on agent, user, tenant, tool and arguments evaluated before every call, side-effecting tools
+  denied unless a policy allows them, a kill switch that stops a running agent at its next step, and a trace run
+  and audit event for every decision. See [Governance](governance.md).
 - **Sandboxing**: the harness file tools are confined to the workspace root (path escapes are blocked). Shell
   commands run on the host: run the harness in a container or VM with no credentials it does not need.
 
@@ -141,6 +145,7 @@ Copy into your PR template:
 - [ ] Side-effecting tools marked `side_effects` and passing `idempotency_key()` to external APIs
 - [ ] Loop guard on; budgets (steps, tokens, cost, time) set per turn
 - [ ] Permission policy starts from deny; side effects need approval
+- [ ] Agents registered in a control plane with owners and allowed tools; kill switch wired to an admin endpoint or alert
 - [ ] No agent holds both untrusted input and an exfiltration-capable tool
 - [ ] Shell / code tools run in a sandbox without unneeded credentials
 - [ ] Server behind TLS, API keys required, CORS and MCP origins restricted, health/ready probes wired

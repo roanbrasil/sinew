@@ -28,7 +28,8 @@ use sinew::prelude::*;
 | `mcp` | `sinew::mcp`: Model Context Protocol client and server |
 | `eval` | `sinew::eval`: datasets, evaluators, experiments |
 | `http-trace` | `trace::HttpSink` for `sinew-scope serve` |
-| `full` | all of the above except Postgres |
+| `govern` | `sinew::govern`: agent control plane: policies before every tool and model call, registry, kill switch |
+| `full` | all of the above except Postgres and `govern-cedar` |
 
 See the [main README](https://github.com/roanbrasil/sinew#readme) and the [samples](https://github.com/roanbrasil/sinew/tree/main/samples).
 
