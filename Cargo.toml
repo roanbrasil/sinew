@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "samples/*"]
+# The cargo-fuzz targets are their own workspace (see CONTRIBUTING.md, "Fuzzing").
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"

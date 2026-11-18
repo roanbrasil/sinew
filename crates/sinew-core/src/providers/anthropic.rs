@@ -392,7 +392,7 @@ struct RawUsage {
 
 impl RawUsage {
     fn update(&mut self, u: &Value) {
-        let get = |k: &str| u[k].as_u64().map(|n| n as u32);
+        let get = |k: &str| super::token_count(&u[k]);
         if let Some(n) = get("input_tokens") {
             self.input = n;
         }
@@ -409,7 +409,10 @@ impl RawUsage {
 
     fn usage(self) -> Usage {
         Usage {
-            input_tokens: self.input + self.cache_read + self.cache_write,
+            input_tokens: self
+                .input
+                .saturating_add(self.cache_read)
+                .saturating_add(self.cache_write),
             output_tokens: self.output,
             cached_input_tokens: self.cache_read,
             cache_creation_input_tokens: self.cache_write,
@@ -619,7 +622,9 @@ fn decode_batch_status(v: &Value) -> Result<crate::batch::BatchStatus> {
         ended: v["processing_status"] == "ended",
         processing: n("processing"),
         succeeded: n("succeeded"),
-        errored: n("errored") + n("canceled") + n("expired"),
+        errored: n("errored")
+            .saturating_add(n("canceled"))
+            .saturating_add(n("expired")),
     })
 }
 
@@ -882,6 +887,31 @@ data: {"type":"message_stop"}
         );
         assert_eq!(r.message.tool_calls[1].arguments, json!({}));
         assert_eq!(r.usage, Usage::new(472, 89));
+    }
+
+    /// Found while writing the `stream_anthropic` fuzz target: usage counts near
+    /// `u32::MAX` overflowed the input-token sum (a panic in debug builds) and
+    /// counts above it were truncated.
+    #[test]
+    fn stream_decoder_saturates_huge_usage() {
+        use crate::stream::decode_all;
+        let body = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":4294967295,\"cache_read_input_tokens\":1,\"cache_creation_input_tokens\":99999999999}}}\n\n";
+        let events = decode_all(AnthropicStreamDecoder::new("x"), body).unwrap();
+        let Some(StreamEvent::Usage { usage }) = events.first() else {
+            panic!("expected usage, got {events:?}");
+        };
+        assert_eq!(usage.input_tokens, u32::MAX);
+        assert_eq!(usage.cache_creation_input_tokens, u32::MAX);
+        let v = json!({"content": [], "usage": {"input_tokens": u64::MAX, "cache_read_input_tokens": 7}});
+        assert_eq!(
+            decode_response("x", &v).unwrap().usage.input_tokens,
+            u32::MAX
+        );
+        let status = decode_batch_status(&json!({
+            "id": "b", "request_counts": {"errored": u64::MAX, "canceled": 1, "expired": 1}
+        }))
+        .unwrap();
+        assert_eq!(status.errored, u64::MAX);
     }
 
     #[test]

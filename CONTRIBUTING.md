@@ -42,6 +42,52 @@ Required checks (`.github/workflows/ci.yml`): `lint` (rustfmt and clippy with an
 
 By contributing you agree that your work is dual-licensed under MIT and Apache-2.0, like the rest of the project.
 
+## Fuzzing
+
+Parsers of untrusted input have [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html) targets in `fuzz/`,
+a separate workspace that is not part of the main build (`publish = false`). Each target is a function in
+`fuzz/src/` that panics when an invariant breaks; `fuzz/fuzz_targets/<name>.rs` hands it to libFuzzer.
+
+| Target | Checks |
+|---|---|
+| `sse_parser` | chunked, byte-by-byte and one-shot SSE parsing give the same events |
+| `stream_anthropic`, `stream_openai`, `stream_gemini` | provider stream decoders: same result however the body is chunked, successful streams end with `Done`, events fold into a response |
+| `structured_json` | JSON extraction from replies, schema validation, list parsing, tool-call arguments assembled from partial JSON deltas |
+| `json_rpc_mcp` | MCP `handle_message` and the stateless Streamable HTTP endpoint: a valid JSON-RPC response for every request, none for notifications |
+| `json_rpc_a2a` | A2A JSON-RPC endpoint: always `200` with a valid JSON-RPC response (or an SSE stream) |
+| `loader_html`, `loader_csv`, `loader_json`, `loader_markdown` | document loaders on in-memory input |
+| `otlp_json`, `otlp_proto` | OTLP/HTTP ingest (JSON mapping, protobuf decoder and round trip) |
+| `redactor`, `guardrails` | trace redaction and guardrail patterns: no panics, idempotent redaction, no secret left behind |
+| `tool_args` | argument parsing in the `#[tool]` expansion: a value or `Error::Tool` for any JSON |
+
+Internal parsers are reached through `#[doc(hidden)] pub mod __fuzz` in `sinew-core` and `sinew-rag`; they are not
+public API.
+
+```bash
+rustup toolchain install nightly --profile minimal
+cargo install cargo-fuzz
+cargo +nightly fuzz run --debug-assertions sse_parser fuzz/corpus/sse_parser fuzz/seeds/sse_parser -- -max_total_time=90
+cargo +nightly fuzz list                                   # every target
+cargo test --manifest-path fuzz/Cargo.toml                 # replay seeds and regressions on stable
+```
+
+`fuzz/seeds/<target>/` holds a small committed seed corpus; the corpus libFuzzer grows (`fuzz/corpus/`) and crash
+files (`fuzz/artifacts/`) are not committed. When a target finds a crash:
+
+1. minimize it: `cargo +nightly fuzz tmin <target> fuzz/artifacts/<target>/crash-...`;
+2. fix the bug in the owning crate and add a unit test there that reproduces it;
+3. copy the minimized input to `fuzz/regressions/<target>/<short-name>`, so `cargo test` in `fuzz/` replays it on
+   stable from then on;
+4. add a `### Fixed` line to `CHANGELOG.md`.
+
+`.github/workflows/fuzz.yml` replays seeds and regressions on every pull request that touches `crates/` or `fuzz/`,
+and runs every target for five minutes each night (or on demand, with a custom duration, from the Actions tab),
+keeping the grown corpus in the Actions cache and uploading crash files as artifacts.
+
+To add a target: write the check in `fuzz/src/`, register it in `TARGETS` (`fuzz/src/lib.rs`), add
+`fuzz/fuzz_targets/<name>.rs` and its `[[bin]]` in `fuzz/Cargo.toml`, a few seeds in `fuzz/seeds/<name>/`, and the
+name to the matrix in `fuzz.yml`. The replay test fails if a registered target has no seeds or no binary.
+
 ## Extension guides
 
 Adding a provider, vector store, document loader, tool, checkpointer or store? Follow the step-by-step guides in

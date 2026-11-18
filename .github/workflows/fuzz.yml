@@ -1,0 +1,118 @@
+name: Fuzz
+on:
+  schedule:
+    # Nightly, 03:17 UTC.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per target
+        required: false
+        default: "300"
+  push:
+    branches: [main]
+    paths:
+      - "fuzz/**"
+      - "crates/**"
+      - ".github/workflows/fuzz.yml"
+  pull_request:
+    paths:
+      - "fuzz/**"
+      - "crates/**"
+      - ".github/workflows/fuzz.yml"
+env:
+  CARGO_TERM_COLOR: always
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  # Replays the committed seeds and crash reproducers through every target as
+  # ordinary tests on stable (no libFuzzer instrumentation, no nightly).
+  replay:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path fuzz/Cargo.toml
+
+  fuzz:
+    # Coverage-guided runs only on the schedule and on demand; pushes and
+    # pull requests get the replay job above.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - sse_parser
+          - stream_anthropic
+          - stream_openai
+          - stream_gemini
+          - structured_json
+          - json_rpc_mcp
+          - json_rpc_a2a
+          - loader_html
+          - loader_csv
+          - loader_json
+          - loader_markdown
+          - otlp_json
+          - otlp_proto
+          - redactor
+          - guardrails
+          - tool_args
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+          key: ${{ matrix.target }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      # The corpus grown by earlier runs, so each night starts where the last
+      # one stopped.
+      - name: Restore corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+      - name: Fuzz
+        env:
+          SECONDS_PER_TARGET: ${{ inputs.seconds || '300' }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "fuzz/corpus/$TARGET"
+          # Debug assertions turn integer overflow into a crash, as in `cargo test`.
+          cargo fuzz run --debug-assertions "$TARGET" "fuzz/corpus/$TARGET" "fuzz/seeds/$TARGET" \
+            -- -max_total_time="$SECONDS_PER_TARGET" -timeout=30 -rss_limit_mb=4096 \
+               -max_len=65536 -print_final_stats=1
+      - name: Minimize corpus
+        if: success()
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo fuzz cmin --debug-assertions "$TARGET" "fuzz/corpus/$TARGET"
+      - name: Save corpus
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore

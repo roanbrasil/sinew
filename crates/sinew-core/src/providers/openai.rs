@@ -188,7 +188,7 @@ pub(crate) fn encode_content(m: &Message) -> Value {
 }
 
 fn usage_from(u: &Value) -> Usage {
-    let n = |p: &str| u.pointer(p).and_then(Value::as_u64).unwrap_or(0) as u32;
+    let n = |p: &str| u.pointer(p).and_then(super::token_count).unwrap_or(0);
     Usage {
         input_tokens: n("/prompt_tokens"),
         output_tokens: n("/completion_tokens"),

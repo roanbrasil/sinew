@@ -89,7 +89,14 @@ impl JsonLoader {
 
 impl Loader for JsonLoader {
     fn load(&self) -> Result<Vec<Document>> {
-        let text = read_to_string(&self.path)?;
+        self.documents(&read_to_string(&self.path)?)
+    }
+}
+
+impl JsonLoader {
+    /// Parses `text` as if it were the loader's file. Also used by the fuzz
+    /// targets.
+    pub(crate) fn documents(&self, text: &str) -> Result<Vec<Document>> {
         let bad = |e: serde_json::Error| Error::Load {
             path: self.path.clone(),
             message: e.to_string(),
@@ -100,7 +107,7 @@ impl Loader for JsonLoader {
                 .map(|l| serde_json::from_str(l).map_err(bad))
                 .collect::<Result<_>>()?
         } else {
-            let root: Value = serde_json::from_str(&text).map_err(bad)?;
+            let root: Value = serde_json::from_str(text).map_err(bad)?;
             let selected = match &self.records {
                 Some(p) => root.pointer(p).cloned().ok_or_else(|| Error::Load {
                     path: self.path.clone(),

@@ -137,3 +137,13 @@ the provider supports tools.
 
 A failing scheduled run opens one issue per job ("Nightly live tests failing: ...") and comments on it on later
 failures instead of opening duplicates.
+
+## Fuzzing Sinew's parsers
+
+Sinew's own parsers of untrusted input (provider SSE streams, MCP and A2A JSON-RPC, structured-output JSON, the
+document loaders, OTLP ingest, the trace redactor and the guardrail patterns) are fuzzed with
+[cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html). The targets live in `fuzz/`; each one checks that
+its parser never panics and holds a property, for example that an SSE body decodes to the same events however the
+network splits it into chunks. A nightly workflow runs every target for a few minutes, and the committed seeds and
+crash reproducers are replayed as ordinary tests on stable. How to run them and how to add a target is described in
+[CONTRIBUTING.md](../CONTRIBUTING.md#fuzzing).

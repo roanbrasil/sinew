@@ -83,3 +83,36 @@ pub use vectorstore::SqliteVectorStore;
 pub use vectorstore::{
     maximal_marginal_relevance, Filter, InMemoryVectorStore, ScoredDocument, VectorStore,
 };
+
+/// Entry points for the fuzz targets in `fuzz/`: the loaders' parsers on
+/// in-memory input. Not public API: no stability guarantees.
+#[doc(hidden)]
+pub mod __fuzz {
+    use crate::{
+        loaders::{CsvLoader, JsonLoader},
+        Document, Metadata, Result,
+    };
+
+    /// The `<title>` an [`HtmlLoader`](crate::HtmlLoader) would store.
+    pub fn html_title(html: &str) -> Option<String> {
+        crate::loaders::html::html_title(html)
+    }
+
+    /// What a [`MarkdownLoader`](crate::MarkdownLoader) does with a file:
+    /// the body and the front matter / title metadata.
+    pub fn markdown(text: &str) -> (String, Metadata) {
+        let mut metadata = Metadata::new();
+        let body = crate::loaders::parse_markdown(text, &mut metadata);
+        (body, metadata)
+    }
+
+    /// Runs `loader` on CSV `bytes` instead of its file.
+    pub fn csv(loader: &CsvLoader, bytes: &[u8]) -> Result<Vec<Document>> {
+        loader.documents_from_bytes(bytes)
+    }
+
+    /// Runs `loader` on `text` instead of its file.
+    pub fn json(loader: &JsonLoader, text: &str) -> Result<Vec<Document>> {
+        loader.documents(text)
+    }
+}

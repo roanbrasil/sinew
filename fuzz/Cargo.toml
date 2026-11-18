@@ -1,0 +1,151 @@
+[package]
+name = "sinew-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "cargo-fuzz targets for Sinew's parsers of untrusted input"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+sinew-core = { path = "../crates/sinew-core", features = ["macros"] }
+sinew-mcp = { path = "../crates/sinew-mcp", features = ["http-server"] }
+sinew-a2a = { path = "../crates/sinew-a2a" }
+sinew-rag = { path = "../crates/sinew-rag", default-features = false }
+sinew-scope = { path = "../crates/sinew-scope", features = ["otlp-proto"] }
+sinew-trace = { path = "../crates/sinew-trace", features = ["otlp", "otlp-proto"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+axum = "0.8"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
+# Its own workspace: the fuzz crate is not part of the main build, and needs
+# nightly only for `cargo fuzz` (the replay tests run on stable).
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "sse_parser"
+path = "fuzz_targets/sse_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stream_anthropic"
+path = "fuzz_targets/stream_anthropic.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stream_openai"
+path = "fuzz_targets/stream_openai.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stream_gemini"
+path = "fuzz_targets/stream_gemini.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "structured_json"
+path = "fuzz_targets/structured_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_rpc_mcp"
+path = "fuzz_targets/json_rpc_mcp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_rpc_a2a"
+path = "fuzz_targets/json_rpc_a2a.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "loader_html"
+path = "fuzz_targets/loader_html.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "loader_csv"
+path = "fuzz_targets/loader_csv.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "loader_json"
+path = "fuzz_targets/loader_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "loader_markdown"
+path = "fuzz_targets/loader_markdown.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "otlp_json"
+path = "fuzz_targets/otlp_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "otlp_proto"
+path = "fuzz_targets/otlp_proto.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "redactor"
+path = "fuzz_targets/redactor.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "guardrails"
+path = "fuzz_targets/guardrails.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tool_args"
+path = "fuzz_targets/tool_args.rs"
+test = false
+doc = false
+bench = false

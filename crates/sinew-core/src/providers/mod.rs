@@ -12,6 +12,12 @@ pub use presets::{
     capabilities_for, catalog, from_spec, provider_names, ProviderInfo, ProviderKind,
 };
 
+/// A token count from a provider's usage object: absent or non-integer
+/// values are `None`, counts above `u32::MAX` saturate instead of wrapping.
+pub(crate) fn token_count(v: &serde_json::Value) -> Option<u32> {
+    v.as_u64().map(|n| u32::try_from(n).unwrap_or(u32::MAX))
+}
+
 /// Builds a [`reqwest::Client`] tuned for LLM APIs: connection pooling with
 /// keep-alive, `TCP_NODELAY` (no Nagle delay on small streaming writes),
 /// TCP keepalive, HTTP/2 via ALPN when the `http2` feature is on (default),

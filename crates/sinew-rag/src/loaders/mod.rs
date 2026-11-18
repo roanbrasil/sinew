@@ -5,10 +5,10 @@
 //! indexing time); wrap them in `tokio::task::spawn_blocking` inside a busy
 //! server. Every document gets a `source` metadata field with its path.
 
-mod csv;
+pub(crate) mod csv;
 mod directory;
-mod html;
-mod json;
+pub(crate) mod html;
+pub(crate) mod json;
 #[cfg(feature = "pdf")]
 mod pdf;
 

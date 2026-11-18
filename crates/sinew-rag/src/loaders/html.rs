@@ -69,7 +69,7 @@ const BLOCK: &[&str] = &[
     "address",
 ];
 
-fn html_title(html: &str) -> Option<String> {
+pub(crate) fn html_title(html: &str) -> Option<String> {
     let lower = html.to_ascii_lowercase();
     let start = lower.find("<title")?;
     let open_end = start + lower[start..].find('>')? + 1;
@@ -113,12 +113,14 @@ pub fn html_to_text(html: &str) -> String {
             continue;
         }
         let Some(gt) = rest.find('>') else {
-            // A stray `<`: keep it as text.
+            // No `>` anywhere after this `<`, so no later `<` can start a tag
+            // either: the rest is text. Stopping here (instead of skipping one
+            // `<` and searching again) keeps the work linear on inputs with
+            // many unclosed `<`.
             if skip_until.is_none() {
-                out.push('<');
+                push_text(&mut out, rest);
             }
-            rest = &rest[1..];
-            continue;
+            break;
         };
         let tag = &rest[1..gt];
         rest = &rest[gt + 1..];
@@ -249,5 +251,18 @@ mod tests {
         assert_eq!(t, "Title\n\nOne two <3 AB\n\n- a\n- b\n\nx < y");
         assert_eq!(html_title(html).as_deref(), Some("T & U"));
         assert_eq!(decode_entities("&bogus; &amp"), "&bogus; &amp");
+    }
+
+    /// Found while writing the `loader_html` fuzz target: every `<` without a later `>`
+    /// searched the rest of the input again, so `<a<a<a...` was quadratic.
+    #[test]
+    fn unclosed_tags_are_text_and_linear() {
+        assert_eq!(html_to_text("a <b\nc <d"), "a <b c <d");
+        assert_eq!(html_to_text("<p>x</p> 1 < 2 <i"), "x\n\n1 < 2 <i");
+        assert_eq!(html_to_text("<script>x <y"), "");
+        let big = "<a".repeat(200_000);
+        let start = std::time::Instant::now();
+        assert_eq!(html_to_text(&big), big);
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
     }
 }
