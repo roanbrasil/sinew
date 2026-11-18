@@ -39,7 +39,7 @@ pdf = ["rag", "sinew-rag/pdf"]
 # Agent2Agent protocol client and server (`sinew::a2a`).
 a2a = ["dep:sinew-a2a"]
 # Agent harness: built-in tools, subagents, permissions, compaction (`sinew::harness`).
-harness = ["dep:sinew-harness", "sinew-memory?/harness"]
+harness = ["dep:sinew-harness", "sinew-memory?/harness", "sinew-govern?/harness"]
 # Built-in tools: web search, web fetch, Wikipedia, calculator, date/time, HTTP, e-mail (`sinew::builtin_tools`).
 # Depend on `sinew-tools` directly to pick single tool families.
 tools = ["dep:sinew-tools", "sinew-tools/full"]
@@ -47,12 +47,19 @@ tools = ["dep:sinew-tools", "sinew-tools/full"]
 memory = ["dep:sinew-memory"]
 # Deployment server and client with an OpenAI-compatible endpoint (`sinew::serve`).
 serve = ["dep:sinew-serve", "sinew-serve/sqlite"]
+# Agent control plane: policies for tool and model calls, registry, kill switch (`sinew::govern`).
+# With `harness`, also `GovernHook`.
+govern = ["dep:sinew-govern"]
+# Cedar policies in the control plane (`CedarPolicy`; adds the cedar-policy crate, not in `full`).
+govern-cedar = ["govern", "sinew-govern/cedar"]
+# Open Policy Agent policies in the control plane (`OpaPolicy`).
+govern-opa = ["govern", "sinew-govern/opa"]
 # Persistent response cache for chat models.
 sqlite-cache = ["sinew-core/sqlite-cache"]
 # Derive structured-output schemas from Rust types.
 schemars = ["sinew-core/schemars"]
-# Everything above except Postgres-backed features.
-full = ["sqlite", "mcp", "mcp-http", "mcp-oauth", "eval", "http-trace", "otlp", "rag", "qdrant", "pdf", "a2a", "harness", "serve", "sqlite-cache", "schemars", "macros", "memory", "tools"]
+# Everything above except Postgres-backed features and `govern-cedar`.
+full = ["sqlite", "mcp", "mcp-http", "mcp-oauth", "eval", "http-trace", "otlp", "rag", "qdrant", "pdf", "a2a", "harness", "serve", "sqlite-cache", "schemars", "macros", "memory", "tools", "govern", "govern-opa"]
 
 [dependencies]
 sinew-core.workspace = true
@@ -67,6 +74,7 @@ sinew-harness = { workspace = true, optional = true, default-features = false }
 sinew-serve = { workspace = true, optional = true, default-features = false }
 sinew-memory = { workspace = true, optional = true }
 sinew-tools = { workspace = true, optional = true }
+sinew-govern = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio.workspace = true

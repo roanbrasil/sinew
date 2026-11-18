@@ -2,6 +2,7 @@
 //! [`ReactAgent`] builder), a [`Supervisor`] that routes work among agents,
 //! and a [`Swarm`] of agents that hand off to each other.
 
+mod gate;
 mod handoff;
 mod loop_guard;
 mod supervisor;
@@ -18,6 +19,7 @@ use sinew_core::{
 };
 use sinew_trace::{record_guard_event, traced_chat, traced_chat_stream};
 
+pub use gate::{AgentGate, GateVerdict, GATE_STOP_PREFIX};
 pub use handoff::{create_handoff_tool, Handoff};
 pub use loop_guard::{LoopAction, LoopCheck, LoopGuard, RepeatedCall, LOOP_STOP_REPLY};
 pub use supervisor::{create_supervisor, NamedAgent, OutputMode, Supervisor};
@@ -88,6 +90,7 @@ pub struct ReactAgent {
     context_policy: Option<ContextPolicy>,
     persist_context: bool,
     tool_guardrails: Option<Guardrails>,
+    gate: Option<Arc<dyn AgentGate>>,
 }
 
 impl ReactAgent {
@@ -107,6 +110,7 @@ impl ReactAgent {
             context_policy: None,
             persist_context: false,
             tool_guardrails: None,
+            gate: None,
         }
     }
 
@@ -267,6 +271,30 @@ impl ReactAgent {
         self
     }
 
+    /// Checks every model call and tool call with `gate` (a policy engine or
+    /// control plane, such as `sinew-govern`'s `ControlPlane::gate`).
+    ///
+    /// - Before each model call, [`GateVerdict::Deny`] or
+    ///   [`GateVerdict::Stop`] ends the run: the agent's final message is
+    ///   [`GATE_STOP_PREFIX`] followed by the reason, and the model is not
+    ///   called. [`GateVerdict::Ask`] pauses with an interrupt.
+    /// - Before each tool call (handoffs included), `Deny` answers the call
+    ///   with `error: denied: REASON`; `Ask` pauses with an interrupt whose
+    ///   value is `{"approval_required": {"id", "name", "arguments",
+    ///   "reason"}}` and resumes with `true` (run it) or `false` (deny it);
+    ///   `Stop` skips the remaining calls and ends the run as above.
+    ///
+    /// Every verdict other than `Allow` is emitted as a
+    /// [`GraphEvent::Custom`](crate::GraphEvent::Custom) with a `gate` field.
+    /// Because a node runs again from the start when it is resumed after an
+    /// interrupt, the gate is asked again for calls before the interrupt
+    /// (their results come from the tool ledger when the checkpointer keeps
+    /// one).
+    pub fn gate(mut self, gate: Arc<dyn AgentGate>) -> Self {
+        self.gate = Some(gate);
+        self
+    }
+
     /// Adds a handoff tool: when the model calls it, the agent leaves its
     /// graph and the parent (a [`Swarm`] or any graph that has this agent as
     /// a subgraph) continues at `handoff.agent`.
@@ -297,6 +325,7 @@ impl ReactAgent {
                 .sum()
         });
         let context_hook = self.system_context.clone();
+        let model_gate = self.gate.clone();
         let max = self.max_iterations;
         // Supersteps per loop round: agent, [post_model_hook], tools.
         let cycle = if self.post_model_hook.is_some() { 3 } else { 2 };
@@ -312,6 +341,7 @@ impl ReactAgent {
             let specs = specs.clone();
             let policy = policy.clone();
             let context_hook = context_hook.clone();
+            let gate = model_gate.clone();
             // `ctx.step` restarts at 0 for every run (and every subgraph
             // invocation), so this counts this run's model calls.
             let exhausted = max.is_some_and(|max| ctx.step / cycle >= max);
@@ -319,6 +349,33 @@ impl ReactAgent {
                 if exhausted {
                     s.messages.push(Message::assistant(MAX_ITERATIONS_REPLY));
                     return Ok(s);
+                }
+                if let Some(gate) = &gate {
+                    let verdict = gate.before_model(&ctx, model.name()).await;
+                    let stop = match &verdict {
+                        GateVerdict::Allow => None,
+                        GateVerdict::Ask(reason) => {
+                            ctx.emit(
+                                json!({ "gate": { "model": model.name(), "verdict": &verdict } }),
+                            );
+                            let approved: bool = ctx.interrupt(json!({ "approval_required": {
+                                "model": model.name(),
+                                "reason": reason,
+                            }}))?;
+                            (!approved).then(|| format!("{reason} (not approved)"))
+                        }
+                        GateVerdict::Deny(reason) | GateVerdict::Stop(reason) => {
+                            ctx.emit(
+                                json!({ "gate": { "model": model.name(), "verdict": &verdict } }),
+                            );
+                            Some(reason.clone())
+                        }
+                    };
+                    if let Some(reason) = stop {
+                        s.messages
+                            .push(Message::assistant(format!("{GATE_STOP_PREFIX}{reason}")));
+                        return Ok(s);
+                    }
                 }
                 let mut messages = messages;
                 // System context (e.g. recalled memories) is computed first
@@ -421,11 +478,13 @@ impl ReactAgent {
         let guard = self.loop_guard.clone();
         let unknown = self.unknown_outcome;
         let tool_guards = self.tool_guardrails.clone();
+        let tool_gate = self.gate.clone();
         g.add_command_node("tools", ["agent", END], move |mut s: AgentState, ctx| {
             let tools = tools.clone();
             let handoffs = handoffs.clone();
             let guard = guard.clone();
             let tool_guards = tool_guards.clone();
+            let gate = tool_gate.clone();
             async move {
                 let calls = s.last().map(|m| m.tool_calls.clone()).unwrap_or_default();
                 // Where these calls were requested, for durable ledger keys.
@@ -464,7 +523,7 @@ impl ReactAgent {
                     }
                 }
                 let mut target = None;
-                for call in &calls {
+                for (i, call) in calls.iter().enumerate() {
                     if let Some(r) = nudged.iter().find(|r| r.id == call.id) {
                         s.messages.push(Message::tool_result(
                             call.id.clone(),
@@ -472,6 +531,63 @@ impl ReactAgent {
                         ));
                         continue;
                     }
+                    let mut gated;
+                    let call = match &gate {
+                        None => call,
+                        Some(gate) => {
+                            gated = call.clone();
+                            let side_effects =
+                                tools.get(&call.name).is_some_and(|t| t.side_effects());
+                            let verdict = gate.before_tool(&ctx, &mut gated, side_effects).await;
+                            if verdict != GateVerdict::Allow {
+                                ctx.emit(json!({ "gate": {
+                                    "tool": call.name,
+                                    "id": call.id,
+                                    "verdict": &verdict,
+                                }}));
+                            }
+                            match verdict {
+                                GateVerdict::Allow => {}
+                                GateVerdict::Deny(reason) => {
+                                    s.messages.push(Message::tool_result(
+                                        call.id.clone(),
+                                        format!("error: denied: {reason}"),
+                                    ));
+                                    continue;
+                                }
+                                GateVerdict::Ask(reason) => {
+                                    let approved: bool = ctx.interrupt(json!({
+                                        "approval_required": {
+                                            "id": call.id,
+                                            "name": call.name,
+                                            "arguments": gated.arguments,
+                                            "reason": reason,
+                                        }
+                                    }))?;
+                                    if !approved {
+                                        s.messages.push(Message::tool_result(
+                                            call.id.clone(),
+                                            format!("error: denied: {reason} (not approved)"),
+                                        ));
+                                        continue;
+                                    }
+                                }
+                                GateVerdict::Stop(reason) => {
+                                    for rest in &calls[i..] {
+                                        s.messages.push(Message::tool_result(
+                                            rest.id.clone(),
+                                            format!("skipped: {reason}"),
+                                        ));
+                                    }
+                                    s.messages.push(Message::assistant(format!(
+                                        "{GATE_STOP_PREFIX}{reason}"
+                                    )));
+                                    return Ok(Command::goto(END).with_update(s));
+                                }
+                            }
+                            &gated
+                        }
+                    };
                     if let Some(h) = handoffs.iter().find(|h| h.tool_name == call.name) {
                         let reply = if target.is_none() {
                             target = Some(h.agent.clone());
@@ -707,6 +823,66 @@ mod tests {
             .filter(|e| matches!(e, GraphEvent::Custom { value, .. } if value.get("guardrail").is_some()))
             .count();
         assert_eq!(guard_events, 2);
+    }
+
+    #[tokio::test]
+    async fn gate_denies_rewrites_and_stops() {
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        /// Denies `delete`, masks `secret`, and stops before the second model call.
+        struct TestGate(AtomicUsize);
+        #[async_trait]
+        impl AgentGate for TestGate {
+            async fn before_model(&self, _ctx: &NodeContext, model: &str) -> GateVerdict {
+                assert_eq!(model, "scripted");
+                if self.0.fetch_add(1, Ordering::SeqCst) == 1 {
+                    GateVerdict::Stop("budget spent".into())
+                } else {
+                    GateVerdict::Allow
+                }
+            }
+            async fn before_tool(
+                &self,
+                _ctx: &NodeContext,
+                call: &mut ToolCall,
+                side_effects: bool,
+            ) -> GateVerdict {
+                assert!(!side_effects);
+                if call.name == "delete" {
+                    return GateVerdict::Deny("not allowed".into());
+                }
+                call.arguments["secret"] = json!("***");
+                GateVerdict::Allow
+            }
+        }
+
+        let call = |id: &str, name: &str| ToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments: json!({"secret": "hunter2"}),
+        };
+        let model = Arc::new(ScriptedModel::new([
+            Message::assistant_with_tools("", vec![call("a", "echo"), call("b", "delete")]),
+            Message::assistant("never sent"),
+        ]));
+        let tools = ToolBox::new()
+            .with(FnTool::new("echo", "", json!({}), Ok))
+            .with(FnTool::new("delete", "", json!({}), |_| Ok(json!("gone"))));
+        let out = ReactAgent::new(model.clone(), tools)
+            .gate(Arc::new(TestGate(AtomicUsize::new(0))))
+            .compile()
+            .unwrap()
+            .invoke(AgentState::new(vec![Message::user("go")]))
+            .await
+            .unwrap();
+        assert_eq!(out.messages[2].content, r#"{"secret":"***"}"#);
+        assert_eq!(out.messages[3].content, "error: denied: not allowed");
+        assert_eq!(
+            out.last().unwrap().content,
+            format!("{GATE_STOP_PREFIX}budget spent")
+        );
+        assert_eq!(model.requests().len(), 1);
     }
 
     #[tokio::test]

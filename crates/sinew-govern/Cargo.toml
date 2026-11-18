@@ -1,0 +1,50 @@
+[package]
+name = "sinew-govern"
+description = "Agent control plane for Sinew: policies for tool and model calls, agent registry, kill switch and decision audit events"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["llm", "agents", "governance", "policy", "authorization"]
+categories = ["authentication", "asynchronous"]
+
+[features]
+default = ["yaml"]
+# Policy files in YAML (JSON is always supported).
+yaml = ["dep:serde_norway"]
+# `GovernHook`: enforce the control plane in `sinew-harness` agents.
+harness = ["dep:sinew-harness"]
+# `CedarPolicy`: evaluate Cedar policies (cedar-policy crate).
+cedar = ["dep:cedar-policy"]
+# `OpaPolicy`: ask an Open Policy Agent server (data API over HTTP).
+opa = ["dep:reqwest"]
+
+[dependencies]
+sinew-core.workspace = true
+sinew-graph.workspace = true
+sinew-trace.workspace = true
+sinew-harness = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+regex.workspace = true
+uuid.workspace = true
+serde_norway = { version = "0.9", optional = true }
+cedar-policy = { version = "4.7", optional = true, default-features = false }
+reqwest = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net"] }
+futures-util.workspace = true
+axum.workspace = true
+
+[lints]
+workspace = true
+
+[[test]]
+name = "harness"
+required-features = ["harness"]

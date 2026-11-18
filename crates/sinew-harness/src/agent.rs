@@ -24,7 +24,7 @@ use crate::{
     },
     events::{AgentEvent, AgentOutcome, AgentStream, RunResult},
     guardrails::{apply_guardrails, Guardrail, GuardrailStage},
-    hooks::{Hook, HookContext, ToolDecision},
+    hooks::{Hook, HookContext, StepPhase, ToolDecision},
     instructions::{find_instruction_files, instructions_prompt},
     permissions::{Permission, PermissionPolicy},
     state::{
@@ -723,7 +723,7 @@ pub struct Agent {
 
 enum Prepared {
     State(Box<HarnessState>),
-    Blocked(RunResult),
+    Blocked(Box<RunResult>),
 }
 
 impl Agent {
@@ -792,7 +792,7 @@ impl Agent {
     pub async fn run(&self, thread_id: &str, input: impl Into<String>) -> Result<AgentOutcome> {
         match self.prepare_turn(thread_id, input.into()).await? {
             Prepared::State(s) => self.drive(thread_id, Some(*s)).await,
-            Prepared::Blocked(r) => Ok(AgentOutcome::Completed(r)),
+            Prepared::Blocked(r) => Ok(AgentOutcome::Completed(*r)),
         }
     }
 
@@ -820,6 +820,7 @@ impl Agent {
         match self.prepare_turn(thread_id, input.into()).await? {
             Prepared::State(s) => Ok(self.event_stream(thread_id, Some(*s))),
             Prepared::Blocked(result) => {
+                let result = *result;
                 Ok(futures_util::stream::once(async move { AgentEvent::Done { result } }).boxed())
             }
         }
@@ -857,7 +858,7 @@ impl Agent {
                 state.messages.push(Message::user(text));
                 Ok(Prepared::State(Box::new(state)))
             }
-            Err(reason) => Ok(Prepared::Blocked(RunResult {
+            Err(reason) => Ok(Prepared::Blocked(Box::new(RunResult {
                 thread_id: thread_id.into(),
                 text: String::new(),
                 output: None,
@@ -866,7 +867,7 @@ impl Agent {
                 usage: Default::default(),
                 thread_usage: state.usage,
                 todos: state.todos,
-            })),
+            }))),
         }
     }
 
@@ -1171,9 +1172,24 @@ fn budget_stop(cfg: &Config, s: &HarnessState) -> Option<StopReason> {
     None
 }
 
+/// The reason of the first hook that asks to end the turn.
+async fn hook_stop(cfg: &Config, hctx: &HookContext, phase: StepPhase) -> Option<String> {
+    for h in &cfg.hooks {
+        if let Some(reason) = h.should_stop(hctx, phase).await {
+            return Some(reason);
+        }
+    }
+    None
+}
+
 async fn agent_node(cfg: &Config, mut s: HarnessState, ctx: NodeContext) -> Result<HarnessState> {
     if s.turn.stop.is_none() {
         s.turn.stop = budget_stop(cfg, &s);
+    }
+    if s.turn.stop.is_none() {
+        s.turn.stop = hook_stop(cfg, &hook_ctx(cfg, &s, &ctx), StepPhase::BeforeModel)
+            .await
+            .map(StopReason::Guardrail);
     }
     if s.turn.stop.is_some() {
         s.pending.clear();
@@ -1389,6 +1405,24 @@ async fn decide(
 async fn tools_node(cfg: &Config, mut s: HarnessState, ctx: NodeContext) -> Result<HarnessState> {
     let pending = std::mem::take(&mut s.pending);
     let hctx = hook_ctx(cfg, &s, &ctx);
+    if let Some(reason) = hook_stop(cfg, &hctx, StepPhase::BeforeTools).await {
+        for p in &pending {
+            let out = format!("skipped: {reason}");
+            emit(
+                &ctx,
+                &AgentEvent::ToolEnd {
+                    id: p.call.id.clone(),
+                    name: p.call.name.clone(),
+                    output: out.clone(),
+                    is_error: true,
+                },
+            );
+            s.messages
+                .push(Message::tool_result(p.call.id.clone(), out));
+        }
+        s.turn.stop = Some(StopReason::Guardrail(reason));
+        return Ok(s);
+    }
     // Where these calls were requested, for durable ledger keys.
     let position = s.messages.len().saturating_sub(1).to_string();
     let unknown = match cfg.unknown_outcome {

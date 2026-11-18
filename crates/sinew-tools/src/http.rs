@@ -498,7 +498,11 @@ mod tests {
         .unwrap();
         assert_eq!(out["status"], 201);
         let reqs = mock.requests();
-        assert_eq!(reqs[0].uri.query(), Some("n=5&page=2"));
+        // Order follows the JSON object, which depends on serde_json's
+        // `preserve_order` feature (enabled by some dependencies).
+        let mut query: Vec<&str> = reqs[0].uri.query().unwrap().split('&').collect();
+        query.sort_unstable();
+        assert_eq!(query, ["n=5", "page=2"]);
         assert_eq!(reqs[0].headers["authorization"], "Bearer secret");
         assert!(reqs[0].headers.get("idempotency-key").is_none());
         assert_eq!(reqs[1].method, "POST");

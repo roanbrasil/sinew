@@ -172,7 +172,16 @@ rewrite the request and reply (an error aborts the run). `before_tool` can
 rewrite the arguments (the assistant message is updated to match) and
 returns `Allow`, `Ask(reason)` or `Deny(reason)`. `after_tool` can rewrite
 the output. Hooks run in registration order; the most restrictive verdict
-of all hooks and the policy wins.
+of all hooks and the policy wins. `should_stop(ctx, phase)` is checked
+before every model call (`StepPhase::BeforeModel`) and before the tools of
+every step (`StepPhase::BeforeTools`); returning `Some(reason)` ends the
+turn with `StopReason::Guardrail(reason)` (pending calls are answered with
+`skipped: <reason>`). It is how a kill switch reaches a running turn.
+
+`sinew_govern::GovernHook` (crate `sinew-govern`, feature `harness`) is a
+ready-made hook for a governance control plane: policies before every tool
+call (an `Ask` uses the approval flow below), and suspension through
+`should_stop`. See [governance](governance.md).
 
 `sinew_memory::MemoryHook` (crate `sinew-memory`, feature `harness`) is a
 ready-made hook for long-term memory: it recalls a user's memories into the

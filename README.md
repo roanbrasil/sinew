@@ -20,6 +20,7 @@ as one typed, async, low-latency workspace.
 | [`sinew-checkpoint`](crates/sinew-checkpoint) | LangGraph checkpointers | Durable SQLite and Postgres checkpointers and a SQLite `Store` |
 | [`sinew-memory`](crates/sinew-memory) | LangMem / Mem0 | Long-term memory across threads on any `Store`: model-driven extraction of facts, preferences and episodes, add / update / delete consolidation, semantic or keyword recall per user, a memory-enabled ReAct agent and a harness hook |
 | [`sinew-harness`](crates/sinew-harness) | Deep agents / Claude-Code-style harness | `Agent` with file, shell, HTTP and todo tools, subagents, hooks, permission policies and approvals, context compaction, budgets, guardrails, skills, MCP tools; the `sinew-agent` CLI |
+| [`sinew-govern`](crates/sinew-govern) | Agent control plane | Policies evaluated before every tool and model call (allow / ask / deny / redact; globs, argument conditions, rate limits, time windows; Rust, YAML / JSON, Cedar or OPA), agent registry with owners, tenants, allowed tools and budgets, kill switch and quarantine, a trace run and audit event per decision |
 | [`sinew-tools`](crates/sinew-tools) | LangChain community tools | Built-in tools, one feature per family: web search (Tavily, Brave, SearXNG), web fetch with Readability and an SSRF guard, Wikipedia, calculator, date/time, HTTP requests with a host allow-list, e-mail (SMTP send, IMAP read) |
 | [`sinew-serve`](crates/sinew-serve) | LangGraph Platform / LangServe | HTTP server for graphs and agents: assistants, threads, runs (wait, SSE stream, background, cancel, join), multitask strategies, webhooks, an OpenAI-compatible `/v1/chat/completions`, and a typed client |
 | [`sinew-trace`](crates/sinew-trace) | LangSmith SDK | Run tree with timings, I/O, tokens, cost and time to first token; JSONL, memory, HTTP and OpenTelemetry (OTLP JSON / protobuf, GenAI conventions) sinks |
@@ -127,6 +128,7 @@ Sinew is built for low latency and high throughput:
 | `harness` | `sinew::harness`: agent harness |
 | `tools` | `sinew::builtin_tools`: web search, web fetch, Wikipedia, calculator, date/time, HTTP, e-mail ([guide](docs/builtin-tools.md)) |
 | `memory` | `sinew::memory`: long-term memory (extraction, dedup, recall) |
+| `govern` (+ `govern-opa`, `govern-cedar`) | `sinew::govern`: agent control plane, policies, kill switch ([guide](docs/governance.md)) |
 | `serve` | `sinew::serve`: deployment server and client |
 | `a2a` | `sinew::a2a`: Agent2Agent protocol |
 | `mcp` / `mcp-http` / `mcp-oauth` | `sinew::mcp`: Model Context Protocol (stdio; `mcp-http` adds the HTTP client and server for microservices; `mcp-oauth` adds OAuth 2.1 on both sides) |
@@ -135,7 +137,7 @@ Sinew is built for low latency and high throughput:
 | `otlp` / `otlp-proto` | `trace::OtlpSink` for any OpenTelemetry collector |
 | `macros` (default) | `#[sinew::tool]` and `tools![...]` |
 | `sqlite-cache`, `schemars` | persistent response cache; structured-output schemas from Rust types |
-| `full` | all of the above except Postgres-backed features |
+| `full` | all of the above except Postgres-backed features and `govern-cedar` |
 
 ## Documentation
 
@@ -144,6 +146,7 @@ Sinew is built for low latency and high throughput:
 - **Models:** [Providers and capabilities](docs/providers.md) · [Tools](docs/tools.md) · [Built-in tools](docs/builtin-tools.md) · [Prompt templates](docs/prompts.md) · [Runnables](docs/runnables.md) · [Multimodal](docs/multimodal.md) · [Resilience and cost](docs/resilience.md) · [Model routing](docs/routing.md) · [Streaming](docs/streaming.md)
 - **Graphs:** [Fan-out](docs/fan-out.md) · [Commands and interrupts](docs/commands-and-interrupts.md) · [Subgraphs](docs/subgraphs.md) · [Time travel](docs/time-travel.md) · [Checkpointing](docs/checkpointing.md) · [Durable execution](docs/durable-execution.md) · [Store](docs/store.md) · [Multi-agent](docs/multi-agent.md) · [Loop detection](docs/loop-detection.md) · [Diagrams](docs/visualization.md)
 - **Agents and retrieval:** [Harness](docs/harness.md) · [Context engineering](docs/context.md) · [Guardrails](docs/guardrails.md) · [Long-term memory](docs/memory.md) · [RAG](docs/rag.md)
+- **Governance:** [Policies, control plane and kill switch](docs/governance.md)
 - **Deployment and protocols:** [Production checklist](docs/production.md) · [Serve](docs/serve.md) · [MCP](docs/mcp.md) · [A2A](docs/a2a.md)
 - **Testing:** [Testing agents and record/replay](docs/testing.md)
 - **Observability:** [Scope](docs/scope.md) · [Monitoring](docs/monitoring.md) · [Prompt hub](docs/prompt-hub.md) · [Evaluation](docs/evaluation.md) · [OpenTelemetry](docs/otel.md) · [Redaction](docs/redaction.md)

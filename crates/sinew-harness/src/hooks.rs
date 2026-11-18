@@ -20,6 +20,18 @@ pub struct HookContext {
     pub agent: String,
 }
 
+/// Where in a step [`Hook::should_stop`] is asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum StepPhase {
+    /// In the `agent` node, before the model is called (after the budget
+    /// checks).
+    BeforeModel,
+    /// In the `tools` node, before the approved tool calls of the step run
+    /// (also after a human answered an approval request).
+    BeforeTools,
+}
+
 /// A `before_tool` verdict. When several hooks and the permission policy
 /// disagree, the most restrictive verdict wins (deny > ask > allow).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,4 +63,13 @@ pub trait Hook: Send + Sync {
 
     /// Inspect or rewrite a tool's output before the model sees it.
     async fn after_tool(&self, _ctx: &HookContext, _call: &ToolCall, _output: &mut String) {}
+
+    /// Ends the turn when it returns `Some(reason)`: a kill switch checked
+    /// at every step. Before a model call, the model is not called; before
+    /// tools, every pending call is answered with `skipped: <reason>`. The
+    /// turn then finishes with
+    /// [`StopReason::Guardrail(reason)`](crate::StopReason::Guardrail).
+    async fn should_stop(&self, _ctx: &HookContext, _phase: StepPhase) -> Option<String> {
+        None
+    }
 }

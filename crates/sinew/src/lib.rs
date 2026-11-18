@@ -8,6 +8,7 @@
 //! | `harness` | `harness`: agent harness with built-in tools, subagents, permissions |
 //! | `tools` | `builtin_tools`: web search, web fetch, Wikipedia, calculator, date/time, HTTP requests, e-mail (all `sinew-tools` families) |
 //! | `memory` | `memory`: long-term memory across threads (extraction, dedup, recall; `MemoryHook` with `harness`) |
+//! | `govern` (`govern-opa`, `govern-cedar`) | `govern`: agent control plane: policies before every tool and model call, agent registry, kill switch, decision events (`GovernHook` with `harness`) |
 //! | `serve` | `serve`: deployment server, client and OpenAI-compatible endpoint |
 //! | `a2a` | `a2a`: Agent2Agent protocol client and server |
 //! | `mcp` / `mcp-http` | `mcp`: Model Context Protocol client and server (stdio; `mcp-http` adds Streamable HTTP for microservices) |
@@ -16,7 +17,7 @@
 //! | `otlp` / `otlp-proto` | `trace::OtlpSink` for any OpenTelemetry collector |
 //! | `macros` (default) | `#[sinew::tool]` and `tools!`: plain functions become tools; `prompt!` / `chat_prompt!`: templates checked at compile time |
 //! | `sqlite-cache`, `schemars` | persistent response cache; schemas from Rust types |
-//! | `full` | all of the above except Postgres-backed features |
+//! | `full` | all of the above except Postgres-backed features and `govern-cedar` |
 #![doc(
     html_logo_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png",
     html_favicon_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png"
@@ -37,6 +38,8 @@ pub use sinew_a2a as a2a;
 pub use sinew_checkpoint as checkpoint;
 #[cfg(feature = "eval")]
 pub use sinew_eval as eval;
+#[cfg(feature = "govern")]
+pub use sinew_govern as govern;
 #[cfg(feature = "harness")]
 pub use sinew_harness as harness;
 #[cfg(feature = "mcp")]
