@@ -1,0 +1,23 @@
+[package]
+name = "sample-23-owasp-agentic"
+description = "OWASP Top 10 for Agentic Applications: attack scenarios against Sinew agents, unprotected and with the mapped controls"
+version = "0.0.0"
+edition.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "sample-23-owasp-agentic"
+path = "src/main.rs"
+
+[dependencies]
+sinew = { path = "../../crates/sinew", features = ["eval", "harness", "memory", "mcp", "rag"] }
+tokio = { workspace = true, features = ["net", "io-util"] }
+serde_json.workspace = true
+async-trait.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -308,3 +308,5 @@ Combine them with guardrails, sandboxing and monitoring ([Production](production
   records the `Ask`, not the approval.
 - `ReactAgent` gates take one identity per compiled graph; build one gate per user (it is a cheap clone of the
   control plane) when the user changes per request.
+
+See the [OWASP agentic controls map](security-owasp.md) for an attack-by-attack view: each of the OWASP Top 10 for Agentic Applications risks with the Sinew controls that stop it, tested by `samples/23-owasp-agentic`.

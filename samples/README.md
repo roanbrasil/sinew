@@ -47,6 +47,7 @@ cargo run -p sample-03-tools-agent -- --ollama  # real model
 | 20 | [serve](20-serve/src/main.rs) | Deploy an agent with `sinew-serve`; call it through `ServeClient` and through the OpenAI-compatible endpoint |
 | 21 | [prompt-hub-and-feedback](21-prompt-hub-and-feedback/src/main.rs) | Versioned prompts in the hub, feedback and annotation queues, cost and monitoring in `sinew-scope` |
 | 22 | [mcp-microservice](22-mcp-microservice/src/main.rs) | A microservice with REST routes plus an MCP endpoint (Streamable HTTP, bearer auth); typed async tools; an agent using them over HTTP (feature `mcp-http`) |
+| 23 | [owasp-agentic](23-owasp-agentic/src/lib.rs) | Attack scenarios for each OWASP Top 10 for Agentic Applications risk against `ReactAgent`, the harness, `MemoryAgent` and an MCP server, unprotected and with the mapped controls; Markdown/JSON `SecurityReport`, non-zero exit on regressions (`--live provider:model` for a real model) |
 
 Coming from LangChain or LangGraph? [docs/migrating-from-langchain.md](../docs/migrating-from-langchain.md)
 maps Python concepts to Sinew types and shows the common patterns side by side, with pointers to
