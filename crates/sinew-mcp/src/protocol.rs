@@ -920,7 +920,8 @@ impl UriTemplate {
     /// or `None` if it does not match.
     pub fn matches(&self, uri: &str) -> Option<HashMap<String, String>> {
         let mut vars = HashMap::new();
-        if match_parts(&self.parts, uri, &mut vars) {
+        let mut failed = std::collections::HashSet::new();
+        if match_parts(&self.parts, 0, uri, 0, &mut vars, &mut failed) {
             Some(vars)
         } else {
             None
@@ -943,31 +944,52 @@ impl UriTemplate {
     }
 }
 
-fn match_parts(parts: &[TemplatePart], s: &str, vars: &mut HashMap<String, String>) -> bool {
-    match parts.split_first() {
+/// Backtracking matcher over `(part, offset)` states. States that already
+/// failed are remembered, so the work is bounded by
+/// `parts × positions × candidates` instead of growing exponentially with the
+/// number of variables.
+fn match_parts(
+    parts: &[TemplatePart],
+    pi: usize,
+    uri: &str,
+    at: usize,
+    vars: &mut HashMap<String, String>,
+    failed: &mut std::collections::HashSet<(usize, usize)>,
+) -> bool {
+    if failed.contains(&(pi, at)) {
+        return false;
+    }
+    let s = &uri[at..];
+    let ok = match parts.get(pi) {
         None => s.is_empty(),
-        Some((TemplatePart::Literal(l), rest)) => s
-            .strip_prefix(l.as_str())
-            .is_some_and(|tail| match_parts(rest, tail, vars)),
-        Some((TemplatePart::Var { name, greedy }, rest)) => {
+        Some(TemplatePart::Literal(l)) => {
+            s.starts_with(l.as_str()) && match_parts(parts, pi + 1, uri, at + l.len(), vars, failed)
+        }
+        Some(TemplatePart::Var { name, greedy }) => {
             // Try the longest candidate first; backtrack on failure.
             let limit = if *greedy {
                 s.len()
             } else {
                 s.find(['/', '?', '#']).unwrap_or(s.len())
             };
+            let mut found = false;
             for end in (1..=limit).rev() {
                 if !s.is_char_boundary(end) {
                     continue;
                 }
-                if match_parts(rest, &s[end..], vars) {
+                if match_parts(parts, pi + 1, uri, at + end, vars, failed) {
                     vars.insert(name.clone(), percent_decode(&s[..end]));
-                    return true;
+                    found = true;
+                    break;
                 }
             }
-            false
+            found
         }
+    };
+    if !ok {
+        failed.insert((pi, at));
     }
+    ok
 }
 
 fn percent_decode(s: &str) -> String {
@@ -975,9 +997,15 @@ fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
-            if let Some(b) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+        // Exactly two hex digits; `from_str_radix` alone would also accept a
+        // sign (`%+1`).
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && bytes[i + 1].is_ascii_hexdigit()
+            && bytes[i + 2].is_ascii_hexdigit()
+        {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("00");
+            if let Ok(b) = u8::from_str_radix(hex, 16) {
                 out.push(b);
                 i += 3;
                 continue;
@@ -992,6 +1020,39 @@ fn percent_decode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn percent_decode_requires_two_hex_digits() {
+        assert_eq!(percent_decode("a%20b"), "a b");
+        assert_eq!(percent_decode("%+1"), "%+1");
+        assert_eq!(percent_decode("%-1x"), "%-1x");
+        assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("%4"), "%4");
+    }
+
+    #[test]
+    fn many_variables_match_in_bounded_time() {
+        // 24 one-segment variables separated by `-`, against a URI with no
+        // match at the end: exponential without memoization.
+        let template: String = (0..24)
+            .map(|i| format!("{{v{i}}}"))
+            .collect::<Vec<_>>()
+            .join("-");
+        let t = UriTemplate::new(format!("x://{template}/end")).unwrap();
+        let uri = format!("x://{}/nope", vec!["a-b"; 24].join("-"));
+        let start = std::time::Instant::now();
+        assert!(t.matches(&uri).is_none());
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            start.elapsed()
+        );
+        let ok = format!(
+            "x://{}/end",
+            (0..24).map(|i| i.to_string()).collect::<Vec<_>>().join("-")
+        );
+        assert_eq!(t.matches(&ok).unwrap()["v23"], "23");
+    }
 
     #[test]
     fn uri_templates_match_and_expand() {
