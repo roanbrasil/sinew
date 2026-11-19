@@ -9,6 +9,7 @@ issue #179 extends that tagging.
 
 Every claim in the "Sinew control" column is checked by an attack scenario that runs in CI
 (`samples/23-owasp-agentic`). A risk without an adequate control is marked **gap** and links a follow-up issue.
+Of the sixteen scenarios, fifteen are mitigated and one is a gap (ASI07-01).
 
 | Id | Risk | Scenarios | Sinew controls | Status |
 |---|---|---|---|---|

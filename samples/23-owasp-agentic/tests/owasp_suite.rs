@@ -77,6 +77,8 @@ async fn full_suite_covers_every_risk_and_passes() {
         .iter()
         .all(|c| matches!(c.status, RiskStatus::Mitigated | RiskStatus::Gap)));
     assert_eq!(report.counts.scenarios, 16);
+    assert_eq!(report.counts.mitigated, 15);
+    assert_eq!(report.counts.gaps, 1);
 
     let md = report.to_markdown();
     assert!(md.contains("| ASI01 | Agent Goal Hijack | 3 | mitigated |"));
