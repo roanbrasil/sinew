@@ -20,6 +20,9 @@ pub enum McpError {
     /// (see [`McpClient::vetted_toolbox`](crate::McpClient::vetted_toolbox)).
     #[error("tool vetting: {0}")]
     Vetting(sinew_core::Error),
+    /// A server identity or a call proof that does not verify.
+    #[error("identity: {0}")]
+    Identity(#[from] sinew_core::identity::IdentityError),
     #[cfg(feature = "http")]
     #[error("http error: {0}")]
     Http(#[from] reqwest::Error),

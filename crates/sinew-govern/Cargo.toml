@@ -19,6 +19,9 @@ yaml = ["dep:serde_norway"]
 harness = ["dep:sinew-harness"]
 # `CedarPolicy`: evaluate Cedar policies (cedar-policy crate).
 cedar = ["dep:cedar-policy"]
+# `ControlPlane::register_verified` and `AgentProfile::from_identity`: register
+# agents from signed identity documents (sinew-core `identity`).
+identity = ["sinew-core/identity"]
 # `OpaPolicy`: ask an Open Policy Agent server (data API over HTTP).
 opa = ["dep:reqwest"]
 # `AuditLog`: tamper-evident, hash-chained audit log with Ed25519-signed
@@ -85,3 +88,7 @@ required-features = ["cli", "audit-sqlite"]
 name = "sinew-govern"
 path = "src/bin/sinew-govern.rs"
 required-features = ["cli"]
+
+[[test]]
+name = "identity"
+required-features = ["identity"]

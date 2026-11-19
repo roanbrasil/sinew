@@ -92,6 +92,30 @@ impl AgentProfile {
         }
     }
 
+    /// The profile a signed identity document describes: id, owner,
+    /// tenant, description (its version and capabilities) and allowed tools
+    /// (an empty list allows none). Verify the document first, or use
+    /// [`ControlPlane::register_verified`](crate::ControlPlane::register_verified).
+    /// Feature `identity`.
+    #[cfg(feature = "identity")]
+    pub fn from_identity(identity: &sinew_core::identity::AgentIdentity) -> Self {
+        let mut description = format!("version {}", identity.version);
+        if !identity.capabilities.is_empty() {
+            description.push_str(&format!(
+                "; capabilities: {}",
+                identity.capabilities.join(", ")
+            ));
+        }
+        Self {
+            id: identity.id.clone(),
+            owner: identity.owner.clone(),
+            description: Some(description),
+            tenant: identity.tenant.clone(),
+            allowed_tools: Some(identity.allowed_tools.clone()),
+            ..Self::default()
+        }
+    }
+
     pub fn owner(mut self, owner: impl Into<String>) -> Self {
         self.owner = Some(owner.into());
         self

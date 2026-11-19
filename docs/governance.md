@@ -333,6 +333,99 @@ partial edits but not against a full rewrite of that tail, and truncation can on
 recorded outside the store: checkpoint often and copy `AuditLog::head()` (or the last line of each export) to another
 system. After a key rotation pass every key used over the log's life.
 
+## Agent identity
+
+Tools and remote agents need to know which agent is calling, for which user, and must not get more authority than
+that user has. `sinew_core::identity` covers three layers; the types live in `sinew-core` so `sinew-a2a`,
+`sinew-mcp`, `sinew-trace` and this crate share them without depending on each other.
+
+**Call context.** A `CallContext` holds the acting agent, the end user and tenant, the trace and the delegation
+chain (every agent the request went through, with `Via::{Origin, Local, A2a, Mcp}` and whether the hop was
+verified). Set it where a request enters the program; everything below reads it with `current_context()`.
+
+```rust
+use sinew::core::identity::{with_context, CallContext};
+
+let ctx = CallContext::new("orchestrator").user("ana").tenant("acme").subject_token(session_token);
+let out = with_context(ctx, agent.invoke(state)).await?;
+```
+
+- The control plane fills a request's missing user, tenant and trace id from the context of the same agent, and
+  adds `metadata.delegation_chain` (agent ids, first to last) for delegated requests. One `cp.gate("billing")`
+  then serves every user, instead of one gate per user.
+- `traced_tool` records `identity` metadata (agent, user, tenant, chain) on every tool run and runs the tool with
+  the context pointing at that run. A root run started inside a context (a remote agent's graph) joins the
+  context's trace under that run, so an A2A hop shows up as one trace.
+- The user's own token (`subject_token`) is never serialized: it does not reach traces or remote agents.
+
+**Signed identity** (feature `identity` on `sinew-core`, on by default in `sinew-a2a` and `sinew-mcp`, `identity`
+on `sinew`). An `AgentIdentity` document says who the agent is (id, owner, version, tenant), what it does
+(capabilities) and may call (`allowed_tools` patterns), and carries the agent's own Ed25519 public key. An issuer
+(the platform team, the control plane) signs it; receivers trust the issuer's key in a `TrustStore`, which also
+revokes agents and keys at runtime.
+
+```rust
+use sinew::core::identity::{AgentCredentials, AgentIdentity, AgentKey, IdentityVerifier, TrustStore};
+
+let issuer = AgentKey::from_hex(&std::env::var("IDENTITY_ISSUER_KEY")?)?;   // kept by the platform team
+let agent_key = AgentKey::generate()?;                                        // kept by the agent
+let identity = AgentIdentity::new("billing", agent_key.public_key())
+    .owner("payments-team").version("2.0.0")
+    .allow_tools(["get_invoice", "refund"])
+    .expires_in(Duration::from_secs(30 * 86_400))
+    .sign(&issuer)?;
+
+let trust = TrustStore::new().trust_named("platform", issuer.public_key());
+cp.register_verified(&identity, &trust)?;   // the registry enforces exactly what was signed (feature `identity`)
+let creds = AgentCredentials::new(agent_key, identity)?;
+```
+
+On each remote call the agent signs a `CallAssertion` of its `CallContext` for one audience (the receiving agent),
+with a 60 s validity window and a random nonce (`AgentCredentials::prove`). The receiver's `IdentityVerifier`
+checks that the identity is signed by a trusted issuer and not expired or revoked, that the assertion is signed by
+the key the identity names, acts as that agent, names this receiver, is inside its window and was never seen
+before. `Signed<T>` is the generic envelope behind both (Ed25519 over canonical JSON with a domain string), so other
+payloads, such as inter-agent messages (#188), reuse it.
+
+| Where | Sending side | Receiving side |
+|---|---|---|
+| A2A card | `AgentCard::with_identity(&identity)`, `A2aServer::with_card_signing_key(key)` (a JWS with `alg: EdDSA` in `signatures`, re-signed when `spawn` fills in the URL) | `A2aClient::discover_verified(url, &trust)`, `AgentCard::verify(&trust)` |
+| A2A calls | `A2aClient::with_credentials(creds)`: the proof goes in the params' `metadata["sinew.dev/identity"]` | `A2aServer::with_identity_verifier(v)`: rejected calls get `-32040`; the executor runs in the caller's context with this agent appended, and sees `RequestContext::caller` |
+| MCP calls | `McpClient::with_credentials(creds)`: the proof goes in `tools/call` `_meta` | `McpServer::with_identity_verifier(v)`: also refuses tools outside the caller's `allowed_tools` (`-32040`) |
+| MCP server | `McpServer::with_identity(identity)` in the `initialize` result's `_meta` | `McpClient::verify_server(&trust)` |
+
+A verified card or server identity proves who issued the document and what it allows, not that the endpoint
+answering is that agent (a public card can be copied). Use TLS, and see #188 for signed replies.
+
+**On-behalf-of credentials.** A tool that calls an external API should get a short-lived token scoped to the end
+user and to that API, not a shared service key. `OnBehalfOf` wraps a `ToolBox`: for each tool with a grant it
+exchanges the context's subject token for a token for the tool's audience and scopes through a `TokenExchanger`
+(RFC 8693), caches it until shortly before it expires, and runs the tool with it as `user_credential()`.
+
+```rust
+use sinew::core::identity::{user_credential, OnBehalfOf};
+
+let tools = OnBehalfOf::new(Arc::new(MyStsExchanger::new(token_endpoint)))
+    .grant("refund", "https://payments.example", ["refunds:write"])
+    .grant("crm_*", "crm", ["customers:read"])
+    .wrap(&tools);
+
+// Inside the refund tool:
+let cred = user_credential().expect("set by OnBehalfOf");
+http.post(url).bearer_auth(cred.bearer()).send().await?;
+```
+
+- A tool with a grant fails closed without a context, a user or a subject token. Tools without a grant run
+  unchanged.
+- Implement `TokenExchanger` over your security token service (Keycloak, Okta, Auth0, Entra ID):
+  `TokenExchangeRequest::form_params()` is the RFC 8693 form body, `TokenExchangeResponse::from_json` parses the
+  answer. `InMemoryTokenExchanger` is an in-process implementation for tests: known subject tokens, allowed scopes
+  per user and audience (requested scopes are narrowed to those), random opaque tokens and `introspect`.
+- An MCP tool passes the credential to the server in `_meta["sinew.dev/credential"]`, where the tool sees it as
+  `user_credential()`. An A2A agent tool passes it to the remote agent, which uses it as its own subject token, so
+  the remote agent's tools exchange it again for their own audiences: each hop gets a narrower token, and the token
+  service sees the whole chain.
+
 ## Enforcement points
 
 | Runtime | How | Ask | Suspended agent |
@@ -372,7 +465,7 @@ plane, and the evidence part through decision events:
 
 | Area | In this crate | Elsewhere / follow-up |
 |---|---|---|
-| Identity | agent ids in a registry with owner and tenant; user and tenant on every request; cross-tenant requests denied | signed agent cards and delegated user credentials (#175) |
+| Identity | agent ids in a registry with owner and tenant; user and tenant on every request; cross-tenant requests denied; signed agent identities verified on A2A and MCP calls; on-behalf-of user credentials (see [Agent identity](#agent-identity)) | signed inter-agent messages (#188) |
 | Control | policies before every tool and model call, approvals, budgets, rate limits, time windows, kill switch, quarantine, tool disable | durable approvals (harness, `ReactAgent` interrupts) |
 | Behavior | every decision as a trace run and an event | loop guard, guardrails, trajectory evaluation; baselines and anomaly detection (#176) |
 | Evidence | `DecisionEvent`, `ControlEvent` to `DecisionSink`s; hash-chained, signed `AuditLog` with `verify-audit` | compliance export (#181) |
@@ -395,7 +488,7 @@ Combine them with guardrails, sandboxing and monitoring ([Production](production
 
 - Usage counters, rate limits and the registry live in memory, per process. A shared store for several replicas
   is a follow-up.
-- On-behalf-of user tokens for tools that call external APIs are part of agent identity (#175).
+- Agent identity: the replay cache of an `IdentityVerifier` lives in memory, per process (several replicas behind a load balancer each keep their own); there is no HTTP `TokenExchanger` in the box yet; MCP identity proofs are checked on `tools/call` only (not on resources and prompts).
 - The harness reports every approval answer to `Hook::on_approval` (an `ApprovalRecord`). `GovernHook::audit(log)`
   forwards those answers to a tamper-evident `AuditLog` as `approval` entries; the control plane's `DecisionSink`s
   still see only the `Ask`. Outside the harness, record answers with `AuditLog::record_approval`.

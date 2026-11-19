@@ -765,9 +765,15 @@ impl<S: State> CompiledGraph<S> {
         } else if !jobs.is_empty() {
             let mut names = HashMap::new();
             let mut set = JoinSet::new();
+            // Branches run on their own tasks: carry the caller's identity over.
+            let identity = sinew_core::identity::current_context();
             for (index, job) in jobs {
                 let node = job.node.clone();
-                let handle = set.spawn(async move { (index, job.run().await) });
+                let handle = set.spawn(sinew_core::identity::with_identity_scope(
+                    identity.clone(),
+                    None,
+                    async move { (index, job.run().await) },
+                ));
                 names.insert(handle.id(), node);
             }
             while let Some(joined) = set.join_next().await {

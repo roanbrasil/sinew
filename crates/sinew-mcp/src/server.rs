@@ -13,6 +13,10 @@ use std::{
 
 use serde::Serialize;
 use serde_json::{json, Value};
+use sinew_core::identity::{
+    with_identity_scope, CallContext, IdentityVerifier, SignedAgentIdentity, UserCredential, Via,
+    META_CREDENTIAL, META_IDENTITY,
+};
 use sinew_core::{PromptTemplate, Tool, ToolBox, ToolCall};
 use sinew_graph::{prebuilt::AgentState, CompiledGraph};
 use tokio::{
@@ -103,6 +107,8 @@ pub struct McpServer {
     tools: ToolBox,
     catalog: Arc<Catalog>,
     page_size: Option<usize>,
+    verifier: Option<IdentityVerifier>,
+    identity: Option<SignedAgentIdentity>,
 }
 
 impl McpServer {
@@ -117,7 +123,88 @@ impl McpServer {
             tools: ToolBox::new(),
             catalog: Arc::default(),
             page_size: None,
+            verifier: None,
+            identity: None,
         }
+    }
+
+    /// Verifies the caller's identity proof on every `tools/call` (see
+    /// [`McpClient::with_credentials`](crate::McpClient::with_credentials)).
+    /// The audience is the verifier's, else this server's identity id
+    /// ([`with_identity`](Self::with_identity)), else its name. A call is
+    /// rejected with
+    /// [`IDENTITY_REJECTED`](crate::protocol::error_code::IDENTITY_REJECTED)
+    /// when the proof is missing (and required) or does not verify, or when
+    /// the caller's identity does not list the tool in `allowed_tools`. The
+    /// tool runs inside the caller's
+    /// [`CallContext`] with this server
+    /// appended to the delegation chain.
+    ///
+    /// An on-behalf-of credential in the request's `_meta` is handed to the
+    /// tool as [`user_credential`](sinew_core::identity::user_credential)
+    /// with or without a verifier: it is a bearer token the downstream
+    /// service checks itself.
+    pub fn with_identity_verifier(mut self, verifier: IdentityVerifier) -> Self {
+        self.verifier = Some(verifier);
+        self
+    }
+
+    /// Presents this server's signed identity in its `initialize` answer
+    /// (`_meta`), for clients to check with
+    /// [`McpClient::verify_server`](crate::McpClient::verify_server).
+    pub fn with_identity(mut self, identity: SignedAgentIdentity) -> Self {
+        self.identity = Some(identity);
+        self
+    }
+
+    /// This server's id as an audience and a hop in the delegation chain.
+    fn agent_id(&self) -> &str {
+        self.identity
+            .as_ref()
+            .map_or(self.info.name.as_str(), |i| i.payload.id.as_str())
+    }
+
+    /// The caller (when verified) and the credential from a request's
+    /// `_meta`.
+    fn identify(
+        &self,
+        meta: Option<&Value>,
+        tool: &str,
+    ) -> HandlerResult<(Option<CallContext>, Option<UserCredential>)> {
+        let credential = match meta.and_then(|m| m.get(META_CREDENTIAL)) {
+            Some(c) => Some(
+                serde_json::from_value::<UserCredential>(c.clone())
+                    .map_err(|e| RpcError::invalid_params(format!("credential: {e}")))?,
+            ),
+            None => None,
+        };
+        let rejected = |e: String| {
+            RpcError::new(
+                error_code::IDENTITY_REJECTED,
+                format!("identity rejected: {e}"),
+            )
+        };
+        let caller = match &self.verifier {
+            Some(v) => v
+                .verify_value(
+                    meta.and_then(|m| m.get(META_IDENTITY)),
+                    Some(self.agent_id()),
+                )
+                .map_err(|e| rejected(e.to_string()))?,
+            None => None,
+        };
+        let ctx = match caller {
+            Some(c) if !c.identity.identity.tool_allowed(tool) => {
+                return Err(rejected(format!("`{}` may not call `{tool}`", c.agent())))
+            }
+            Some(c) => {
+                let mut ctx = c.context_for(self.agent_id(), Via::Mcp);
+                ctx.subject_token = credential.as_ref().map(|cr| cr.token.clone());
+                Some(ctx)
+            }
+            None => None,
+        };
+        Ok((ctx, credential))
     }
 
     /// Replaces the served tools with `tools`.
@@ -565,6 +652,9 @@ impl McpServer {
         if let Some(i) = &self.instructions {
             result["instructions"] = json!(i);
         }
+        if let Some(id) = &self.identity {
+            result["_meta"] = json!({ META_IDENTITY: id });
+        }
         Ok(result)
     }
 
@@ -738,16 +828,19 @@ impl McpServer {
                 format!("unknown tool: {name}"),
             ));
         }
+        let (ctx, credential) = self.identify(params.get("_meta"), name)?;
         let call = ToolCall {
             id: String::new(),
             name: name.into(),
             arguments,
         };
-        Ok(match self.tools.call(&call).await {
-            Ok(v) => CallToolResult::from_tool_value(v),
-            Err(sinew_core::Error::Tool { message, .. }) => CallToolResult::error(message),
-            Err(e) => CallToolResult::error(e.to_string()),
-        })
+        Ok(
+            match with_identity_scope(ctx, credential, self.tools.call(&call)).await {
+                Ok(v) => CallToolResult::from_tool_value(v),
+                Err(sinew_core::Error::Tool { message, .. }) => CallToolResult::error(message),
+                Err(e) => CallToolResult::error(e.to_string()),
+            },
+        )
     }
 
     /// Answers a single JSON-RPC message without a transport: `None` for

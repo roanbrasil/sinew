@@ -19,6 +19,7 @@ pub mod cache;
 pub mod context;
 pub mod error;
 pub mod guardrails;
+pub mod identity;
 pub mod message;
 pub mod mock;
 pub mod model;

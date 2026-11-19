@@ -54,12 +54,15 @@ govern = ["dep:sinew-govern"]
 govern-cedar = ["govern", "sinew-govern/cedar"]
 # Open Policy Agent policies in the control plane (`OpaPolicy`).
 govern-opa = ["govern", "sinew-govern/opa"]
+# Signed agent identity, trust store and call verification (`sinew::core::identity`);
+# with `govern`, `ControlPlane::register_verified`.
+identity = ["sinew-core/identity", "sinew-govern?/identity"]
 # Persistent response cache for chat models.
 sqlite-cache = ["sinew-core/sqlite-cache"]
 # Derive structured-output schemas from Rust types.
 schemars = ["sinew-core/schemars"]
 # Everything above except Postgres-backed features and `govern-cedar`.
-full = ["sqlite", "mcp", "mcp-http", "mcp-oauth", "eval", "http-trace", "otlp", "rag", "qdrant", "pdf", "a2a", "harness", "serve", "sqlite-cache", "schemars", "macros", "memory", "tools", "govern", "govern-opa"]
+full = ["sqlite", "mcp", "mcp-http", "mcp-oauth", "eval", "http-trace", "otlp", "rag", "qdrant", "pdf", "a2a", "harness", "serve", "sqlite-cache", "schemars", "macros", "memory", "tools", "govern", "govern-opa", "identity"]
 
 [dependencies]
 sinew-core.workspace = true

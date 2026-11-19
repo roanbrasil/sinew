@@ -13,6 +13,10 @@ use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
+use sinew_core::identity::{
+    current_context, user_credential, AgentCredentials, TrustStore, VerifiedIdentity,
+    META_CREDENTIAL, META_IDENTITY,
+};
 use sinew_core::stream::{BoxStream, SseParser};
 
 use crate::{
@@ -34,6 +38,9 @@ struct Inner {
     headers: HeaderMap,
     card: Option<AgentCard>,
     next_id: AtomicU64,
+    credentials: Option<AgentCredentials>,
+    audience: Option<String>,
+    verified: Option<VerifiedIdentity>,
 }
 
 /// Talks to one A2A agent over JSON-RPC. Cheap to clone; clones share the
@@ -81,6 +88,18 @@ impl A2aClient {
         Ok(Self::from_card_with(http, card))
     }
 
+    /// Like [`discover`](Self::discover), but only connects when the card
+    /// [verifies](AgentCard::verify) against `trust` (a signed identity from
+    /// a trusted issuer, and a card signature by that identity's key).
+    pub async fn discover_verified(base_url: &str, trust: &TrustStore) -> Result<Self> {
+        let http = default_http_client();
+        let card = fetch_card_with(&http, base_url).await?;
+        let verified = card.verify(trust)?;
+        let mut client = Self::from_card_with(http, card);
+        client.inner_mut().verified = Some(verified);
+        Ok(client)
+    }
+
     fn build(http: reqwest::Client, url: String, card: Option<AgentCard>) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -89,6 +108,9 @@ impl A2aClient {
                 headers: HeaderMap::new(),
                 card,
                 next_id: AtomicU64::new(1),
+                credentials: None,
+                audience: None,
+                verified: None,
             }),
         }
     }
@@ -112,6 +134,68 @@ impl A2aClient {
         self.with_header("authorization", &format!("Bearer {token}"))
     }
 
+    /// Proves this agent's identity on every request: a call assertion of
+    /// the current [`CallContext`](sinew_core::identity::CallContext) (or a
+    /// fresh one with this agent as the origin), signed with the agent's
+    /// key, sent with its signed identity in the params' `metadata` under
+    /// [`META_IDENTITY`]. An on-behalf-of credential in scope
+    /// ([`user_credential`]) goes along under [`META_CREDENTIAL`].
+    pub fn with_credentials(mut self, credentials: AgentCredentials) -> Self {
+        self.inner_mut().credentials = Some(credentials);
+        self
+    }
+
+    /// The audience of call assertions (default: the card's
+    /// [`agent_id`](AgentCard::agent_id), else the endpoint URL).
+    pub fn with_audience(mut self, audience: impl Into<String>) -> Self {
+        self.inner_mut().audience = Some(audience.into());
+        self
+    }
+
+    /// The remote agent's identity, when the client was built with
+    /// [`discover_verified`](Self::discover_verified).
+    pub fn verified_identity(&self) -> Option<&VerifiedIdentity> {
+        self.inner.verified.as_ref()
+    }
+
+    fn audience(&self) -> String {
+        self.inner
+            .audience
+            .clone()
+            .or_else(|| self.inner.card.as_ref().map(AgentCard::agent_id))
+            .unwrap_or_else(|| self.inner.url.clone())
+    }
+
+    /// `params` with the identity proof and the on-behalf-of credential in
+    /// its `metadata`.
+    fn identified(&self, params: &impl Serialize) -> Result<Value> {
+        let mut v = serde_json::to_value(params)?;
+        let proof = match &self.inner.credentials {
+            Some(c) => Some(c.prove(current_context().as_ref(), &self.audience())?),
+            None => None,
+        };
+        let credential = user_credential();
+        if proof.is_none() && credential.is_none() {
+            return Ok(v);
+        }
+        let Some(obj) = v.as_object_mut() else {
+            return Ok(v);
+        };
+        let meta = obj
+            .entry("metadata")
+            .or_insert_with(|| Value::Object(Default::default()));
+        if !meta.is_object() {
+            *meta = Value::Object(Default::default());
+        }
+        if let Some(p) = proof {
+            meta[META_IDENTITY] = p.to_value();
+        }
+        if let Some(c) = credential {
+            meta[META_CREDENTIAL] = serde_json::to_value(c)?;
+        }
+        Ok(v)
+    }
+
     pub fn url(&self) -> &str {
         &self.inner.url
     }
@@ -123,7 +207,7 @@ impl A2aClient {
 
     fn post(&self, method: &str, params: &impl Serialize) -> Result<reqwest::RequestBuilder> {
         let id = Value::from(self.inner.next_id.fetch_add(1, Ordering::Relaxed));
-        let body = jsonrpc::request(&id, method, params)?;
+        let body = jsonrpc::request(&id, method, &self.identified(params)?)?;
         Ok(self
             .inner
             .http

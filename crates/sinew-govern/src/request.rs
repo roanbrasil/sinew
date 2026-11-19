@@ -66,6 +66,24 @@ impl Identity {
     }
 }
 
+/// The acting agent, user and tenant of a call context.
+///
+/// ```
+/// use sinew_core::identity::CallContext;
+/// use sinew_govern::Identity;
+/// let id = Identity::from(&CallContext::new("support").user("ana"));
+/// assert_eq!((id.agent.as_str(), id.user.as_deref()), ("support", Some("ana")));
+/// ```
+impl From<&sinew_core::identity::CallContext> for Identity {
+    fn from(ctx: &sinew_core::identity::CallContext) -> Self {
+        Self {
+            agent: ctx.agent.clone(),
+            user: ctx.user.clone(),
+            tenant: ctx.tenant.clone(),
+        }
+    }
+}
+
 impl From<&str> for Identity {
     fn from(agent: &str) -> Self {
         Self::agent(agent)

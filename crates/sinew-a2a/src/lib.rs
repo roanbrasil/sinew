@@ -62,6 +62,7 @@ pub mod adapters;
 pub mod client;
 pub mod error;
 pub mod executor;
+pub mod identity;
 pub mod jsonrpc;
 pub mod server;
 pub mod store;
@@ -74,6 +75,7 @@ pub use error::{A2aError, Result};
 pub use executor::{
     AgentEvent, AgentExecutor, BoxError, EventQueue, RequestContext, TextArtifactWriter,
 };
+pub use identity::IDENTITY_EXTENSION_URI;
 pub use jsonrpc::RpcError;
 pub use server::{A2aServer, ServerHandle};
 pub use store::{InMemoryTaskStore, TaskStore};

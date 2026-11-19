@@ -188,8 +188,8 @@ let helpdesk = Agent::builder()
     .build()?;
 ```
 
-**Residual risk.** Sinew has no per-user authorization: a tool call runs with the agent's credentials whatever the
-end user may do. On-behalf-of user credentials are #175, policies by user and tenant are #44. `SecretRedactor`
+**Residual risk.** A tool call runs with the agent's credentials whatever the end user may do, unless the tool is
+wrapped in `OnBehalfOf` (user-scoped tokens, see [Agent identity](governance.md#agent-identity)); policies by user and tenant are #44. `SecretRedactor`
 finds keys with a known shape; database passwords, session cookies or internal tokens without a prefix pass. In
 ASI03-01 the scripted model still tells the user "mallory is now an admin" after the call was refused: a denied
 call does not stop the model from describing it as done.
@@ -335,11 +335,13 @@ refund. The message contains no injection phrase: the attack is the false identi
 **Sinew controls today.** None that authenticate the sender of a message between agents (supervisor and swarm
 handoffs, agents called as tools, A2A replies). `InjectionDetector` on the peer's reply does not detect a forged
 identity. What limits the damage: approvals for side effects (`ask("issue_refund")` in the harness), and A2A or MCP
-endpoints behind authentication.
+endpoints behind authentication. Signed agent identities ([Agent identity](governance.md#agent-identity)) now
+authenticate the *caller* of an A2A or MCP request (`IdentityVerifier`), but not the replies or in-process messages
+that ASI07-01 forges.
 
 **Follow-up.** [#188](https://github.com/roanbrasil/sinew/issues/188) (signed message envelopes, verified sender
-exposed separately from the text, replay protection), building on #175 (signed agent cards and delegated
-credentials).
+exposed separately from the text, replay protection), building on the keys, `Signed<T>` envelope and verifier of
+#175.
 
 **Residual risk until then.** Treat every peer reply as untrusted data, and require human approval for actions a
 peer can trigger.

@@ -213,6 +213,31 @@ fn write<T>(l: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
     l.write().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Fills the request's user, tenant and trace from the current call
+/// context, when it is for the same agent.
+fn fill_from_context(request: &mut Request) {
+    let Some(ctx) = sinew_core::identity::current_context().filter(|c| c.agent == request.agent)
+    else {
+        return;
+    };
+    if request.user.is_none() {
+        request.user = ctx.user.clone();
+    }
+    if request.tenant.is_none() {
+        request.tenant = ctx.tenant.clone();
+    }
+    if request.trace_id.is_none() {
+        request.trace_id = ctx.trace_id.clone();
+    }
+    if ctx.chain.len() > 1 {
+        let chain = serde_json::json!(ctx.chain_agents());
+        if !request.metadata.is_object() {
+            request.metadata = serde_json::Value::Object(Default::default());
+        }
+        request.metadata["delegation_chain"] = chain;
+    }
+}
+
 impl ControlPlane {
     pub fn builder() -> ControlPlaneBuilder {
         ControlPlaneBuilder::default()
@@ -225,6 +250,45 @@ impl ControlPlane {
         let id = profile.id.clone();
         write(&self.inner.agents).insert(id.clone(), profile);
         self.control(ControlAction::Register, &id, None);
+    }
+
+    /// Registers the agent described by a signed identity document, after
+    /// verifying it against `trust`: the profile takes its id, owner,
+    /// tenant and allowed tools from the document
+    /// ([`AgentProfile::from_identity`]), so the registry enforces exactly
+    /// what the issuer signed. Feature `identity`.
+    ///
+    /// ```
+    /// use serde_json::json;
+    /// use sinew_core::identity::{AgentIdentity, AgentKey, TrustStore};
+    /// use sinew_govern::{ControlPlane, Request};
+    ///
+    /// let issuer = AgentKey::from_bytes(&[1; 32]);
+    /// let agent_key = AgentKey::from_bytes(&[2; 32]);
+    /// let signed = AgentIdentity::new("billing-bot", agent_key.public_key())
+    ///     .owner("payments-team")
+    ///     .allow_tools(["get_*"])
+    ///     .sign(&issuer)
+    ///     .unwrap();
+    ///
+    /// let cp = ControlPlane::builder().require_registration(true).build();
+    /// let profile = cp.register_verified(&signed, &TrustStore::new().trust(issuer.public_key())).unwrap();
+    /// assert_eq!(profile.owner.as_deref(), Some("payments-team"));
+    /// # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
+    /// let v = cp.check(Request::tool("billing-bot", "delete_invoice", json!({}))).await;
+    /// assert!(!v.decision.is_allowed());
+    /// # });
+    /// ```
+    #[cfg(feature = "identity")]
+    pub fn register_verified(
+        &self,
+        identity: &sinew_core::identity::SignedAgentIdentity,
+        trust: &sinew_core::identity::TrustStore,
+    ) -> Result<AgentProfile, sinew_core::identity::IdentityError> {
+        let verified = trust.verify(identity)?;
+        let profile = AgentProfile::from_identity(&verified.identity);
+        self.register(profile.clone());
+        Ok(profile)
     }
 
     /// Removes an agent; its later requests are denied when registration is
@@ -463,12 +527,19 @@ impl ControlPlane {
 
     /// Like [`check`](Self::check), recording the trace run with `tracer`
     /// (falling back to the control plane's) under `parent`.
+    ///
+    /// Inside a [`CallContext`](sinew_core::identity::CallContext) for the
+    /// same agent (set with `with_context`, or by `sinew-a2a` / `sinew-mcp`
+    /// for a verified remote caller), the request's missing user, tenant and
+    /// trace id come from the context, and a delegated request carries the
+    /// chain as `metadata.delegation_chain` (agent ids, first to last).
     pub async fn check_traced(
         &self,
         mut request: Request,
         tracer: Option<&Tracer>,
         parent: Option<&RunRef>,
     ) -> Verdict {
+        fill_from_context(&mut request);
         if request.kind == RequestKind::Tool && !request.side_effects {
             request.side_effects = request
                 .tool
