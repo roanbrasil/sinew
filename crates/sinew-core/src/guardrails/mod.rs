@@ -14,7 +14,7 @@
 //! |---|---|---|
 //! | [`PiiRedactor`] | e-mail addresses, phone numbers, Luhn-checked card numbers | rewrite with `[REDACTED_*]` |
 //! | [`SecretRedactor`] | API keys and tokens with a known shape ([`patterns::SECRET_PATTERNS`]) | rewrite with `[REDACTED_SECRET]` |
-//! | [`InjectionDetector`] | prompt-injection phrasing in tool output | rewrite with a warning prefix, or block |
+//! | [`InjectionDetector`] | prompt-injection phrasing in tool output and long-term memories | rewrite with a warning prefix, or block |
 //! | [`DenyList`] | denied keywords, topics or regular expressions | block, or rewrite with a placeholder |
 //! | [`JsonSchemaGuard`] | text that is not JSON matching a schema | block |
 //! | [`MaxLength`] | text longer than a character limit | block, or truncate |
@@ -120,6 +120,11 @@ pub enum GuardrailStage {
     /// a third party: a poisoned description is a prompt injection the
     /// model reads on every turn.
     ToolDescription,
+    /// A long-term memory, before it is stored (`sinew-memory`).
+    MemoryWrite,
+    /// A recalled long-term memory, before it is added to the system
+    /// prompt (`sinew-memory`).
+    MemoryRecall,
 }
 
 impl fmt::Display for GuardrailStage {
@@ -129,6 +134,8 @@ impl fmt::Display for GuardrailStage {
             GuardrailStage::Output => "output",
             GuardrailStage::ToolOutput => "tool_output",
             GuardrailStage::ToolDescription => "tool_description",
+            GuardrailStage::MemoryWrite => "memory_write",
+            GuardrailStage::MemoryRecall => "memory_recall",
         })
     }
 }
@@ -315,7 +322,7 @@ impl GuardRule {
 
     /// Runs the rule only at these stages (by default it runs at every
     /// stage it is given; some guardrails also filter stages themselves,
-    /// such as [`InjectionDetector`], which only looks at tool output).
+    /// such as [`InjectionDetector`], which only looks at tool output and memories).
     pub fn at(mut self, stages: impl IntoIterator<Item = GuardrailStage>) -> Self {
         self.stages = Some(stages.into_iter().collect());
         self

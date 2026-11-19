@@ -36,6 +36,11 @@ let out = agent.invoke("ana", AgentState::new(vec![Message::user("Dinner ideas?"
 
 Feature `harness` adds `MemoryHook`, the same behaviour as a `sinew-harness` hook.
 
+Memory writes can be validated (OWASP ASI06): every memory carries its provenance (source role,
+derived from tool output or not), and `with_tool_derived`, `with_validator`,
+`with_write_guardrails` and `with_recall_guardrails` reject, rewrite or quarantine memories before
+they are stored or recalled; `audit`, `confirm` and `expire_unconfirmed` review them.
+
 See the [memory guide](https://github.com/roanbrasil/sinew/blob/main/docs/memory.md).
 
 How this crate fits with the others: [architecture guide](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).

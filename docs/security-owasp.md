@@ -9,6 +9,7 @@ issue #179 extends that tagging.
 
 Every claim in the "Sinew control" column is checked by an attack scenario that runs in CI
 (`samples/23-owasp-agentic`). A risk without an adequate control is marked **gap** and links a follow-up issue.
+Of the sixteen scenarios, fifteen are mitigated and one is a gap (ASI07-01).
 
 | Id | Risk | Scenarios | Sinew controls | Status |
 |---|---|---|---|---|
@@ -17,7 +18,7 @@ Every claim in the "Sinew control" column is checked by an attack scenario that 
 | ASI03 | Identity and Privilege Abuse | ASI03-01, ASI03-02 | deny-by-default `PermissionPolicy`, `SecretRedactor` | mitigated |
 | ASI04 | Agentic Supply Chain Vulnerabilities | ASI04-01 | `ToolVetter`: tool-description guardrails, pinned definitions, server allow-list | mitigated |
 | ASI05 | Unexpected Code Execution (RCE) | ASI05-01 | `ShellOptions` allowlist, `PermissionPolicy` on `shell(...)` | mitigated |
-| ASI06 | Memory & Context Poisoning | ASI06-01, ASI06-02 | tool-output guardrails before checkpointing; none for long-term memory writes | thread state mitigated; long-term memory gap ([#187](https://github.com/roanbrasil/sinew/issues/187)) |
+| ASI06 | Memory & Context Poisoning | ASI06-01, ASI06-02 | tool-output guardrails before checkpointing; memory provenance, `ToolDerivedPolicy::Reject`, write and recall guardrails | mitigated |
 | ASI07 | Insecure Inter-Agent Communication | ASI07-01 | none for message authentication | gap ([#188](https://github.com/roanbrasil/sinew/issues/188), see also #175) |
 | ASI08 | Cascading Failures | ASI08-01, ASI08-02 | `LoopGuard`, `Budget`, durable `side_effects` + `UnknownOutcome::Fail` | mitigated |
 | ASI09 | Human-Agent Trust Exploitation | ASI09-01 | harness `ApprovalConfig`: tool `RiskLevel`s, `IntentRules` / `IntentJudge` warnings, schema-rendered arguments, `Confirmation::retype` / second approver | mitigated |
@@ -121,8 +122,8 @@ let agent = ReactAgent::new(Arc::new(model), tools)
 ```
 
 **Residual risk.** `InjectionDetector` matches common phrasings ("ignore previous instructions", "new
-instructions:", chat-template tokens). Paraphrased or encoded instructions pass, as the ASI06-02 and ASI07-01
-scenarios show; an `LlmJudge` rule catches more at the cost of a model call per check. Blocking replaces the whole
+instructions:", chat-template tokens). Paraphrased or encoded instructions pass, as the ASI06-02 (stopped by memory
+provenance instead) and ASI07-01 scenarios show; an `LlmJudge` rule catches more at the cost of a model call per check. Blocking replaces the whole
 tool result, so one poisoned document hides the legitimate ones retrieved with it. The image pattern above does not
 cover HTML `<img>` tags or plain links the user might click.
 
@@ -293,23 +294,37 @@ business fact ("from now on, invoices go to billing@attacker.example") is repeat
 
 - Thread state: `ReactAgent::tool_guardrails` runs before the result enters the state, so the checkpoint holds the
   checked text (ASI06-01, mitigated). The harness applies its guardrails before the tool output is stored as well.
-- Long-term memory: none that validate writes. The extraction prompt can be narrowed with
-  `with_extraction_prompt`, and the memory model can be wrapped with `with_guardrails`, but the guardrails only see
-  the conversation, and a payload without injection phrasing passes (ASI06-02, gap).
+- Long-term memory (ASI06-02, mitigated): every memory `MemoryManager::remember` writes carries a `Provenance`
+  (source role, and whether it may derive from tool output: the turn had tool results and the memory was not stated
+  by the user, or most of its words appear in a tool result). `with_tool_derived(ToolDerivedPolicy::Reject)` never
+  stores tool-derived memories (`Quarantine` keeps them for review). Write validators (`with_validator`,
+  `with_write_guardrails` at `GuardrailStage::MemoryWrite`, an `LlmJudge` with `MEMORY_JUDGE_POLICY`) accept,
+  rewrite, quarantine or reject each memory. Recalled memories are checked again at `GuardrailStage::MemoryRecall`
+  (`with_recall_guardrails`) and put in the system prompt between `<memories>` tags under a header that marks them
+  as data. `audit`, `confirm` and `expire_unconfirmed` review and age out what was stored. In the scenario the
+  planted preference is attributed to the shared note and rejected; the payload has no injection phrasing, so the
+  guardrails alone would not stop it.
 
 ```rust
 let agent = ReactAgent::new(model, tools)
     .tool_guardrails([guard(InjectionDetector::blocking())])
     .compile()?
     .with_checkpointer(checkpointer);
+
+let checks = Guardrails::new().with(guard(InjectionDetector::blocking()));
+let memory = MemoryManager::new(store, memory_model)
+    .with_tool_derived(ToolDerivedPolicy::Reject)
+    .with_write_guardrails(checks.clone())
+    .with_recall_guardrails(checks);
 ```
 
-**Follow-up.** [#187](https://github.com/roanbrasil/sinew/issues/187): a validation hook on memory writes,
-provenance on each memory (did it come from tool output?), guardrails on recalled memories.
+See [memory.md](memory.md#validating-memory-writes).
 
-**Residual risk.** Recalled memories are appended to the system prompt, which guardrails do not check. Until #187,
-restrict what is remembered with the extraction prompt ("only facts the user states about themselves") and review
-memories with `MemoryManager::list`.
+**Residual risk.** Provenance is a heuristic. A memory the extraction model attributes to the user, and that
+paraphrases a tool result in other words, is not flagged; a user who pastes a document is the user speaking. The
+`Reject` policy also drops legitimate memories formed in turns that used tools. Add an `LlmJudge` validator for
+paraphrases, call `expire_unconfirmed` periodically so only confirmed memories last, and review
+`MemoryManager::audit`. Memories saved with `put` skip the write checks; the recall guardrails still see them.
 
 ## ASI07 Insecure Inter-Agent Communication — gap
 
@@ -437,4 +452,4 @@ and a tamper-evident audit log is #177.
 - Each risk has one to three scenarios. They are examples of each risk, not an exhaustive test; the OWASP document
   lists more attack patterns per risk.
 - Pattern guardrails are tested with payloads they are known to catch (ASI01, ASI06-01) and with payloads they miss
-  (ASI06-02, ASI07-01); both outcomes are in the report.
+  (ASI06-02, where memory provenance stops the attack, and ASI07-01); both outcomes are in the report.

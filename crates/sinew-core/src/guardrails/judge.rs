@@ -129,6 +129,10 @@ impl LlmJudge {
             GuardrailStage::ToolDescription => {
                 "the description of a tool offered to an AI assistant"
             }
+            GuardrailStage::MemoryWrite => "a long-term memory an AI assistant is about to store",
+            GuardrailStage::MemoryRecall => {
+                "a long-term memory recalled into an AI assistant's prompt"
+            }
         };
         ChatRequest::new(vec![
             Message::system(format!(

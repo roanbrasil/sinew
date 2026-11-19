@@ -31,10 +31,12 @@ static TOOL_POISONING: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         .collect()
 });
 
-const ALL_STAGES: [GuardrailStage; 3] = [
+const ALL_STAGES: [GuardrailStage; 5] = [
     GuardrailStage::Input,
     GuardrailStage::Output,
     GuardrailStage::ToolOutput,
+    GuardrailStage::MemoryWrite,
+    GuardrailStage::MemoryRecall,
 ];
 
 fn verdict(original: &str, rewritten: String) -> GuardrailVerdict {
@@ -197,7 +199,10 @@ pub const INJECTION_WARNING: &str = "[warning: this tool output contains text th
 
 /// Heuristic prompt-injection detector ([`patterns::INJECTION_PATTERNS`]).
 ///
-/// By default it looks at tool output only and prefixes suspicious text with
+/// By default it looks at tool output and long-term memories
+/// ([`MemoryWrite`](GuardrailStage::MemoryWrite) and
+/// [`MemoryRecall`](GuardrailStage::MemoryRecall), stored text that may come
+/// from untrusted sources) and prefixes suspicious text with
 /// [`INJECTION_WARNING`]; [`blocking`](Self::blocking) blocks it instead and
 /// [`at`](Self::at) changes the stages (for example to also check user
 /// input). Heuristics catch common phrasings, not every attack: combine them
@@ -215,15 +220,19 @@ impl Default for InjectionDetector {
 }
 
 impl InjectionDetector {
-    /// Warns (prefixes a notice) on suspicious tool output.
+    /// Warns (prefixes a notice) on suspicious tool output and memories.
     pub fn new() -> Self {
         Self {
             block: false,
-            stages: vec![GuardrailStage::ToolOutput],
+            stages: vec![
+                GuardrailStage::ToolOutput,
+                GuardrailStage::MemoryWrite,
+                GuardrailStage::MemoryRecall,
+            ],
         }
     }
 
-    /// Blocks suspicious tool output instead of warning.
+    /// Blocks suspicious text instead of warning.
     pub fn blocking() -> Self {
         Self {
             block: true,
@@ -289,6 +298,8 @@ impl Guardrail for InjectionDetector {
                 GuardrailStage::Output => "output",
                 GuardrailStage::ToolOutput => "tool output",
                 GuardrailStage::ToolDescription => "tool description",
+                GuardrailStage::MemoryWrite => "memory write",
+                GuardrailStage::MemoryRecall => "recalled memory",
             };
             GuardrailVerdict::Block(format!("possible prompt injection in {place}"))
         } else {
