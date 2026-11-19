@@ -300,6 +300,7 @@ async fn control_plane_decisions_actions_and_policy_changes_are_logged() {
             approver: "supervisor".into(),
             approved: false,
             reason: Some("too large".into()),
+            details: Value::Null,
         })
         .await
         .unwrap();

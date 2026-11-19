@@ -261,7 +261,11 @@ let cp = ControlPlane::builder()
     .sink(Arc::new(audit.clone())) // every decision, operator action and policy change
     .build();
 
-// What the control plane does not see: the human's answer and the call's outcome.
+// Harness agents: every approval answer (`Hook::on_approval`) becomes an `approval` entry,
+// with the request as the reviewer saw it in `details.harness`.
+let agent = Agent::builder().hook(cp.hook("support").audit(audit.clone())) /* ... */;
+
+// Elsewhere, what the control plane does not see: the human's answer and the call's outcome.
 audit.record_approval(&ApprovalRecord { approver: "ana".into(), approved: true, /* ... */ }).await?;
 audit.record_tool_call(&ToolCallRecord { tool: "refund".into(), /* ... */ }).await?;
 audit.flush().await; // on shutdown: wait for queued events

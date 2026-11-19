@@ -347,7 +347,7 @@ pub(crate) fn unhex(s: &str) -> Option<Vec<u8>> {
 }
 
 /// A human's answer to an `Ask` decision, for [`AuditLog::record_approval`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApprovalRecord {
     /// Id of the [`DecisionEvent`] that asked, if known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -360,6 +360,11 @@ pub struct ApprovalRecord {
     pub approved: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Anything else worth keeping, such as the request as the reviewer saw
+    /// it (`GovernHook` stores the harness `ApprovalRecord` here), or
+    /// `null`.
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub details: Value,
 }
 
 /// A tool call that changed something, for [`AuditLog::record_tool_call`].
@@ -551,7 +556,7 @@ impl AuditLogBuilder {
 /// audit.append(AuditKind::Other, json!({"note": "contact ana@example.com"})).await.unwrap();
 /// audit.record_approval(&ApprovalRecord {
 ///     decision_id: None, agent: "support".into(), target: "refund".into(),
-///     approver: "supervisor-1".into(), approved: true, reason: None,
+///     approver: "supervisor-1".into(), approved: true, reason: None, details: json!(null),
 /// }).await.unwrap();
 ///
 /// let entries = store.snapshot();
@@ -780,7 +785,7 @@ impl AuditLog {
         }
     }
 
-    fn fail(&self, error: String) {
+    pub(crate) fn fail(&self, error: String) {
         self.inner.failures.fetch_add(1, Ordering::Relaxed);
         *self
             .inner

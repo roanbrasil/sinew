@@ -397,8 +397,8 @@ the explanation approves.
 - the arguments rendered from the tool's schema (`render_arguments`), with control and bidi characters escaped;
 - a `Confirmation` stronger than one click: retype values (`Confirmation::retype(["to", "amount"])`) or a second
   approver, checked by `Agent::resume` (`HarnessError::Confirmation` otherwise, thread still paused);
-- `Hook::on_approval` receives every decision with the request as shown (`ApprovalRecord`), for an audit log
-  (#177).
+- `Hook::on_approval` receives every decision with the request as shown (`ApprovalRecord`); `GovernHook::audit`
+  writes it to the `sinew-govern` tamper-evident `AuditLog`.
 
 ```rust
 let agent = Agent::builder()
