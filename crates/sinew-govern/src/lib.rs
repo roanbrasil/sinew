@@ -27,6 +27,9 @@
 //!   (feature `harness`; `Ask` uses the harness approval flow),
 //!   [`ControlPlane::governed_toolbox`] for a plain `ToolBox` and
 //!   [`ControlPlane::govern_model`] for any `ChatModel`.
+//! - [`PeerApprovalPolicy`]: an action a peer agent's message may have
+//!   "approved" (a refund, a permission change) needs a verified sender
+//!   with that authority, or a human (OWASP ASI07).
 //!
 //! ```
 //! # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -83,6 +86,7 @@ mod integrations;
 #[cfg(feature = "opa")]
 pub mod opa;
 mod pattern;
+mod peer;
 mod policy;
 mod registry;
 mod request;
@@ -107,6 +111,7 @@ pub use integrations::{ControlPlaneGate, GovernedModel, GovernedTool};
 #[cfg(feature = "opa")]
 pub use opa::OpaPolicy;
 pub use pattern::glob_match;
+pub use peer::PeerApprovalPolicy;
 pub use policy::{Defaults, Effect, Policy, PolicySet, RateKey, RateLimit, Rule};
 pub use registry::{AgentBudget, AgentProfile, AgentStatus, AgentUsage};
 pub use request::{Identity, Request, RequestKind};

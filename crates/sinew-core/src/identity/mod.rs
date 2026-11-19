@@ -22,8 +22,15 @@
 //!   [`CallAssertion`] of its [`CallContext`] for every remote call
 //!   ([`AgentCredentials::prove`]); the receiver checks it with an
 //!   [`IdentityVerifier`] (trusted issuer, signature, audience, expiry,
-//!   replay). [`Signed`] is the generic signed envelope, reusable for other
-//!   payloads such as inter-agent messages.
+//!   replay). [`Signed`] is the generic signed envelope.
+//! - **Authenticated messages** (OWASP ASI07): an agent signs what it sends
+//!   to a peer ([`AgentCredentials::sign_message`], a [`MessageEnvelope`]
+//!   with sender, recipient, thread, timestamp, nonce and the text's
+//!   SHA-256); the receiver checks it with a [`MessageVerifier`] (trusted
+//!   identity, signature, sender, recipient, freshness, replay) and keeps
+//!   the verified sender as metadata ([`PeerRecord`], [`PeerLedger`]),
+//!   apart from the text, which models see fenced as data
+//!   ([`peer_data_block`]). The record types need no feature.
 //!
 //! ```
 //! # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -45,6 +52,9 @@ mod document;
 mod exchange;
 #[cfg(feature = "identity")]
 mod keys;
+#[cfg(feature = "identity")]
+mod message;
+mod peer;
 
 use std::{
     fmt,
@@ -70,10 +80,22 @@ pub use exchange::{
 };
 #[cfg(feature = "identity")]
 pub use keys::{AgentKey, AgentPublicKey, Signed};
+#[cfg(feature = "identity")]
+pub use message::{
+    MessageEnvelope, MessageVerifier, SignedMessage, VerifiedMessage, DOMAIN_MESSAGE,
+};
+pub use peer::{
+    content_sha256, peer_data_block, peer_note, PeerLedger, PeerRecord, PeerStatus,
+    PEER_NOTE_PREFIX,
+};
 
 /// Key under which `sinew-a2a` and `sinew-mcp` carry an [`IdentityProof`]
 /// in request metadata (A2A `metadata`, MCP `_meta`).
 pub const META_IDENTITY: &str = "sinew.dev/identity";
+
+/// Key under which `sinew-a2a` carries a signed inter-agent message
+/// ([`SignedMessage`], feature `identity`) in message and task `metadata`.
+pub const META_MESSAGE: &str = "sinew.dev/message";
 
 /// Key under which `sinew-a2a` and `sinew-mcp` carry a [`UserCredential`]
 /// (the on-behalf-of token for the receiver) in request metadata.

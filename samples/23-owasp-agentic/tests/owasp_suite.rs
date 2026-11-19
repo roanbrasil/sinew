@@ -54,7 +54,7 @@ scenario_tests! {
     asi05_01_shell_from_readme: "ASI05-01" => Mitigated,
     asi06_01_thread_state_poisoning: "ASI06-01" => Mitigated,
     asi06_02_long_term_memory_poisoning: "ASI06-02" => Mitigated,
-    asi07_01_spoofed_peer_message: "ASI07-01" => Gap,
+    asi07_01_spoofed_peer_message: "ASI07-01" => Mitigated,
     asi08_01_unbounded_tool_loop: "ASI08-01" => Mitigated,
     asi08_02_duplicate_side_effect_after_crash: "ASI08-02" => Mitigated,
     asi09_01_misleading_approval: "ASI09-01" => Mitigated,
@@ -77,8 +77,8 @@ async fn full_suite_covers_every_risk_and_passes() {
         .iter()
         .all(|c| matches!(c.status, RiskStatus::Mitigated | RiskStatus::Gap)));
     assert_eq!(report.counts.scenarios, 16);
-    assert_eq!(report.counts.mitigated, 15);
-    assert_eq!(report.counts.gaps, 1);
+    assert_eq!(report.counts.mitigated, 16);
+    assert_eq!(report.counts.gaps, 0);
 
     let md = report.to_markdown();
     assert!(md.contains("| ASI01 | Agent Goal Hijack | 3 | mitigated |"));

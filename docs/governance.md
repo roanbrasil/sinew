@@ -385,7 +385,7 @@ with a 60 s validity window and a random nonce (`AgentCredentials::prove`). The 
 checks that the identity is signed by a trusted issuer and not expired or revoked, that the assertion is signed by
 the key the identity names, acts as that agent, names this receiver, is inside its window and was never seen
 before. `Signed<T>` is the generic envelope behind both (Ed25519 over canonical JSON with a domain string), so other
-payloads, such as inter-agent messages (#188), reuse it.
+payloads, such as inter-agent messages (see [below](#authenticated-messages-between-agents)), reuse it.
 
 | Where | Sending side | Receiving side |
 |---|---|---|
@@ -395,7 +395,7 @@ payloads, such as inter-agent messages (#188), reuse it.
 | MCP server | `McpServer::with_identity(identity)` in the `initialize` result's `_meta` | `McpClient::verify_server(&trust)` |
 
 A verified card or server identity proves who issued the document and what it allows, not that the endpoint
-answering is that agent (a public card can be copied). Use TLS, and see #188 for signed replies.
+answering is that agent (a public card can be copied). Use TLS, and sign replies ([signed replies](a2a.md#signed-replies)).
 
 **On-behalf-of credentials.** A tool that calls an external API should get a short-lived token scoped to the end
 user and to that API, not a shared service key. `OnBehalfOf` wraps a `ToolBox`: for each tool with a grant it
@@ -425,6 +425,38 @@ http.post(url).bearer_auth(cred.bearer()).send().await?;
   `user_credential()`. An A2A agent tool passes it to the remote agent, which uses it as its own subject token, so
   the remote agent's tools exchange it again for their own audiences: each hop gets a narrower token, and the token
   service sees the whole chain.
+
+## Authenticated messages between agents
+
+An agent that acts on what a peer agent told it ("billing approved the refund") needs to know who the peer
+is and what it may approve (OWASP ASI07). Messages between agents carry a signed envelope
+(`AgentCredentials::sign_message`, verified by a `MessageVerifier`; see
+[multi-agent](multi-agent.md#authenticated-messages-between-agents) and [A2A](a2a.md#signed-replies)),
+and every received message is recorded in a `PeerLedger` as a `PeerRecord`: the sender, whether it was
+`verified`, `unsigned` or `rejected`, and the verified sender's capabilities.
+
+`PeerApprovalPolicy` reads that ledger before sensitive tool calls:
+
+```rust
+use sinew_core::identity::PeerLedger;
+use sinew_govern::{ControlPlane, Effect, PeerApprovalPolicy};
+
+let ledger = PeerLedger::new();          // shared with PeerAgentTool / Supervisor / Swarm / A2aAgentTool
+let cp = ControlPlane::builder()
+    .policy(
+        PeerApprovalPolicy::new(ledger.clone())
+            .action("issue_refund", "approve:refunds")
+            .action("grant_*", "approve:permissions")
+            .on_unauthorized(Effect::Ask),   // default; Deny when no human is in the loop
+    )
+    .build();
+```
+
+For a tool call matching an action, in a thread where peers spoke: a rejected peer message makes it `Deny`;
+a verified peer whose identity has the capability satisfies the requirement (the policy abstains and the
+other policies decide); otherwise it is `Ask`. Without peer messages in the thread the policy abstains.
+Grant authorities as capabilities in the identity document the issuer signs
+(`AgentIdentity::capability("approve:refunds")`), so a peer cannot grant itself one.
 
 ## Enforcement points
 
@@ -465,7 +497,7 @@ plane, and the evidence part through decision events:
 
 | Area | In this crate | Elsewhere / follow-up |
 |---|---|---|
-| Identity | agent ids in a registry with owner and tenant; user and tenant on every request; cross-tenant requests denied; signed agent identities verified on A2A and MCP calls; on-behalf-of user credentials (see [Agent identity](#agent-identity)) | signed inter-agent messages (#188) |
+| Identity | agent ids in a registry with owner and tenant; user and tenant on every request; cross-tenant requests denied; signed agent identities verified on A2A and MCP calls; on-behalf-of user credentials (see [Agent identity](#agent-identity)); `PeerApprovalPolicy` on verified peer senders | signed inter-agent message envelopes (`sinew-core`, `sinew-graph`, `sinew-a2a`) |
 | Control | policies before every tool and model call, approvals, budgets, rate limits, time windows, kill switch, quarantine, tool disable | durable approvals (harness, `ReactAgent` interrupts) |
 | Behavior | every decision as a trace run and an event | loop guard, guardrails, trajectory evaluation; baselines and anomaly detection (#176) |
 | Evidence | `DecisionEvent`, `ControlEvent` to `DecisionSink`s; hash-chained, signed `AuditLog` with `verify-audit` | compliance export (#181) |
@@ -488,7 +520,7 @@ Combine them with guardrails, sandboxing and monitoring ([Production](production
 
 - Usage counters, rate limits and the registry live in memory, per process. A shared store for several replicas
   is a follow-up.
-- Agent identity: the replay cache of an `IdentityVerifier` lives in memory, per process (several replicas behind a load balancer each keep their own); there is no HTTP `TokenExchanger` in the box yet; MCP identity proofs are checked on `tools/call` only (not on resources and prompts).
+- Agent identity: the replay caches of an `IdentityVerifier` and a `MessageVerifier` live in memory, per process (several replicas behind a load balancer each keep their own); there is no HTTP `TokenExchanger` in the box yet; MCP identity proofs are checked on `tools/call` only (not on resources and prompts).
 - The harness reports every approval answer to `Hook::on_approval` (an `ApprovalRecord`). `GovernHook::audit(log)`
   forwards those answers to a tamper-evident `AuditLog` as `approval` entries; the control plane's `DecisionSink`s
   still see only the `Ask`. Outside the harness, record answers with `AuditLog::record_approval`.

@@ -220,6 +220,47 @@ let tool = A2aAgentTool::from_client(client);
 - A traced tool call into the remote agent and the remote graph's runs share one trace, and every
   tool run records the delegation chain.
 
+## Signed replies
+
+A verified caller (above) proves who sent a request; signed replies prove who answered (OWASP ASI07).
+The server signs every `message/send` reply with its agent's credentials, and the client checks the
+signature against the remote agent's identity:
+
+```rust
+use sinew_core::identity::{MessageVerifier, PeerLedger};
+
+let server = A2aServer::new(card.with_identity(billing.identity()), executor)
+    .with_message_signing(billing.clone())          // AgentCredentials of the billing agent
+    .spawn("0.0.0.0:9100")
+    .await?;
+
+let client = A2aClient::discover_verified("https://billing.internal", &trust)
+    .await?
+    .with_credentials(orchestrator.clone())
+    .with_message_verifier(MessageVerifier::new(trust.clone()).recipient("orchestrator"));
+let (reply, sender) = client.send_message_verified(params).await?;   // sender: Option<VerifiedMessage>
+
+// As a tool: the reply is recorded with its verified sender and fenced as peer data.
+let ledger = PeerLedger::new();
+let tool = A2aAgentTool::from_client(client).with_peer_ledger(ledger.clone());
+```
+
+- The signature is a `SignedMessage` (the agent's signed identity plus a `MessageEnvelope` with sender,
+  recipient, thread, timestamp, nonce and the SHA-256 of the reply text) in the reply's `metadata` under
+  `"sinew.dev/message"` (`META_MESSAGE`). The text is the message text, or `task_text` for a task; the
+  thread is the `contextId`; the recipient is the verified caller, else the agent named in the caller's
+  identity proof.
+- The client checks that the reply is signed by the agent in the card (when the card carries an
+  identity), for this agent (the verifier's recipient, else the id of `with_credentials`), for this
+  `contextId`, over this text, recently, with a nonce it has not seen. Forged, tampered, misdirected,
+  relayed (another agent's real message), unsigned and replayed replies are `A2aError::Identity`
+  errors; `A2aAgentTool` turns them into a failed tool call and records a `rejected` entry.
+- With a verifier or a ledger, `A2aAgentTool` returns `<peer_message from="billing" verified="true"
+  capabilities="...">...</peer_message>` plus a note that the text is data, and records a `PeerRecord`
+  for `sinew_govern::PeerApprovalPolicy`.
+- Only `message/send` replies are signed; streamed events (`message/stream`, `tasks/resubscribe`) and
+  `tasks/get` are not yet.
+
 ## Protocol notes
 
 - Version 0.3.0: `kind` discriminators, `message/send`-style method names, and the card at

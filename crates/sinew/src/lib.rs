@@ -16,6 +16,7 @@
 //! | `http-trace` | `trace::HttpSink` for `sinew-scope serve` |
 //! | `otlp` / `otlp-proto` | `trace::OtlpSink` for any OpenTelemetry collector |
 //! | `macros` (default) | `#[sinew::tool]` and `tools!`: plain functions become tools; `prompt!` / `chat_prompt!`: templates checked at compile time |
+//! | `identity` | signed agent identity and authenticated messages between agents (`core::identity`, `graph::prebuilt::{MessageAuth, PeerAgentTool}`) |
 //! | `sqlite-cache`, `schemars` | persistent response cache; schemas from Rust types |
 //! | `full` | all of the above except Postgres-backed features and `govern-cedar` |
 #![doc(

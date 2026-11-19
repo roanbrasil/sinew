@@ -54,6 +54,8 @@ pub struct Supervisor {
     agents: Vec<NamedAgent>,
     prompt: Option<String>,
     output_mode: OutputMode,
+    #[cfg(feature = "identity")]
+    auth: Option<super::MessageAuth>,
 }
 
 impl Supervisor {
@@ -63,7 +65,52 @@ impl Supervisor {
             agents: Vec::new(),
             prompt: None,
             output_mode: OutputMode::default(),
+            #[cfg(feature = "identity")]
+            auth: None,
         }
+    }
+
+    /// Authenticates what each worker hands back (feature `identity`): the
+    /// worker's output is signed with its credentials in `auth` (keyed by
+    /// the worker's node name) and verified as a message to `supervisor`;
+    /// the record goes to `auth`'s ledger. The `transfer_back_to_supervisor`
+    /// result tells the supervisor model who verifiably sent the output and
+    /// that identity claims or approvals inside it are not authenticated. A
+    /// worker whose output fails verification (no credentials when
+    /// signatures are required, a revoked identity or key) has its output
+    /// replaced by a rejection notice.
+    ///
+    /// ```
+    /// # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
+    /// use std::sync::Arc;
+    /// use sinew_core::{identity::*, mock::ScriptedModel, Message, ToolBox, ToolCall};
+    /// use sinew_graph::prebuilt::{react_agent, AgentState, MessageAuth, Supervisor};
+    ///
+    /// let issuer = AgentKey::from_bytes(&[1; 32]);
+    /// let key = AgentKey::from_bytes(&[2; 32]);
+    /// let billing = AgentCredentials::new(
+    ///     key.clone(),
+    ///     AgentIdentity::new("billing", key.public_key()).sign(&issuer).unwrap(),
+    /// ).unwrap();
+    /// let auth = MessageAuth::new(MessageVerifier::new(TrustStore::new().trust(issuer.public_key())))
+    ///     .agent(billing);
+    ///
+    /// let worker = react_agent(Arc::new(ScriptedModel::new([Message::assistant("paid")])), ToolBox::new()).unwrap();
+    /// let boss = Arc::new(ScriptedModel::new([
+    ///     Message::assistant_with_tools("", vec![ToolCall { id: "c".into(), name: "transfer_to_billing".into(), arguments: serde_json::json!({}) }]),
+    ///     Message::assistant("done"),
+    /// ]));
+    /// let graph = Supervisor::new(boss).agent("billing", "Invoices", worker).message_auth(auth.clone()).compile().unwrap();
+    /// let out = graph.invoke(AgentState::new(vec![Message::user("is invoice 7 paid?")])).await.unwrap();
+    /// let back = &out.messages[out.messages.len() - 2];
+    /// assert!(back.content.contains("verified as agent `billing`"));
+    /// assert!(auth.ledger().records()[0].is_verified());
+    /// # });
+    /// ```
+    #[cfg(feature = "identity")]
+    pub fn message_auth(mut self, auth: super::MessageAuth) -> Self {
+        self.auth = Some(auth);
+        self
     }
 
     pub fn agent(
@@ -153,14 +200,21 @@ impl Supervisor {
             }
         });
 
+        #[cfg(feature = "identity")]
+        let auth = self.auth;
         for agent in self.agents {
             let mode = self.output_mode;
             let name = agent.name.clone();
+            #[cfg(feature = "identity")]
+            let auth = auth.clone();
             g.add_subgraph_mapped(
                 agent.name.clone(),
                 agent.graph,
                 AgentState::clone,
                 move |mut parent: AgentState, child: AgentState| {
+                    #[cfg_attr(not(feature = "identity"), allow(unused_mut))]
+                    let mut back = "Successfully transferred back to supervisor".to_string();
+                    let start = parent.messages.len();
                     match mode {
                         OutputMode::FullHistory => parent.messages = child.messages,
                         OutputMode::LastMessage => {
@@ -169,6 +223,24 @@ impl Supervisor {
                             }
                         }
                     }
+                    #[cfg(feature = "identity")]
+                    if let Some(auth) = &auth {
+                        let start = start.min(parent.messages.len());
+                        let content =
+                            serde_json::to_string(&parent.messages[start..]).unwrap_or_default();
+                        let record = auth.exchange(&name, "supervisor", None, &content);
+                        if record.is_rejected() {
+                            parent.messages.truncate(start);
+                            parent.messages.push(Message::assistant(format!(
+                                "[the output of `{name}` was dropped: it failed authentication]"
+                            )));
+                        }
+                        back = format!(
+                            "{back}. About the messages of `{name}` since the transfer: {}",
+                            sinew_core::identity::peer_note(&record)
+                        );
+                    }
+                    let _ = start;
                     let id = format!("back_{}_{}", name, parent.messages.len());
                     parent.messages.push(Message::assistant_with_tools(
                         "",
@@ -178,10 +250,7 @@ impl Supervisor {
                             arguments: json!({}),
                         }],
                     ));
-                    parent.messages.push(Message::tool_result(
-                        id,
-                        "Successfully transferred back to supervisor",
-                    ));
+                    parent.messages.push(Message::tool_result(id, back));
                     parent
                 },
             );

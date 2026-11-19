@@ -5,6 +5,8 @@
 mod gate;
 mod handoff;
 mod loop_guard;
+#[cfg(feature = "identity")]
+mod peer;
 mod supervisor;
 mod swarm;
 
@@ -22,6 +24,8 @@ use sinew_trace::{record_guard_event, traced_chat, traced_chat_stream};
 pub use gate::{AgentGate, GateVerdict, GATE_STOP_PREFIX};
 pub use handoff::{create_handoff_tool, Handoff};
 pub use loop_guard::{LoopAction, LoopCheck, LoopGuard, RepeatedCall, LOOP_STOP_REPLY};
+#[cfg(feature = "identity")]
+pub use peer::{MessageAuth, PeerAgentTool, PeerReply};
 pub use supervisor::{create_supervisor, NamedAgent, OutputMode, Supervisor};
 pub use swarm::{create_swarm, Swarm, SwarmState};
 
@@ -646,12 +650,25 @@ impl ReactAgent {
                 Ok(match target {
                     // Leave this agent: the parent graph continues at the
                     // target with the conversation so far.
-                    Some(agent) => Command::goto(agent.clone())
-                        .with_json_update(json!({
+                    Some(agent) => {
+                        let mut update = json!({
                             "messages": s.messages,
                             "active_agent": agent,
-                        }))
-                        .to_parent(),
+                        });
+                        // The agent handing off: this graph's node in the
+                        // parent (a `Swarm` authenticates the handoff).
+                        if let Some(from) = ctx
+                            .namespace
+                            .last()
+                            .and_then(|seg| seg.rsplit_once(':'))
+                            .map(|(node, _)| node.to_string())
+                        {
+                            update["handoff_from"] = json!(from);
+                        }
+                        Command::goto(agent.clone())
+                            .with_json_update(update)
+                            .to_parent()
+                    }
                     None => Command::goto("agent").with_update(s),
                 })
             }
