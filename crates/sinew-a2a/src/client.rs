@@ -14,8 +14,9 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, CONTENT_TYPE};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use sinew_core::identity::{
-    current_context, user_credential, AgentCredentials, TrustStore, VerifiedIdentity,
-    META_CREDENTIAL, META_IDENTITY,
+    current_context, user_credential, AgentCredentials, IdentityError, MessageVerifier,
+    SignedMessage, TrustStore, VerifiedIdentity, VerifiedMessage, META_CREDENTIAL, META_IDENTITY,
+    META_MESSAGE,
 };
 use sinew_core::stream::{BoxStream, SseParser};
 
@@ -23,7 +24,7 @@ use crate::{
     error::{A2aError, Result},
     jsonrpc::{self, method},
     types::{
-        AgentCard, Message, MessageSendParams, SendMessageResult, StreamResponse, Task,
+        task_text, AgentCard, Message, MessageSendParams, SendMessageResult, StreamResponse, Task,
         TaskIdParams, TaskQueryParams, AGENT_CARD_PATH,
     },
 };
@@ -41,6 +42,7 @@ struct Inner {
     credentials: Option<AgentCredentials>,
     audience: Option<String>,
     verified: Option<VerifiedIdentity>,
+    message_verifier: Option<MessageVerifier>,
 }
 
 /// Talks to one A2A agent over JSON-RPC. Cheap to clone; clones share the
@@ -111,6 +113,7 @@ impl A2aClient {
                 credentials: None,
                 audience: None,
                 verified: None,
+                message_verifier: None,
             }),
         }
     }
@@ -150,6 +153,95 @@ impl A2aClient {
     pub fn with_audience(mut self, audience: impl Into<String>) -> Self {
         self.inner_mut().audience = Some(audience.into());
         self
+    }
+
+    /// Verifies the signature on every `message/send` reply (see
+    /// [`A2aServer::with_message_signing`](crate::A2aServer::with_message_signing),
+    /// OWASP ASI07): signed by the remote agent (the identity in its card,
+    /// when the client has one), addressed to this agent (the verifier's
+    /// recipient, else the id of [`with_credentials`](Self::with_credentials)),
+    /// in the reply's `contextId`, over the reply text, fresh and never seen
+    /// before. A reply that fails is an [`A2aError::Identity`] error; an
+    /// unsigned one too, unless the verifier was built with
+    /// `required(false)`. Use [`send_message_verified`](Self::send_message_verified)
+    /// to get the verified sender.
+    pub fn with_message_verifier(mut self, verifier: MessageVerifier) -> Self {
+        self.inner_mut().message_verifier = Some(verifier);
+        self
+    }
+
+    pub fn message_verifier(&self) -> Option<&MessageVerifier> {
+        self.inner.message_verifier.as_ref()
+    }
+
+    /// The remote agent's id as this client knows it: the verified
+    /// identity, else the identity in its card, else the card name.
+    pub fn remote_agent_id(&self) -> Option<String> {
+        self.inner
+            .verified
+            .as_ref()
+            .map(|v| v.identity.id.clone())
+            .or_else(|| self.inner.card.as_ref().map(AgentCard::agent_id))
+    }
+
+    /// Checks the signature of a `message/send` reply with the message
+    /// verifier; `Ok(None)` without a verifier, or for an unsigned reply
+    /// when signatures are not required.
+    pub fn verify_reply(&self, result: &SendMessageResult) -> Result<Option<VerifiedMessage>> {
+        let Some(verifier) = &self.inner.message_verifier else {
+            return Ok(None);
+        };
+        let (text, thread, metadata) = match result {
+            SendMessageResult::Message(m) => (m.text(), m.context_id.clone(), m.metadata.as_ref()),
+            SendMessageResult::Task(t) => (
+                task_text(t),
+                Some(t.context_id.clone()),
+                t.metadata.as_ref(),
+            ),
+        };
+        let signed = metadata.and_then(|m| m.get(META_MESSAGE));
+        let Some(signed) = signed.filter(|v| !v.is_null()) else {
+            return verifier
+                .verify_value(None, &text, None)
+                .map_err(A2aError::from);
+        };
+        let signed = SignedMessage::from_value(signed)?;
+        // Only the identity in a card proves who the remote agent is; a
+        // bare card name is not checked against the signature.
+        let sender = self
+            .inner
+            .verified
+            .as_ref()
+            .map(|v| v.identity.id.clone())
+            .or_else(|| {
+                self.inner
+                    .card
+                    .as_ref()
+                    .and_then(AgentCard::identity)
+                    .map(|i| i.payload.id)
+            });
+        let recipient = verifier
+            .configured_recipient()
+            .map(str::to_owned)
+            .or_else(|| {
+                self.inner
+                    .credentials
+                    .as_ref()
+                    .map(|c| c.agent_id().to_string())
+            });
+        if signed.envelope.payload.thread != thread {
+            return Err(IdentityError::Mismatch(format!(
+                "reply signed for thread {:?}, it belongs to {:?}",
+                signed.envelope.payload.thread, thread
+            ))
+            .into());
+        }
+        Ok(Some(verifier.verify_for(
+            &signed,
+            &text,
+            sender.as_deref(),
+            recipient.as_deref(),
+        )?))
     }
 
     /// The remote agent's identity, when the client was built with
@@ -236,8 +328,21 @@ impl A2aClient {
 
     /// `message/send`. Blocks until the task finishes or needs input, unless
     /// the params ask for `blocking: false`.
+    /// With a [message verifier](Self::with_message_verifier), the reply's
+    /// signature is checked first.
     pub async fn send_message(&self, params: MessageSendParams) -> Result<SendMessageResult> {
-        self.request(method::MESSAGE_SEND, &params).await
+        self.send_message_verified(params).await.map(|(r, _)| r)
+    }
+
+    /// `message/send`, returning the reply and its verified sender (`None`
+    /// without a message verifier, or for an accepted unsigned reply).
+    pub async fn send_message_verified(
+        &self,
+        params: MessageSendParams,
+    ) -> Result<(SendMessageResult, Option<VerifiedMessage>)> {
+        let result: SendMessageResult = self.request(method::MESSAGE_SEND, &params).await?;
+        let verified = self.verify_reply(&result)?;
+        Ok((result, verified))
     }
 
     /// `message/send` with one text part.

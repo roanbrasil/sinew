@@ -5,10 +5,14 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sinew_core::{Error, Result, Tool, ToolSpec};
+use sinew_core::{
+    identity::{peer_data_block, PeerLedger, PeerRecord},
+    Error, Result, Tool, ToolSpec,
+};
 
 use crate::{
     client::A2aClient,
+    error::A2aError,
     types::{task_text, AgentCard, Message, MessageSendParams, SendMessageResult, TaskState},
 };
 
@@ -19,11 +23,20 @@ use crate::{
 /// includes the task id; the model answers by calling the tool again with
 /// that `task_id`. Calls share one A2A `contextId` by default, so the remote
 /// agent sees them as one conversation; see [`with_shared_context`](Self::with_shared_context).
+///
+/// When the client has a [message verifier](A2aClient::with_message_verifier)
+/// or the tool a [peer ledger](Self::with_peer_ledger), the answer is
+/// treated as a peer message (OWASP ASI07): it is recorded in the ledger
+/// with its verified sender (or as unsigned, or rejected) and the model gets
+/// it fenced by [`peer_data_block`], marked as data with the sender metadata
+/// outside the fence. A reply that fails verification never reaches the
+/// model.
 pub struct A2aAgentTool {
     client: A2aClient,
     spec: ToolSpec,
     shared_context: bool,
     context_id: Mutex<Option<String>>,
+    ledger: Option<PeerLedger>,
 }
 
 impl A2aAgentTool {
@@ -50,7 +63,47 @@ impl A2aAgentTool {
             },
             shared_context: true,
             context_id: Mutex::new(None),
+            ledger: None,
         }
+    }
+
+    /// Records every answer in `ledger` (shared with a
+    /// `sinew_govern::PeerApprovalPolicy`) and fences it as peer data.
+    pub fn with_peer_ledger(mut self, ledger: PeerLedger) -> Self {
+        self.ledger = Some(ledger);
+        self
+    }
+
+    fn peer_mode(&self) -> bool {
+        self.ledger.is_some() || self.client.message_verifier().is_some()
+    }
+
+    fn remote(&self) -> String {
+        self.client
+            .remote_agent_id()
+            .unwrap_or_else(|| self.spec.name.clone())
+    }
+
+    /// The answer as the model sees it, recorded when in peer mode.
+    fn present(
+        &self,
+        text: String,
+        verified: Option<&sinew_core::identity::VerifiedMessage>,
+    ) -> Value {
+        if !self.peer_mode() {
+            return Value::String(text);
+        }
+        let mut record = match verified {
+            Some(v) => v.record(),
+            None => PeerRecord::unsigned(self.remote(), &text),
+        };
+        if record.thread.is_none() {
+            record.thread = self.context_id.lock().unwrap().clone();
+        }
+        if let Some(l) = &self.ledger {
+            l.record(record.clone());
+        }
+        Value::String(peer_data_block(&record, &text))
     }
 
     /// Builds the tool from the client's Agent Card: the name is the card
@@ -153,17 +206,30 @@ impl Tool for A2aAgentTool {
         } else if self.shared_context {
             message.context_id = self.context_id.lock().unwrap().clone();
         }
-        let result = self
+        let (result, verified) = match self
             .client
-            .send_message(MessageSendParams::new(message))
+            .send_message_verified(MessageSendParams::new(message))
             .await
-            .map_err(|e| err(e.to_string()))?;
+        {
+            Ok(r) => r,
+            Err(A2aError::Identity(e)) => {
+                if let Some(l) = &self.ledger {
+                    l.record(PeerRecord::rejected(self.remote(), "", e.to_string()));
+                }
+                return Err(err(format!(
+                    "the reply from `{}` failed authentication and was dropped: {e}",
+                    self.remote()
+                )));
+            }
+            Err(e) => return Err(err(e.to_string())),
+        };
+        let verified = verified.as_ref();
         match result {
             SendMessageResult::Message(m) => {
                 if let Some(c) = m.context_id.clone().filter(|_| self.shared_context) {
                     *self.context_id.lock().unwrap() = Some(c);
                 }
-                Ok(Value::String(m.text()))
+                Ok(self.present(m.text(), verified))
             }
             SendMessageResult::Task(t) => {
                 if self.shared_context {
@@ -171,16 +237,22 @@ impl Tool for A2aAgentTool {
                 }
                 let text = task_text(&t);
                 match t.status.state {
-                    TaskState::Completed => Ok(Value::String(text)),
-                    s if s.is_interrupted() => Ok(Value::String(format!(
-                        "The remote agent needs more input (task_id: {}): {}",
-                        t.id,
-                        t.status.message.as_ref().map(Message::text).unwrap_or(text)
-                    ))),
-                    TaskState::Working | TaskState::Submitted => Ok(Value::String(format!(
-                        "The remote agent is still working on task {}. Partial output: {text}",
-                        t.id
-                    ))),
+                    TaskState::Completed => Ok(self.present(text, verified)),
+                    s if s.is_interrupted() => Ok(self.present(
+                        format!(
+                            "The remote agent needs more input (task_id: {}): {}",
+                            t.id,
+                            t.status.message.as_ref().map(Message::text).unwrap_or(text)
+                        ),
+                        verified,
+                    )),
+                    TaskState::Working | TaskState::Submitted => Ok(self.present(
+                        format!(
+                            "The remote agent is still working on task {}. Partial output: {text}",
+                            t.id
+                        ),
+                        verified,
+                    )),
                     s => Err(err(format!(
                         "remote task {} ended `{}`: {text}",
                         t.id,

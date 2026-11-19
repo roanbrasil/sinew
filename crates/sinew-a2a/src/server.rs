@@ -41,8 +41,8 @@ use tokio::{
 };
 
 use sinew_core::identity::{
-    with_identity_scope, AgentKey, IdentityVerifier, UserCredential, VerifiedCaller, Via,
-    META_CREDENTIAL, META_IDENTITY,
+    with_identity_scope, AgentCredentials, AgentKey, IdentityVerifier, UserCredential,
+    VerifiedCaller, Via, META_CREDENTIAL, META_IDENTITY, META_MESSAGE,
 };
 
 use crate::{
@@ -50,9 +50,9 @@ use crate::{
     jsonrpc::{self, method, RpcError},
     store::{InMemoryTaskStore, TaskStore},
     types::{
-        new_id, AgentCard, Message, MessageSendParams, SendMessageResult, StreamResponse, Task,
-        TaskArtifactUpdateEvent, TaskIdParams, TaskQueryParams, TaskState, TaskStatus,
-        TaskStatusUpdateEvent, AGENT_CARD_PATH, LEGACY_AGENT_CARD_PATH,
+        new_id, task_text, AgentCard, Message, MessageSendParams, SendMessageResult,
+        StreamResponse, Task, TaskArtifactUpdateEvent, TaskIdParams, TaskQueryParams, TaskState,
+        TaskStatus, TaskStatusUpdateEvent, AGENT_CARD_PATH, LEGACY_AGENT_CARD_PATH,
     },
 };
 
@@ -110,6 +110,7 @@ struct Inner {
     rpc_path: String,
     verifier: Option<IdentityVerifier>,
     card_key: Option<AgentKey>,
+    signer: Option<AgentCredentials>,
 }
 
 /// Who called, as established from the request's metadata.
@@ -117,6 +118,21 @@ struct Inner {
 struct CallerScope {
     caller: Option<VerifiedCaller>,
     credential: Option<UserCredential>,
+    /// The agent the caller's proof names, verified or not: the addressee
+    /// of a signed reply.
+    claimed: Option<String>,
+}
+
+impl CallerScope {
+    /// Who a signed reply is addressed to: the verified caller, else the
+    /// agent its proof claims, else anyone (`*`).
+    fn reply_recipient(&self) -> String {
+        self.caller
+            .as_ref()
+            .map(|c| c.agent().to_string())
+            .or_else(|| self.claimed.clone())
+            .unwrap_or_else(|| "*".into())
+    }
 }
 
 /// Serves an [`AgentExecutor`] over A2A JSON-RPC.
@@ -149,6 +165,7 @@ impl A2aServer {
                 rpc_path: "/".into(),
                 verifier: None,
                 card_key: None,
+                signer: None,
             }),
         }
     }
@@ -203,6 +220,19 @@ impl A2aServer {
             *card = signed;
         }
         inner.card_key = Some(key);
+        self
+    }
+
+    /// Signs every `message/send` reply as a message from this agent
+    /// (OWASP ASI07): a [`SignedMessage`](sinew_core::identity::SignedMessage)
+    /// over the reply text (the message text, or the task's
+    /// [`task_text`]) addressed to the caller (the verified caller, else the
+    /// agent its identity proof names) with the A2A `contextId` as thread,
+    /// in the reply's `metadata` under
+    /// [`META_MESSAGE`]. Clients check it
+    /// with [`A2aClient::with_message_verifier`](crate::A2aClient::with_message_verifier).
+    pub fn with_message_signing(mut self, credentials: AgentCredentials) -> Self {
+        self.inner_mut().signer = Some(credentials);
         self
     }
 
@@ -505,8 +535,16 @@ impl Inner {
             Some(m) => (m.get(META_IDENTITY).cloned(), m.remove(META_CREDENTIAL)),
             None => (None, None),
         };
+        let claimed = proof
+            .as_ref()
+            .and_then(|p| p.pointer("/assertion/payload/context/agent"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let Some(verifier) = &self.verifier else {
-            return Ok(CallerScope::default());
+            return Ok(CallerScope {
+                claimed,
+                ..CallerScope::default()
+            });
         };
         let audience = self.card.read().unwrap().agent_id();
         let caller = verifier
@@ -519,7 +557,31 @@ impl Inner {
             ),
             _ => None,
         };
-        Ok(CallerScope { caller, credential })
+        Ok(CallerScope {
+            caller,
+            credential,
+            claimed,
+        })
+    }
+
+    /// Adds this agent's signature to a `message/send` reply.
+    fn sign_reply(&self, result: &mut SendMessageResult, recipient: &str) -> Result<(), RpcError> {
+        let Some(signer) = &self.signer else {
+            return Ok(());
+        };
+        let (text, thread, metadata) = match result {
+            SendMessageResult::Message(m) => (m.text(), m.context_id.clone(), &mut m.metadata),
+            SendMessageResult::Task(t) => {
+                (task_text(t), Some(t.context_id.clone()), &mut t.metadata)
+            }
+        };
+        let signed = signer
+            .sign_message(recipient, thread.as_deref(), &text)
+            .map_err(RpcError::internal)?;
+        metadata
+            .get_or_insert_with(Default::default)
+            .insert(META_MESSAGE.into(), signed.to_value());
+        Ok(())
     }
 
     fn check_streaming(&self) -> Result<(), RpcError> {
@@ -671,6 +733,21 @@ impl Inner {
             .and_then(|c| c.blocking)
             .unwrap_or(true);
         let history_length = p.configuration.as_ref().and_then(|c| c.history_length);
+        let recipient = scope.reply_recipient();
+        let mut result = self
+            .message_result(p, scope, blocking, history_length)
+            .await?;
+        self.sign_reply(&mut result, &recipient)?;
+        Ok(result)
+    }
+
+    async fn message_result(
+        self: &Arc<Self>,
+        p: MessageSendParams,
+        scope: CallerScope,
+        blocking: bool,
+        history_length: Option<usize>,
+    ) -> Result<SendMessageResult, RpcError> {
         let mut rx = self.start(p, scope).await?;
         let mut task_id = None;
         while let Some(frame) = rx.recv().await {

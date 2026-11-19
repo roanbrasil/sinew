@@ -26,6 +26,9 @@ futures-core.workspace = true
 [features]
 # `#[derive(State)]`: field-wise reducers for parallel branches.
 macros = ["dep:sinew-macros"]
+# Authenticated messages between agents (OWASP ASI07): `MessageAuth`,
+# `PeerAgentTool`, `Supervisor::message_auth`, `Swarm::message_auth`.
+identity = ["sinew-core/identity"]
 
 [dev-dependencies]
 trybuild = "1"
@@ -43,3 +46,7 @@ workspace = true
 [[test]]
 name = "derive_state"
 required-features = ["macros"]
+
+[[test]]
+name = "peer_messages"
+required-features = ["identity"]

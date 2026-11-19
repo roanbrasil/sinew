@@ -56,7 +56,7 @@ govern-cedar = ["govern", "sinew-govern/cedar"]
 govern-opa = ["govern", "sinew-govern/opa"]
 # Signed agent identity, trust store and call verification (`sinew::core::identity`);
 # with `govern`, `ControlPlane::register_verified`.
-identity = ["sinew-core/identity", "sinew-govern?/identity"]
+identity = ["sinew-core/identity", "sinew-graph/identity", "sinew-govern?/identity"]
 # Persistent response cache for chat models.
 sqlite-cache = ["sinew-core/sqlite-cache"]
 # Derive structured-output schemas from Rust types.

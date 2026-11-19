@@ -13,7 +13,7 @@ name = "sample-23-owasp-agentic"
 path = "src/main.rs"
 
 [dependencies]
-sinew = { path = "../../crates/sinew", features = ["eval", "harness", "memory", "mcp", "rag"] }
+sinew = { path = "../../crates/sinew", features = ["eval", "govern", "harness", "identity", "memory", "mcp", "rag"] }
 tokio = { workspace = true, features = ["net", "io-util"] }
 serde_json.workspace = true
 async-trait.workspace = true

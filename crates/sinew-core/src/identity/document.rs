@@ -176,7 +176,7 @@ struct TrustInner {
 #[derive(Clone)]
 pub struct TrustStore {
     inner: Arc<RwLock<TrustInner>>,
-    skew_ms: u64,
+    pub(super) skew_ms: u64,
 }
 
 impl Default for TrustStore {
@@ -381,7 +381,7 @@ pub struct AgentCredentials {
     ttl_ms: u64,
 }
 
-fn nonce() -> Result<String, IdentityError> {
+pub(super) fn nonce() -> Result<String, IdentityError> {
     let mut b = [0u8; 16];
     getrandom::getrandom(&mut b).map_err(|e| IdentityError::Invalid(e.to_string()))?;
     Ok(hex(&b))
