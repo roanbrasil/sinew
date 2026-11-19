@@ -22,7 +22,7 @@ Of the sixteen scenarios, fifteen are mitigated and one is a gap (ASI07-01).
 | ASI07 | Insecure Inter-Agent Communication | ASI07-01 | none for message authentication | gap ([#188](https://github.com/roanbrasil/sinew/issues/188), see also #175) |
 | ASI08 | Cascading Failures | ASI08-01, ASI08-02 | `LoopGuard`, `Budget`, durable `side_effects` + `UnknownOutcome::Fail` | mitigated |
 | ASI09 | Human-Agent Trust Exploitation | ASI09-01 | harness `ApprovalConfig`: tool `RiskLevel`s, `IntentRules` / `IntentJudge` warnings, schema-rendered arguments, `Confirmation::retype` / second approver | mitigated |
-| ASI10 | Rogue Agents | ASI10-01 | deny-by-default `PermissionPolicy`, `Budget` | mitigated for the scenario (containment); detection in #176, #177 |
+| ASI10 | Rogue Agents | ASI10-01 | deny-by-default `PermissionPolicy`, `Budget` | mitigated for the scenario (containment); tamper-evident `AuditLog` for evidence; detection in #176 |
 
 ## The attack suite
 
@@ -442,8 +442,10 @@ let reporter = Agent::builder()
 ```
 
 **Residual risk.** Containment stops the calls this scenario makes; it does not detect an agent whose behavior
-drifts within its permissions (more data read, unusual arguments, new destinations). Behavior baselines are #176
-and a tamper-evident audit log is #177.
+drifts within its permissions (more data read, unusual arguments, new destinations). Behavior baselines are #176.
+What a rogue agent did is kept in the `sinew-govern` tamper-evident audit log (feature `audit`): every control-plane
+decision in a hash-chained, signed log the agent cannot quietly edit, checked with `sinew-govern verify-audit`
+([governance guide](governance.md#tamper-evident-audit-log)).
 
 ## Limits of the suite
 

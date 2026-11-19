@@ -21,6 +21,16 @@ harness = ["dep:sinew-harness"]
 cedar = ["dep:cedar-policy"]
 # `OpaPolicy`: ask an Open Policy Agent server (data API over HTTP).
 opa = ["dep:reqwest"]
+# `AuditLog`: tamper-evident, hash-chained audit log with Ed25519-signed
+# checkpoints, in-memory store, JSONL export and verification.
+audit = ["dep:sha2", "dep:ed25519-dalek", "dep:getrandom", "dep:tokio", "serde_json/float_roundtrip"]
+# `SqliteAuditStore`: the audit log in SQLite.
+audit-sqlite = ["audit", "dep:sqlx", "sqlx/sqlite"]
+# `PostgresAuditStore`: the audit log in Postgres.
+audit-postgres = ["audit", "dep:sqlx", "sqlx/postgres"]
+# The `sinew-govern` binary (`verify-audit`, `export-audit`). Enable
+# `audit-sqlite` / `audit-postgres` too to read those stores.
+cli = ["audit", "tokio/rt-multi-thread"]
 
 [dependencies]
 sinew-core.workspace = true
@@ -36,9 +46,15 @@ uuid.workspace = true
 serde_norway = { version = "0.9", optional = true }
 cedar-policy = { version = "4.7", optional = true, default-features = false }
 reqwest = { workspace = true, optional = true }
+sha2 = { version = "0.10", optional = true }
+ed25519-dalek = { version = "2.2", optional = true }
+getrandom = { version = "0.2", optional = true }
+tokio = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["net"] }
+tempfile.workspace = true
 futures-util.workspace = true
 axum.workspace = true
 
@@ -48,3 +64,24 @@ workspace = true
 [[test]]
 name = "harness"
 required-features = ["harness"]
+
+[[test]]
+name = "audit"
+required-features = ["audit"]
+
+[[test]]
+name = "audit_sqlite"
+required-features = ["audit-sqlite"]
+
+[[test]]
+name = "audit_postgres"
+required-features = ["audit-postgres"]
+
+[[test]]
+name = "audit_cli"
+required-features = ["cli", "audit-sqlite"]
+
+[[bin]]
+name = "sinew-govern"
+path = "src/bin/sinew-govern.rs"
+required-features = ["cli"]

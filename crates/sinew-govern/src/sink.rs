@@ -36,6 +36,8 @@ pub enum ControlAction {
     Reinstate,
     DisableTool,
     EnableTool,
+    /// Policies were added or replaced (`target` names them).
+    UpdatePolicies,
 }
 
 /// One operator action (kill switch, quarantine, registration), as

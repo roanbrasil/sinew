@@ -56,6 +56,11 @@
 //! # });
 //! ```
 //!
+//! With feature `audit`, [`audit::AuditLog`] is a tamper-evident,
+//! hash-chained log of every decision, operator action and policy change,
+//! with Ed25519-signed checkpoints, SQLite / Postgres stores, JSONL export
+//! and the `sinew-govern verify-audit` command (feature `cli`).
+//!
 //! See `docs/governance.md` for the concepts, policy examples and how the
 //! controls map to the OWASP agentic risks and the CSA control plane.
 #![doc(
@@ -63,6 +68,8 @@
     html_favicon_url = "https://raw.githubusercontent.com/roanbrasil/sinew/main/docs/assets/logo-128.png"
 )]
 
+#[cfg(feature = "audit")]
+pub mod audit;
 #[cfg(feature = "cedar")]
 pub mod cedar;
 mod condition;
@@ -82,6 +89,8 @@ mod request;
 mod sink;
 mod time;
 
+#[cfg(feature = "audit")]
+pub use audit::{AuditLog, AuditSigner};
 #[cfg(feature = "cedar")]
 pub use cedar::CedarPolicy;
 pub use condition::{Condition, Op};

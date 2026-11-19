@@ -52,6 +52,9 @@ policies:
 - External engines: `CedarPolicy` (feature `cedar`) and `OpaPolicy` (feature `opa`).
 - `ControlPlane`: registry (owner, tenant, allowed tools and models, budgets, status), `suspend`, `quarantine`,
   `disable_tool`, a trace run and a `DecisionEvent` for every decision.
+- Audit (feature `audit`): every decision, operator action, policy change, approval and side-effecting tool call
+  in a hash-chained, append-only log with signed checkpoints; `sinew-govern verify-audit` detects edited, deleted
+  or reordered entries.
 - Enforcement: `ReactAgent::gate`, the harness `GovernHook` (feature `harness`), `governed_toolbox`,
   `govern_model`.
 
@@ -63,6 +66,9 @@ policies:
 | `harness` | `GovernHook` for `sinew-harness` agents |
 | `cedar` | `CedarPolicy` (the `cedar-policy` crate) |
 | `opa` | `OpaPolicy` (Open Policy Agent data API over HTTP) |
+| `audit` | `audit::AuditLog`: tamper-evident, hash-chained audit log with Ed25519-signed checkpoints, JSONL export and verification |
+| `audit-sqlite` / `audit-postgres` | `SqliteAuditStore` / `PostgresAuditStore` (append-only tables) |
+| `cli` | the `sinew-govern` binary: `verify-audit`, `export-audit`, `keygen` |
 
 Guide: [docs/governance.md](https://github.com/roanbrasil/sinew/blob/main/docs/governance.md). Architecture:
 [docs/architecture.md](https://github.com/roanbrasil/sinew/blob/main/docs/architecture.md).

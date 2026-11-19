@@ -239,7 +239,95 @@ Every check produces a `DecisionEvent` (id, time, the request with redacted fiel
   backends. The tracer's `Redactor` applies as for any run;
 - sent to every `DecisionSink` (`MemoryDecisionSink` for tests; your own for a SIEM or a database). Operator actions
   (register, suspend, quarantine, reinstate, disable and enable tool) go to `DecisionSink::record_control` as
-  `ControlEvent`s. The tamper-evident audit log (#177) plugs in here.
+  `ControlEvent`s, and so do policy changes (`add_policy`, `set_policies`, `apply_file`) as
+  `ControlAction::UpdatePolicies`. The [tamper-evident audit log](#tamper-evident-audit-log) plugs in here.
+
+### Tamper-evident audit log
+
+Feature `audit` adds `sinew_govern::audit`: an append-only, hash-chained log of governance decisions, operator
+actions, policy changes, approvals and tool calls with side effects, for audits (ISO/IEC 42001, security reviews,
+incidents) that need a record nobody can silently edit.
+
+```rust
+use std::sync::Arc;
+use sinew_govern::audit::{AuditLog, AuditSigner, SqliteAuditStore};
+
+let signer = AuditSigner::from_hex(&std::env::var("SINEW_AUDIT_KEY")?)?; // from a secret manager
+let store = Arc::new(SqliteAuditStore::connect("sqlite://audit.db").await?); // feature audit-sqlite
+let audit = AuditLog::builder(store).signer(signer).checkpoint_every(1000).build();
+
+let cp = ControlPlane::builder()
+    .policy_file(file)
+    .sink(Arc::new(audit.clone())) // every decision, operator action and policy change
+    .build();
+
+// What the control plane does not see: the human's answer and the call's outcome.
+audit.record_approval(&ApprovalRecord { approver: "ana".into(), approved: true, /* ... */ }).await?;
+audit.record_tool_call(&ToolCallRecord { tool: "refund".into(), /* ... */ }).await?;
+audit.flush().await; // on shutdown: wait for queued events
+```
+
+How it works:
+
+- Each `AuditEntry` has a `seq` (0, 1, 2, ... without gaps), `time_ms`, an `AuditKind` (`decision`, `control`,
+  `policy_change`, `approval`, `tool_call`, `checkpoint`, `other`), a JSON `payload`, the `prev_hash` of the entry
+  before it (64 zeros for the first) and its own `hash`: SHA-256 over the canonical JSON (keys sorted, no
+  whitespace) of `{v, seq, time_ms, kind, prev_hash, payload}`.
+- Payloads pass through a `sinew_trace::Redactor` before they are hashed and written (`Redactor::new()` by default:
+  API keys and tokens, e-mails, card numbers, `password` / `api_key` / `authorization` fields). Set your own with
+  `AuditLogBuilder::redactor`. Decision events already carry the policy's `Redact` fields masked.
+- A `checkpoint` entry, written every `checkpoint_every(n)` entries or on `AuditLog::checkpoint()`, holds an Ed25519
+  signature (`AuditSigner`, ed25519-dalek) over its own `seq`, the hash of the entry before it and its time, plus the
+  signing key's id. Someone who can write to the store but has no key can rewrite the chain and recompute every hash,
+  but cannot re-sign the checkpoints, so everything before the last checkpoint is protected. Keep the signing key
+  outside the database (`sinew-govern keygen` prints a new pair).
+- As a `DecisionSink`, the log queues events and a background task appends them (sinks are called on the request
+  path). `flush()` waits for the queue; `failures()` and `last_error()` report events that could not be written.
+
+Stores:
+
+| Store | Feature | Notes |
+|---|---|---|
+| `MemoryAuditStore` | `audit` | tests, short-lived processes |
+| `SqliteAuditStore` | `audit-sqlite` | table `sinew_audit_log`; triggers refuse `UPDATE` and `DELETE`; WAL, `synchronous = FULL` |
+| `PostgresAuditStore` | `audit-postgres` | same table; a trigger refuses `UPDATE`, `DELETE` and `TRUNCATE`; several writers allowed (a second writer of the same `seq` gets a conflict and the log retries after the new head) |
+| your own | `audit` | implement `AuditStore` (`append`, `last`, `entries`); no update or delete |
+
+Grant the application's database role only `INSERT` and `SELECT` on `sinew_audit_log`.
+
+#### Export and verify
+
+`export_jsonl(store, &mut writer)` writes one entry per line, checkpoints included. `verify_store`, `verify_jsonl`
+and `AuditLog::verify` recompute every hash and check every link, the sequence and every checkpoint signature, and
+return an `AuditReport` (`entries`, `checkpoints`, `verified_checkpoints`, `head`, `unsigned_tail`, `problems`).
+`ChainVerifier` does the same one entry at a time. The same checks from the command line (feature `cli`, plus
+`audit-sqlite` / `audit-postgres` for the stores):
+
+```sh
+cargo install sinew-govern --features cli,audit-sqlite,audit-postgres
+sinew-govern export-audit --sqlite sqlite://audit.db --out audit-2026-11.jsonl
+sinew-govern verify-audit --jsonl audit-2026-11.jsonl --public-key <hex> --expect-head 41230:<hash>
+sinew-govern verify-audit --postgres postgres://auditor@db/app --public-key-file audit-keys.txt --json
+```
+
+`verify-audit` exits with 0 when the log is intact, 1 when tampering is detected (each problem is listed) and 2 when
+the input cannot be read.
+
+| Tampering | Detected as |
+|---|---|
+| an entry's content edited | `HashMismatch` |
+| an entry edited and its hash recomputed | `BrokenLink` at the next entry |
+| an entry deleted (a checkpoint included) | `OutOfSequence` and `BrokenLink` |
+| entries reordered (rows or export lines) | `OutOfSequence`, `HashMismatch`, `BrokenLink` |
+| the chain rewritten from some entry on, hashes recomputed | `BadSignature` at the next checkpoint |
+| the chain rewritten and checkpoints signed with another key | `UnknownKey` |
+| entries removed from the end | `HeadMismatch`, against a head recorded elsewhere (`--expect-head`, `VerifyOptions::expect_head`) or the head the running `AuditLog` knows |
+
+Limits: always pass the public key (`--public-key`); without it, checkpoint signatures are not checked and a forged
+log with self-signed checkpoints passes. Entries after the last checkpoint (`unsigned_tail`) are protected against
+partial edits but not against a full rewrite of that tail, and truncation can only be detected against a head
+recorded outside the store: checkpoint often and copy `AuditLog::head()` (or the last line of each export) to another
+system. After a key rotation pass every key used over the log's life.
 
 ## Enforcement points
 
@@ -283,7 +371,7 @@ plane, and the evidence part through decision events:
 | Identity | agent ids in a registry with owner and tenant; user and tenant on every request; cross-tenant requests denied | signed agent cards and delegated user credentials (#175) |
 | Control | policies before every tool and model call, approvals, budgets, rate limits, time windows, kill switch, quarantine, tool disable | durable approvals (harness, `ReactAgent` interrupts) |
 | Behavior | every decision as a trace run and an event | loop guard, guardrails, trajectory evaluation; baselines and anomaly detection (#176) |
-| Evidence | `DecisionEvent`, `ControlEvent` to `DecisionSink`s | tamper-evident audit log (#177), compliance export (#181) |
+| Evidence | `DecisionEvent`, `ControlEvent` to `DecisionSink`s; hash-chained, signed `AuditLog` with `verify-audit` | compliance export (#181) |
 
 At a high level, against the OWASP Top 10 for Agentic Applications:
 
@@ -304,8 +392,9 @@ Combine them with guardrails, sandboxing and monitoring ([Production](production
 - Usage counters, rate limits and the registry live in memory, per process. A shared store for several replicas
   is a follow-up.
 - On-behalf-of user tokens for tools that call external APIs are part of agent identity (#175).
-- The harness reports every approval answer to `Hook::on_approval` (an `ApprovalRecord`), but `GovernHook` does
-  not forward it to the control plane yet, so the decision sinks record the `Ask`, not the approval (#177).
+- The harness reports every approval answer to `Hook::on_approval` (an `ApprovalRecord`). `GovernHook::audit(log)`
+  forwards those answers to a tamper-evident `AuditLog` as `approval` entries; the control plane's `DecisionSink`s
+  still see only the `Ask`. Outside the harness, record answers with `AuditLog::record_approval`.
 - `ReactAgent` gates take one identity per compiled graph; build one gate per user (it is a cheap clone of the
   control plane) when the user changes per request.
 
