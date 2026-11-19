@@ -95,14 +95,14 @@ jobs:
         run: |
           mkdir -p "fuzz/corpus/$TARGET"
           # Debug assertions turn integer overflow into a crash, as in `cargo test`.
-          cargo fuzz run --debug-assertions "$TARGET" "fuzz/corpus/$TARGET" "fuzz/seeds/$TARGET" \
+          cargo fuzz run --target x86_64-unknown-linux-gnu --debug-assertions "$TARGET" "fuzz/corpus/$TARGET" "fuzz/seeds/$TARGET" \
             -- -max_total_time="$SECONDS_PER_TARGET" -timeout=30 -rss_limit_mb=4096 \
                -max_len=65536 -print_final_stats=1
       - name: Minimize corpus
         if: success()
         env:
           TARGET: ${{ matrix.target }}
-        run: cargo fuzz cmin --debug-assertions "$TARGET" "fuzz/corpus/$TARGET"
+        run: cargo fuzz cmin --target x86_64-unknown-linux-gnu --debug-assertions "$TARGET" "fuzz/corpus/$TARGET"
       - name: Save corpus
         if: success()
         uses: actions/cache/save@v4
