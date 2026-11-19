@@ -106,6 +106,10 @@ impl Tool for ToolBoxEntry {
             })
             .await
     }
+
+    fn source(&self) -> Option<sinew_core::ToolSource> {
+        self.toolbox.get(&self.spec.name).and_then(|t| t.source())
+    }
 }
 
 #[cfg(test)]

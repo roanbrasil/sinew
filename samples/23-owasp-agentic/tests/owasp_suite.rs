@@ -50,7 +50,7 @@ scenario_tests! {
     asi02_02_ssrf_internal_endpoint: "ASI02-02" => Mitigated,
     asi03_01_confused_deputy: "ASI03-01" => Mitigated,
     asi03_02_credential_disclosure: "ASI03-02" => Mitigated,
-    asi04_01_mcp_tool_poisoning: "ASI04-01" => Gap,
+    asi04_01_mcp_tool_poisoning: "ASI04-01" => Mitigated,
     asi05_01_shell_from_readme: "ASI05-01" => Mitigated,
     asi06_01_thread_state_poisoning: "ASI06-01" => Mitigated,
     asi06_02_long_term_memory_poisoning: "ASI06-02" => Gap,

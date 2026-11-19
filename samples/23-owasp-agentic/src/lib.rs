@@ -17,8 +17,6 @@ pub mod scenarios;
 
 use sinew::eval::security::SecuritySuite;
 
-/// Follow-up issue: inspect and pin tool descriptions (ASI04).
-pub const ISSUE_TOOL_DESCRIPTIONS: &str = "https://github.com/roanbrasil/sinew/issues/186";
 /// Follow-up issue: validate long-term memory writes (ASI06).
 pub const ISSUE_MEMORY_WRITES: &str = "https://github.com/roanbrasil/sinew/issues/187";
 /// Follow-up issue: authenticate messages between agents (ASI07).

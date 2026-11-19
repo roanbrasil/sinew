@@ -16,7 +16,10 @@ use std::{
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
-use sinew_core::{ChatPromptTemplate, Message, PromptTemplate, Role, Tool, ToolBox, ToolSpec};
+use sinew_core::{
+    tool_vetting::VetReport, ChatPromptTemplate, Message, PromptTemplate, Role, Tool, ToolBox,
+    ToolSource, ToolSpec,
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
     process::{Child, Command},
@@ -554,6 +557,24 @@ impl McpClient {
         Ok(tb)
     }
 
+    /// The server's tools after a
+    /// [`ToolVetter`](sinew_core::tool_vetting::ToolVetter): allow-list,
+    /// description guardrails and pins keyed by this server's name (from
+    /// its handshake). Use [`VetReport::toolbox`] for the kept tools and
+    /// [`VetReport::findings`] for what was dropped or changed. A check set
+    /// to `VetAction::Fail` returns [`McpError::Vetting`].
+    pub async fn vetted_toolbox(
+        &self,
+        vetter: &sinew_core::tool_vetting::ToolVetter,
+    ) -> Result<VetReport> {
+        let tools = self
+            .tools()
+            .await?
+            .into_iter()
+            .map(|t| Arc::new(t) as Arc<dyn Tool>);
+        vetter.vet(tools).map_err(McpError::Vetting)
+    }
+
     /// Closes the connection and stops a spawned server. Pending and later
     /// requests fail with [`McpError::Closed`].
     pub async fn close(&self) {
@@ -642,6 +663,15 @@ impl McpTool {
 impl Tool for McpTool {
     fn spec(&self) -> ToolSpec {
         self.spec.clone()
+    }
+
+    /// The server's name and version from its `initialize` answer.
+    fn source(&self) -> Option<ToolSource> {
+        self.client
+            .inner
+            .init
+            .get()
+            .map(|i| ToolSource::new(&i.server_info.name, &i.server_info.version))
     }
 
     async fn call(&self, arguments: Value) -> sinew_core::Result<Value> {

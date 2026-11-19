@@ -15,7 +15,7 @@ Every claim in the "Sinew control" column is checked by an attack scenario that 
 | ASI01 | Agent Goal Hijack | ASI01-01, ASI01-02, ASI01-03 | `InjectionDetector::blocking()` on tool output, output `DenyList` | mitigated |
 | ASI02 | Tool Misuse and Exploitation | ASI02-01, ASI02-02 | `PermissionPolicy` with subject patterns, `HostPolicy` SSRF guard | mitigated |
 | ASI03 | Identity and Privilege Abuse | ASI03-01, ASI03-02 | deny-by-default `PermissionPolicy`, `SecretRedactor` | mitigated |
-| ASI04 | Agentic Supply Chain Vulnerabilities | ASI04-01 | none for tool descriptions | gap ([#186](https://github.com/roanbrasil/sinew/issues/186)) |
+| ASI04 | Agentic Supply Chain Vulnerabilities | ASI04-01 | `ToolVetter`: tool-description guardrails, pinned definitions, server allow-list | mitigated |
 | ASI05 | Unexpected Code Execution (RCE) | ASI05-01 | `ShellOptions` allowlist, `PermissionPolicy` on `shell(...)` | mitigated |
 | ASI06 | Memory & Context Poisoning | ASI06-01, ASI06-02 | tool-output guardrails before checkpointing; none for long-term memory writes | thread state mitigated; long-term memory gap ([#187](https://github.com/roanbrasil/sinew/issues/187)) |
 | ASI07 | Insecure Inter-Agent Communication | ASI07-01 | none for message authentication | gap ([#188](https://github.com/roanbrasil/sinew/issues/188), see also #175) |
@@ -193,23 +193,63 @@ finds keys with a known shape; database passwords, session cookies or internal t
 ASI03-01 the scripted model still tells the user "mallory is now an admin" after the call was refused: a denied
 call does not stop the model from describing it as done.
 
-## ASI04 Agentic Supply Chain Vulnerabilities — gap
+## ASI04 Agentic Supply Chain Vulnerabilities
 
 **In an agent.** A third-party MCP server (or plugin, or tool package) ships a tool whose description carries
 instructions. In ASI04-01 the `add_note` description tells the model to copy the full customer record, internal
 notes included, into a `context` argument the server stores. Both tools are needed for the task, so least privilege
-does not remove them, and the exfiltration goes through the poisoned tool itself.
+does not remove them, and the exfiltration goes through the poisoned tool itself. A server can also ship a clean
+description for review and change it later (a "rug pull").
 
-**Sinew controls today.** None that inspect or pin tool descriptions. What limits the damage: a deny-by-default
-`PermissionPolicy` (the poisoned server cannot make the agent call tools outside the list), MCP OAuth scopes, and
-connecting only to servers you operate. The protected run applies the permission policy and `InjectionDetector`
-on tool output; the attack still succeeds.
+**Sinew controls.** `sinew_core::tool_vetting::ToolVetter` vets tool definitions when they are registered, before
+the model sees them:
 
-**Follow-up.** [#186](https://github.com/roanbrasil/sinew/issues/186): scan tool and parameter descriptions with
-the guardrails at registration, pin definitions by hash and detect changes, allow-list servers.
+- Description guardrails at `GuardrailStage::ToolDescription`, on the description and on every `description` and
+  `title` inside the parameter schema. `InjectionDetector::tool_descriptions()` blocks the injection phrasings plus
+  tool-poisoning ones (`patterns::TOOL_POISONING_PATTERNS`: `<IMPORTANT>`/`<system>` tags, "do not tell the user",
+  reading `~/.ssh` or credential files, "before using this tool...", copying whole records or conversations into
+  an argument, "these instructions override", invisible Unicode). `DenyList` and custom guardrails work too; a
+  rewrite replaces the text the model sees. A blocked tool is dropped (`VetAction::Drop`, default), fails
+  registration (`Fail`) or is kept with a finding (`Flag`).
+- Pins: the SHA-256 `fingerprint` of name, description and schema of every tool with a `Tool::source` (an MCP
+  tool reports its server's name and version from the handshake) is recorded per server on first use, in memory or
+  in a lock file (`lock_file("tools.lock.json")`, commit it). A later definition that differs is refused
+  (`on_change`, default drop) unless `approve_changes` accepts it, which re-pins it.
+- Allow-list: `allow_server("crm-notes")` drops tools from other servers; `allow_tool("crm-notes/add_note")`
+  drops every other tool.
+- Traces: tool runs from a tool with a source carry `metadata.tool_source = {"server", "version"}` (harness and
+  `sinew_trace::traced_tool`).
 
-**Residual risk until then.** Review the descriptions of every MCP tool you connect (`McpClient::list_tools`),
-pin server versions, and prefer servers you build or audit.
+The vetter plugs into the harness (`AgentBuilder::vet_tools`, findings in `Agent::tool_findings`), `ReactAgent`
+(`vet_tools(&vetter)` returns the agent and a `VetReport`) and MCP clients (`McpClient::vetted_toolbox`). In the
+protected run of ASI04-01 the harness agent uses `ToolVetter::recommended().allow_server("crm-notes")`: `add_note`
+is dropped at build time, the model never reads the poisoned text, and the internal notes never reach the server.
+
+```rust
+use sinew::core::tool_vetting::{ToolVetter, VetAction};
+
+let vetter = ToolVetter::recommended()            // InjectionDetector::tool_descriptions() + pins
+    .allow_server("crm-notes")
+    .lock_file("tools.lock.json")                 // pins survive restarts; review its diffs
+    .on_change(VetAction::Fail);                  // a rug pull stops the agent from starting
+
+let agent = Agent::builder()
+    .model(model)
+    .toolbox(&mcp.toolbox().await?)
+    .vet_tools(vetter)
+    .build()?;
+for finding in agent.tool_findings() {
+    eprintln!("{finding}");                       // dropped, rewritten, changed and newly pinned tools
+}
+```
+
+**Residual risk.** The description guardrails are heuristics: a poisoned description phrased as ordinary
+documentation ("notes are synced with our partner") passes. Pinning detects a change, not a description that was
+malicious from the first use, so review descriptions before the first pin (`McpClient::list_tools`) and review
+lock file diffs. The asynchronous `LlmJudge` cannot run in `ToolVetter` yet (it takes synchronous guardrails);
+judge descriptions yourself with `LlmJudge::check(GuardrailStage::ToolDescription, ..)` before registering.
+Tool results and a server's other behavior are not covered here: keep the deny-by-default `PermissionPolicy`,
+`InjectionDetector` on tool output, MCP OAuth scopes, and prefer servers you build or audit.
 
 ## ASI05 Unexpected Code Execution (RCE)
 

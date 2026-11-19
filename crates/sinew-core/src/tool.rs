@@ -26,6 +26,34 @@ pub trait Tool: Send + Sync {
     fn side_effects(&self) -> bool {
         false
     }
+
+    /// Who defines the tool, when it is a third party: the MCP server (name
+    /// and version from its handshake) for an `McpTool`. `None` (default)
+    /// for tools defined in this program. Tool vetting pins definitions per
+    /// source ([`crate::tool_vetting`]) and the tracers record it on every
+    /// tool run, so a trace shows which server and version answered.
+    fn source(&self) -> Option<ToolSource> {
+        None
+    }
+}
+
+/// The third party that defines a tool, returned by [`Tool::source`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ToolSource {
+    /// The server's name (MCP `serverInfo.name`).
+    pub server: String,
+    /// The server's version (MCP `serverInfo.version`).
+    pub version: String,
+}
+
+impl ToolSource {
+    /// A source named `server` at `version`.
+    pub fn new(server: impl Into<String>, version: impl Into<String>) -> Self {
+        Self {
+            server: server.into(),
+            version: version.into(),
+        }
+    }
 }
 
 tokio::task_local! {

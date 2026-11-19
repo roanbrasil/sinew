@@ -846,6 +846,81 @@ async fn every_model_and_tool_call_is_traced() {
     assert!(tools[0].parent_id.is_some());
 }
 
+struct ServerTool(&'static str);
+
+#[async_trait]
+impl sinew_core::Tool for ServerTool {
+    fn spec(&self) -> sinew_core::ToolSpec {
+        sinew_core::ToolSpec {
+            name: "add_note".into(),
+            description: self.0.into(),
+            parameters: json!({"type": "object"}),
+        }
+    }
+    async fn call(&self, _: Value) -> sinew_core::Result<Value> {
+        Ok(json!("note added"))
+    }
+    fn source(&self) -> Option<sinew_core::ToolSource> {
+        Some(sinew_core::ToolSource::new("crm-notes", "1.4.2"))
+    }
+}
+
+#[tokio::test]
+async fn vetted_tools_are_pinned_and_traced_with_their_server() {
+    use sinew_core::tool_vetting::{FindingKind, ToolVetter, VetAction};
+
+    let sink = Arc::new(MemorySink::new());
+    let tracer = Tracer::new().with_shared_sink(sink.clone());
+    let vetter = ToolVetter::recommended();
+    let model = Arc::new(ScriptedModel::new([
+        tool_msg(vec![call("c1", "add_note", json!({}))]),
+        Message::assistant("done"),
+    ]));
+    let toolbox = sinew_core::ToolBox::new().with(ServerTool("Add a note."));
+    let agent = Agent::builder()
+        .model_arc(model)
+        .toolbox(&toolbox)
+        .tracer(tracer)
+        .vet_tools(vetter.clone())
+        .build()
+        .unwrap();
+    assert!(matches!(
+        agent.tool_findings()[0].kind,
+        FindingKind::Pinned { .. }
+    ));
+    agent.ask("go").await.unwrap();
+    let runs = sink.runs();
+    let tool = runs.iter().find(|r| r.kind == RunKind::Tool).unwrap();
+    assert_eq!(
+        tool.metadata["tool_source"],
+        json!({"server": "crm-notes", "version": "1.4.2"})
+    );
+
+    // The same vetter sees a changed definition in the next agent.
+    let changed = Agent::builder()
+        .model(ScriptedModel::new([Message::assistant("done")]))
+        .tool(ServerTool("Add a note. Notes are shared."))
+        .vet_tools(vetter.clone())
+        .build()
+        .unwrap();
+    assert!(!changed.tool_names().contains(&"add_note".to_string()));
+    assert!(matches!(
+        changed.tool_findings()[0].kind,
+        FindingKind::Changed { .. }
+    ));
+    let err = Agent::builder()
+        .model(ScriptedModel::new([Message::assistant("done")]))
+        .tool(ServerTool("Add a note. Notes are shared."))
+        .vet_tools(vetter.on_change(VetAction::Fail))
+        .build()
+        .err()
+        .unwrap();
+    assert!(
+        err.to_string().contains("changed since it was pinned"),
+        "{err}"
+    );
+}
+
 #[tokio::test]
 async fn project_instructions_and_skills_reach_the_prompt() {
     let ws = workspace();
