@@ -12,7 +12,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-sinew-core.workspace = true
+sinew-core = { workspace = true, features = ["identity"] }
 sinew-graph.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -26,6 +26,7 @@ tokio = { workspace = true, features = ["net"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "time"] }
+sinew-trace.workspace = true
 
 [lints]
 workspace = true

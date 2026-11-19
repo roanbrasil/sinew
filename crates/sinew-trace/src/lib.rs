@@ -47,6 +47,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sinew_core::identity::{current_context, with_context};
 use sinew_core::{
     chat_streaming, ChatModel, ChatRequest, ChatResponse, Message, StreamEvent, ToolBox, ToolCall,
 };
@@ -209,8 +210,24 @@ impl Tracer {
         inputs: Value,
     ) -> RunHandle {
         let id = uuid::Uuid::new_v4().to_string();
+        let mut metadata = json!({});
+        // A root run inside a call context (a request received from another
+        // agent, or a tool's own sub-run) joins the context's trace, under
+        // the run that made the call, and records who acts for whom.
+        let ctx = parent.is_none().then(current_context).flatten();
+        let ctx_parent = ctx.as_ref().and_then(|c| {
+            Some(RunRef {
+                trace_id: c.trace_id.clone()?,
+                run_id: c.parent_run_id.clone()?,
+            })
+        });
+        if let Some(c) = &ctx {
+            metadata["identity"] = c.to_trace_value();
+        }
+        let parent = parent.or(ctx_parent.as_ref());
         let trace_id = parent
             .map(|p| p.trace_id.clone())
+            .or_else(|| ctx.as_ref().and_then(|c| c.trace_id.clone()))
             .unwrap_or_else(|| id.clone());
         RunHandle {
             tracer: self.clone(),
@@ -227,7 +244,7 @@ impl Tracer {
                 error: None,
                 input_tokens: None,
                 output_tokens: None,
-                metadata: json!({}),
+                metadata,
             }),
         }
     }
@@ -466,6 +483,11 @@ pub fn guardrail_observer(
 /// Runs a tool call, recording a `tool` run when a tracer is present. A
 /// tool with a [`source`](sinew_core::Tool::source) (an MCP server) adds it
 /// as `tool_source` metadata (`{"server": ..., "version": ...}`).
+///
+/// Inside a [`CallContext`](sinew_core::identity::CallContext) the run gets
+/// `identity` metadata (agent, user, tenant and the delegation chain), and
+/// the tool runs with the context pointing at this run, so a remote agent
+/// it calls (A2A, MCP) continues the same trace under it.
 pub async fn traced_tool(
     tools: &ToolBox,
     call: &ToolCall,
@@ -484,7 +506,14 @@ pub async fn traced_tool(
     if let Some(source) = tools.get(&call.name).and_then(|t| t.source()) {
         run.set_metadata("tool_source", json!(source));
     }
-    let msg = tools.run(call).await;
+    let msg = match current_context() {
+        Some(ctx) => {
+            run.set_metadata("identity", ctx.to_trace_value());
+            let r = run.reference();
+            with_context(ctx.run(r.trace_id, r.run_id), tools.run(call)).await
+        }
+        None => tools.run(call).await,
+    };
     if msg.content.starts_with("error: ") {
         run.fail(&msg.content["error: ".len()..]);
     } else {
@@ -592,5 +621,55 @@ mod tests {
         let run = &sink.runs()[0];
         assert_eq!(run.inputs["password"], "hunter2");
         assert_eq!(run.outputs, Some(json!("ana@example.com")));
+    }
+
+    #[tokio::test]
+    async fn tool_runs_carry_the_call_context_and_children_join_the_trace() {
+        use sinew_core::identity::{CallContext, Via};
+        use sinew_core::FnTool;
+
+        let sink = Arc::new(MemorySink::new());
+        let tracer = Tracer::new().with_shared_sink(sink.clone());
+        let inner = tracer.clone();
+        // A tool that starts its own root run (like a remote agent would).
+        let tools = ToolBox::new().with(FnTool::new("lookup", "", json!({}), move |_| {
+            inner
+                .start("child", RunKind::Graph, None, json!({}))
+                .finish(json!("ok"));
+            Ok(json!("done"))
+        }));
+        let call = ToolCall {
+            id: "c".into(),
+            name: "lookup".into(),
+            arguments: json!({}),
+        };
+        let ctx = CallContext::new("orchestrator")
+            .user("ana")
+            .delegate_to("billing", Via::A2a);
+        let root = tracer.start("root", RunKind::Chain, None, json!({}));
+        let root_ref = root.reference();
+        with_context(
+            ctx,
+            traced_tool(&tools, &call, Some(&tracer), Some(&root_ref)),
+        )
+        .await;
+        root.finish(json!(null));
+
+        let runs = sink.runs();
+        let child = runs.iter().find(|r| r.name == "child").unwrap();
+        let tool = runs.iter().find(|r| r.name == "lookup").unwrap();
+        assert_eq!(tool.metadata["identity"]["user"], "ana");
+        assert_eq!(tool.metadata["identity"]["chain"][1]["agent"], "billing");
+        assert_eq!(child.trace_id, root_ref.trace_id);
+        assert_eq!(child.parent_id.as_deref(), Some(tool.id.as_str()));
+        assert_eq!(child.metadata["identity"]["agent"], "billing");
+        // Without a context nothing changes.
+        assert!(runs
+            .iter()
+            .find(|r| r.name == "root")
+            .unwrap()
+            .metadata
+            .get("identity")
+            .is_none());
     }
 }

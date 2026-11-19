@@ -25,6 +25,10 @@ pub mod error_code {
     pub const INTERNAL_ERROR: i64 = -32603;
     /// MCP: `resources/read` (or `resources/subscribe`) for an unknown URI.
     pub const RESOURCE_NOT_FOUND: i64 = -32002;
+    /// Sinew extension: the caller's identity proof is missing or does not
+    /// verify, or its identity does not allow the tool (see
+    /// `McpServer::with_identity_verifier`).
+    pub const IDENTITY_REJECTED: i64 = -32040;
 }
 
 /// A JSON-RPC error object.
@@ -193,6 +197,10 @@ pub struct InitializeResult {
     pub server_info: Implementation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
+    /// The result's `_meta` (a Sinew server puts its signed identity here,
+    /// see `McpServer::with_identity`).
+    #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
 }
 
 /// A tool as described by `tools/list`.

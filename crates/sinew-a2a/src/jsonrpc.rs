@@ -32,6 +32,9 @@ pub mod error_code {
     pub const CONTENT_TYPE_NOT_SUPPORTED: i64 = -32005;
     pub const INVALID_AGENT_RESPONSE: i64 = -32006;
     pub const AUTHENTICATED_EXTENDED_CARD_NOT_CONFIGURED: i64 = -32007;
+    /// Sinew extension: the caller's identity proof is missing or does not
+    /// verify (see `A2aServer::with_identity_verifier`).
+    pub const IDENTITY_REJECTED: i64 = -32040;
 }
 
 /// A JSON-RPC error object.
@@ -101,6 +104,12 @@ impl RpcError {
     }
     pub fn unsupported(detail: impl Into<String>) -> Self {
         Self::new(error_code::UNSUPPORTED_OPERATION, detail)
+    }
+    pub fn identity_rejected(detail: impl std::fmt::Display) -> Self {
+        Self::new(
+            error_code::IDENTITY_REJECTED,
+            format!("Identity rejected: {detail}"),
+        )
     }
     pub fn extended_card_not_configured() -> Self {
         Self::new(

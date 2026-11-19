@@ -40,6 +40,11 @@ use tokio::{
     task::{AbortHandle, JoinHandle},
 };
 
+use sinew_core::identity::{
+    with_identity_scope, AgentKey, IdentityVerifier, UserCredential, VerifiedCaller, Via,
+    META_CREDENTIAL, META_IDENTITY,
+};
+
 use crate::{
     executor::{AgentEvent, AgentExecutor, Control, EventQueue, RequestContext},
     jsonrpc::{self, method, RpcError},
@@ -103,6 +108,15 @@ struct Inner {
     store: Arc<dyn TaskStore>,
     live: Mutex<HashMap<String, Arc<LiveTask>>>,
     rpc_path: String,
+    verifier: Option<IdentityVerifier>,
+    card_key: Option<AgentKey>,
+}
+
+/// Who called, as established from the request's metadata.
+#[derive(Default)]
+struct CallerScope {
+    caller: Option<VerifiedCaller>,
+    credential: Option<UserCredential>,
 }
 
 /// Serves an [`AgentExecutor`] over A2A JSON-RPC.
@@ -133,6 +147,8 @@ impl A2aServer {
                 store: Arc::new(InMemoryTaskStore::new()),
                 live: Mutex::new(HashMap::new()),
                 rpc_path: "/".into(),
+                verifier: None,
+                card_key: None,
             }),
         }
     }
@@ -154,6 +170,39 @@ impl A2aServer {
             path.insert(0, '/');
         }
         self.inner_mut().rpc_path = path;
+        self
+    }
+
+    /// Verifies the caller's identity proof (see
+    /// [`A2aClient::with_credentials`](crate::A2aClient::with_credentials))
+    /// on every request; rejected requests get the JSON-RPC error
+    /// [`IDENTITY_REJECTED`](crate::jsonrpc::error_code::IDENTITY_REJECTED).
+    /// The audience is the verifier's, else the card's
+    /// [`agent_id`](AgentCard::agent_id). The executor runs inside the
+    /// caller's [`CallContext`](sinew_core::identity::CallContext) with this
+    /// agent appended to the delegation chain
+    /// ([`current_context`](sinew_core::identity::current_context)), sees
+    /// the caller in [`RequestContext::caller`], and gets the caller's
+    /// on-behalf-of credential as
+    /// [`user_credential`](sinew_core::identity::user_credential) and as the
+    /// context's subject token. Without a verifier, identity metadata is
+    /// ignored.
+    pub fn with_identity_verifier(mut self, verifier: IdentityVerifier) -> Self {
+        self.inner_mut().verifier = Some(verifier);
+        self
+    }
+
+    /// Signs the card with the agent's key (see [`AgentCard::sign`]), now
+    /// and again after `serve` / `spawn` fill in an empty card `url`, so the
+    /// served card always verifies. Add the identity extension first
+    /// ([`AgentCard::with_identity`]).
+    pub fn with_card_signing_key(mut self, key: AgentKey) -> Self {
+        let inner = self.inner_mut();
+        let card = inner.card.get_mut().unwrap();
+        if let Ok(signed) = card.clone().sign(&key) {
+            *card = signed;
+        }
+        inner.card_key = Some(key);
         self
     }
 
@@ -204,6 +253,11 @@ impl A2aServer {
         let mut card = self.inner.card.write().unwrap();
         if card.url.is_empty() {
             card.url = url.clone();
+            if let Some(key) = &self.inner.card_key {
+                if let Ok(signed) = card.clone().sign(key) {
+                    *card = signed;
+                }
+            }
         }
         url
     }
@@ -341,17 +395,22 @@ async fn rpc_handler(State(inner): State<Arc<Inner>>, body: Bytes) -> Response {
     let Some(m) = req.method else {
         return rpc_error(&id, RpcError::invalid_request("missing `method`"));
     };
+    let mut req_params = req.params;
+    let scope = match inner.identify(req_params.as_mut()) {
+        Ok(s) => s,
+        Err(e) => return rpc_error(&id, e),
+    };
     let result = match m.as_str() {
-        method::MESSAGE_SEND => match params(req.params) {
+        method::MESSAGE_SEND => match params(req_params) {
             Ok(p) => inner
-                .message_send(p)
+                .message_send(p, scope)
                 .await
                 .map(|r| jsonrpc::response(&id, &r)),
             Err(e) => Err(e),
         },
         method::MESSAGE_STREAM => {
-            return match params(req.params) {
-                Ok(p) => match inner.message_stream(p).await {
+            return match params(req_params) {
+                Ok(p) => match inner.message_stream(p, scope).await {
                     Ok(rx) => sse_response(&id, rx),
                     Err(e) => rpc_error(&id, e),
                 },
@@ -359,7 +418,7 @@ async fn rpc_handler(State(inner): State<Arc<Inner>>, body: Bytes) -> Response {
             };
         }
         method::TASKS_RESUBSCRIBE => {
-            return match params::<TaskIdParams>(req.params) {
+            return match params::<TaskIdParams>(req_params) {
                 Ok(p) => match inner.resubscribe(&p.id).await {
                     Ok(rx) => sse_response(&id, rx),
                     Err(e) => rpc_error(&id, e),
@@ -367,14 +426,14 @@ async fn rpc_handler(State(inner): State<Arc<Inner>>, body: Bytes) -> Response {
                 Err(e) => rpc_error(&id, e),
             };
         }
-        method::TASKS_GET => match params::<TaskQueryParams>(req.params) {
+        method::TASKS_GET => match params::<TaskQueryParams>(req_params) {
             Ok(p) => inner
                 .get_task(&p.id, p.history_length)
                 .await
                 .map(|t| jsonrpc::response(&id, &t)),
             Err(e) => Err(e),
         },
-        method::TASKS_CANCEL => match params::<TaskIdParams>(req.params) {
+        method::TASKS_CANCEL => match params::<TaskIdParams>(req_params) {
             Ok(p) => inner
                 .cancel(&p.id)
                 .await
@@ -435,6 +494,34 @@ fn set_status(task: &mut Task, status: TaskStatus) {
 }
 
 impl Inner {
+    /// Takes the identity proof and the credential out of the params'
+    /// metadata (the credential never reaches the executor's metadata or a
+    /// store) and verifies the proof when a verifier is set.
+    fn identify(&self, params: Option<&mut Value>) -> Result<CallerScope, RpcError> {
+        let meta = params
+            .and_then(|p| p.get_mut("metadata"))
+            .and_then(Value::as_object_mut);
+        let (proof, credential) = match meta {
+            Some(m) => (m.get(META_IDENTITY).cloned(), m.remove(META_CREDENTIAL)),
+            None => (None, None),
+        };
+        let Some(verifier) = &self.verifier else {
+            return Ok(CallerScope::default());
+        };
+        let audience = self.card.read().unwrap().agent_id();
+        let caller = verifier
+            .verify_value(proof.as_ref(), Some(&audience))
+            .map_err(|e| RpcError::identity_rejected(e.to_string()))?;
+        let credential = match (credential, &caller) {
+            (Some(c), Some(_)) => Some(
+                serde_json::from_value::<UserCredential>(c)
+                    .map_err(|e| RpcError::invalid_params(format!("credential: {e}")))?,
+            ),
+            _ => None,
+        };
+        Ok(CallerScope { caller, credential })
+    }
+
     fn check_streaming(&self) -> Result<(), RpcError> {
         if self.card.read().unwrap().capabilities.streaming == Some(false) {
             return Err(RpcError::unsupported(
@@ -446,7 +533,11 @@ impl Inner {
 
     /// Creates or continues a task, spawns the executor and its driver, and
     /// returns a subscription to the task's frames.
-    async fn start(self: &Arc<Self>, p: MessageSendParams) -> Result<FrameRx, RpcError> {
+    async fn start(
+        self: &Arc<Self>,
+        p: MessageSendParams,
+        scope: CallerScope,
+    ) -> Result<FrameRx, RpcError> {
         let MessageSendParams {
             mut message,
             configuration,
@@ -536,28 +627,43 @@ impl Inner {
             task: existing,
             configuration,
             metadata,
+            caller: scope.caller.clone(),
         };
+        let call_ctx = scope.caller.as_ref().map(|c| {
+            let mut next = c.context_for(&self.card.read().unwrap().agent_id(), Via::A2a);
+            next.subject_token = scope.credential.as_ref().map(|cr| cr.token.clone());
+            next
+        });
         let queue = EventQueue::new(ctl_tx, task_id, context_id);
         let executor = self.executor.clone();
-        let exec = tokio::spawn(async move {
-            executor
-                .execute(ctx, queue)
-                .await
-                .map_err(|e| e.to_string())
-        });
+        let exec = tokio::spawn(with_identity_scope(
+            call_ctx,
+            scope.credential,
+            async move {
+                executor
+                    .execute(ctx, queue)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
+        ));
         let _ = live.abort.set(exec.abort_handle());
         tokio::spawn(drive(self.clone(), live, ctl_rx, exec));
         Ok(frame_rx)
     }
 
-    async fn message_stream(self: &Arc<Self>, p: MessageSendParams) -> Result<FrameRx, RpcError> {
+    async fn message_stream(
+        self: &Arc<Self>,
+        p: MessageSendParams,
+        scope: CallerScope,
+    ) -> Result<FrameRx, RpcError> {
         self.check_streaming()?;
-        self.start(p).await
+        self.start(p, scope).await
     }
 
     async fn message_send(
         self: &Arc<Self>,
         p: MessageSendParams,
+        scope: CallerScope,
     ) -> Result<SendMessageResult, RpcError> {
         let blocking = p
             .configuration
@@ -565,7 +671,7 @@ impl Inner {
             .and_then(|c| c.blocking)
             .unwrap_or(true);
         let history_length = p.configuration.as_ref().and_then(|c| c.history_length);
-        let mut rx = self.start(p).await?;
+        let mut rx = self.start(p, scope).await?;
         let mut task_id = None;
         while let Some(frame) = rx.recv().await {
             match &frame.event {

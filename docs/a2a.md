@@ -183,6 +183,43 @@ let agent = react_agent(local_model, ToolBox::new().with(remote))?;
 - A remote task that fails, is canceled or is rejected becomes `Err(Error::Tool)`, so the model sees an
   error message and can recover.
 
+## Signed cards and verified callers
+
+An agent can publish its signed identity in its card and require one from its callers (see
+[Agent identity](governance.md#agent-identity) for the documents, keys and trust store):
+
+```rust
+use sinew_core::identity::{AgentCredentials, IdentityVerifier, TrustStore};
+
+// Server: the identity in the card, the card signed (again after the URL is filled in),
+// callers verified.
+let server = A2aServer::new(AgentCard::new("Billing", "Refunds", "").with_identity(&billing_identity), executor)
+    .with_card_signing_key(billing_key)
+    .with_identity_verifier(IdentityVerifier::new(trust.clone()))
+    .spawn("0.0.0.0:9100")
+    .await?;
+
+// Client: only talk to agents whose card verifies, and prove who we are on every call.
+let client = A2aClient::discover_verified("https://billing.internal", &trust)
+    .await?
+    .with_credentials(AgentCredentials::new(orchestrator_key, orchestrator_identity)?);
+let tool = A2aAgentTool::from_client(client);
+```
+
+- The card signature is a JWS (`alg: EdDSA`, `kid` = key id) over the card's canonical JSON without
+  `signatures`, in the A2A `signatures` field. The identity is the capability extension
+  `IDENTITY_EXTENSION_URI` (`params.identity`).
+- Each request carries a call assertion of the current `CallContext` in the params'
+  `metadata["sinew.dev/identity"]`, signed by the caller's key for the receiving agent (the card's
+  `agent_id()`, or `with_audience`). Missing, forged, expired, misdirected or replayed proofs are
+  answered with `-32040`, on `message/*` and `tasks/*` alike.
+- The executor runs in the caller's context with this agent appended to the chain
+  (`current_context()`), and gets the caller in `RequestContext::caller`. An on-behalf-of credential
+  sent by the caller (`metadata["sinew.dev/credential"]`) becomes `user_credential()` and the
+  context's subject token; it is removed from the metadata the executor sees.
+- A traced tool call into the remote agent and the remote graph's runs share one trace, and every
+  tool run records the delegation chain.
+
 ## Protocol notes
 
 - Version 0.3.0: `kind` discriminators, `message/send`-style method names, and the card at

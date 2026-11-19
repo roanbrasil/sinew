@@ -16,6 +16,10 @@ use std::{
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
+use sinew_core::identity::{
+    current_context, user_credential, AgentCredentials, SignedAgentIdentity, TrustStore,
+    VerifiedIdentity, META_CREDENTIAL, META_IDENTITY,
+};
 use sinew_core::{
     tool_vetting::VetReport, ChatPromptTemplate, Message, PromptTemplate, Role, Tool, ToolBox,
     ToolSource, ToolSpec,
@@ -94,6 +98,8 @@ struct Inner {
     tasks: Mutex<Vec<JoinHandle<()>>>,
     child: Mutex<Option<Child>>,
     notifications: broadcast::Sender<McpNotification>,
+    credentials: std::sync::RwLock<Option<AgentCredentials>>,
+    audience: std::sync::RwLock<Option<String>>,
 }
 
 /// Capacity of the notification channel; slower receivers see `Lagged`.
@@ -254,6 +260,8 @@ impl McpClient {
             tasks: Mutex::new(Vec::new()),
             child: Mutex::new(child),
             notifications: broadcast::channel(NOTIFICATION_BUFFER).0,
+            credentials: std::sync::RwLock::new(None),
+            audience: std::sync::RwLock::new(None),
         });
         let dispatcher = tokio::spawn(dispatch(Arc::downgrade(&inner), rx));
         inner.tasks.lock().unwrap().push(dispatcher);
@@ -289,6 +297,76 @@ impl McpClient {
             .init
             .get()
             .expect("client is initialized by every constructor")
+    }
+
+    /// Proves this agent's identity on every `tools/call`: a call assertion
+    /// of the current [`CallContext`](sinew_core::identity::CallContext)
+    /// (or a fresh one with this agent as the origin), signed with the
+    /// agent's key, sent with its signed identity in the request's `_meta`
+    /// under [`META_IDENTITY`]. The audience is the server's identity id
+    /// when it presents one, else its name (see
+    /// [`with_audience`](Self::with_audience)). Applies to every clone and
+    /// to the [`McpTool`]s built from it.
+    ///
+    /// Independently of this, an on-behalf-of credential in scope
+    /// ([`user_credential`], set by
+    /// [`OnBehalfOf`](sinew_core::identity::OnBehalfOf)) goes along under
+    /// [`META_CREDENTIAL`].
+    pub fn with_credentials(self, credentials: AgentCredentials) -> Self {
+        *self.inner.credentials.write().unwrap() = Some(credentials);
+        self
+    }
+
+    /// The audience of call assertions.
+    pub fn with_audience(self, audience: impl Into<String>) -> Self {
+        *self.inner.audience.write().unwrap() = Some(audience.into());
+        self
+    }
+
+    /// The signed identity the server presented in its `initialize` answer
+    /// (see `McpServer::with_identity`), unverified.
+    pub fn server_identity(&self) -> Option<SignedAgentIdentity> {
+        let meta = self.inner.init.get()?.meta.as_ref()?;
+        serde_json::from_value(meta.get(META_IDENTITY)?.clone()).ok()
+    }
+
+    /// Verifies the server's identity against `trust`. Fails when the
+    /// server presented none.
+    pub fn verify_server(&self, trust: &TrustStore) -> Result<VerifiedIdentity> {
+        let signed = self.server_identity().ok_or_else(|| {
+            sinew_core::identity::IdentityError::Missing("server identity".into())
+        })?;
+        Ok(trust.verify(&signed)?)
+    }
+
+    fn audience(&self) -> String {
+        if let Some(a) = self.inner.audience.read().unwrap().clone() {
+            return a;
+        }
+        self.server_identity()
+            .map(|i| i.payload.id)
+            .or_else(|| self.inner.init.get().map(|i| i.server_info.name.clone()))
+            .unwrap_or_default()
+    }
+
+    /// The `_meta` for a `tools/call`: identity proof and credential.
+    fn call_meta(&self) -> Result<Option<Value>> {
+        let proof = match self.inner.credentials.read().unwrap().as_ref() {
+            Some(c) => Some(c.prove(current_context().as_ref(), &self.audience())?),
+            None => None,
+        };
+        let credential = user_credential();
+        if proof.is_none() && credential.is_none() {
+            return Ok(None);
+        }
+        let mut meta = json!({});
+        if let Some(p) = proof {
+            meta[META_IDENTITY] = p.to_value();
+        }
+        if let Some(c) = credential {
+            meta[META_CREDENTIAL] = serde_json::to_value(c)?;
+        }
+        Ok(Some(meta))
     }
 
     /// Timeout for each request (default 60 s). A request that times out is
@@ -525,12 +603,11 @@ impl McpClient {
         } else {
             arguments
         };
-        let result = self
-            .request(
-                "tools/call",
-                Some(json!({ "name": name, "arguments": arguments })),
-            )
-            .await?;
+        let mut params = json!({ "name": name, "arguments": arguments });
+        if let Some(meta) = self.call_meta()? {
+            params["_meta"] = meta;
+        }
+        let result = self.request("tools/call", Some(params)).await?;
         Ok(CallToolResult::from_json(&result))
     }
 

@@ -25,6 +25,8 @@ tokio = { version = "1", default-features = false, features = ["time", "sync", "
 schemars = { workspace = true, optional = true }
 sinew-macros = { workspace = true, optional = true }
 sqlx = { workspace = true, optional = true, features = ["sqlite"] }
+ed25519-dalek = { version = "2.2", optional = true }
+getrandom = { version = "0.2", optional = true }
 
 [features]
 default = ["http2"]
@@ -36,6 +38,9 @@ macros = ["schemars", "dep:sinew-macros"]
 http2 = ["reqwest/http2"]
 # `cache::SqliteCache`: persistent response cache.
 sqlite-cache = ["dep:sqlx"]
+# Signed agent identity (`identity::AgentIdentity`, `AgentKey`, `TrustStore`,
+# `IdentityVerifier`) with Ed25519, and `InMemoryTokenExchanger`.
+identity = ["dep:ed25519-dalek", "dep:getrandom"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "net", "io-util"] }

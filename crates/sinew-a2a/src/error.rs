@@ -19,6 +19,9 @@ pub enum A2aError {
     Rpc(RpcError),
     #[error("protocol error: {0}")]
     Protocol(String),
+    /// A card or identity proof that does not verify.
+    #[error("identity: {0}")]
+    Identity(#[from] sinew_core::identity::IdentityError),
 }
 
 impl From<RpcError> for A2aError {

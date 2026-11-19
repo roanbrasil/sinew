@@ -254,6 +254,36 @@ server accepted it, so a notification sent afterwards is delivered. A server tha
 `notifications()` call returns an independent receiver; a receiver that falls more than 256 messages
 behind gets `RecvError::Lagged`.
 
+## Agent identity and user credentials
+
+A server can require a signed identity from the agents that call its tools, and present its own (see
+[Agent identity](governance.md#agent-identity)):
+
+```rust
+use sinew_core::identity::{AgentCredentials, IdentityVerifier, OnBehalfOf};
+
+let server = McpServer::new("crm", "1.0")
+    .with_tools(tools)
+    .with_identity(crm_identity)                                  // in the `initialize` `_meta`
+    .with_identity_verifier(IdentityVerifier::new(trust.clone()));
+
+let client = McpClient::connect_stdio("crm-server", [] as [&str; 0])
+    .await?
+    .with_credentials(AgentCredentials::new(agent_key, agent_identity)?);
+client.verify_server(&trust)?;                                    // the server's identity
+let tools = OnBehalfOf::new(sts)                                  // user-scoped tokens per tool
+    .grant("crm_*", "crm", ["customers:read"])
+    .wrap(&client.toolbox().await?);
+```
+
+- `tools/call` carries a call assertion of the current `CallContext` in `_meta["sinew.dev/identity"]`
+  (audience: the server's identity id, else its name). The server rejects missing, forged, expired,
+  misdirected or replayed proofs, and tools outside the caller's `allowed_tools`, with `-32040`; an
+  `McpTool` turns that into a tool error the model can see.
+- Server-side tools run in the caller's context with the server appended to the delegation chain.
+- An on-behalf-of credential in scope (`OnBehalfOf`) goes in `_meta["sinew.dev/credential"]` and is the
+  tool's `user_credential()` on the server, with or without a verifier.
+
 ## MCP in a microservice (Streamable HTTP)
 
 With the `http-server` feature (umbrella: `mcp-http`), `McpServer::http_router` returns an axum

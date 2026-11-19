@@ -24,6 +24,10 @@ pub struct RequestContext {
     pub task: Option<Task>,
     pub configuration: Option<MessageSendConfiguration>,
     pub metadata: Option<Metadata>,
+    /// The caller, when the server has an identity verifier
+    /// ([`A2aServer::with_identity_verifier`](crate::A2aServer::with_identity_verifier))
+    /// and the caller's proof verified.
+    pub caller: Option<sinew_core::identity::VerifiedCaller>,
 }
 
 impl RequestContext {

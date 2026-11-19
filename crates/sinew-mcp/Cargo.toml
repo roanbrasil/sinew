@@ -33,7 +33,7 @@ name = "sinew-mcp"
 path = "src/bin/sinew-mcp.rs"
 
 [dependencies]
-sinew-core.workspace = true
+sinew-core = { workspace = true, features = ["identity"] }
 sinew-graph.workspace = true
 sinew-trace.workspace = true
 serde.workspace = true
