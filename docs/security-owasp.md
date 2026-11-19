@@ -20,7 +20,7 @@ Every claim in the "Sinew control" column is checked by an attack scenario that 
 | ASI06 | Memory & Context Poisoning | ASI06-01, ASI06-02 | tool-output guardrails before checkpointing; none for long-term memory writes | thread state mitigated; long-term memory gap ([#187](https://github.com/roanbrasil/sinew/issues/187)) |
 | ASI07 | Insecure Inter-Agent Communication | ASI07-01 | none for message authentication | gap ([#188](https://github.com/roanbrasil/sinew/issues/188), see also #175) |
 | ASI08 | Cascading Failures | ASI08-01, ASI08-02 | `LoopGuard`, `Budget`, durable `side_effects` + `UnknownOutcome::Fail` | mitigated |
-| ASI09 | Human-Agent Trust Exploitation | ASI09-01 | approvals show the raw call; no risk levels or intent check | gap ([#189](https://github.com/roanbrasil/sinew/issues/189)) |
+| ASI09 | Human-Agent Trust Exploitation | ASI09-01 | harness `ApprovalConfig`: tool `RiskLevel`s, `IntentRules` / `IntentJudge` warnings, schema-rendered arguments, `Confirmation::retype` / second approver | mitigated |
 | ASI10 | Rogue Agents | ASI10-01 | deny-by-default `PermissionPolicy`, `Budget` | mitigated for the scenario (containment); detection in #176, #177 |
 
 ## The attack suite
@@ -364,21 +364,48 @@ slightly is only stopped by the budget. Budgets are per turn and per agent; ther
 a multi-agent system or across turns. The ledger covers tools called by the prebuilt agents and by
 `durable_tool_call`; work in custom nodes is not covered.
 
-## ASI09 Human-Agent Trust Exploitation — gap
+## ASI09 Human-Agent Trust Exploitation
 
 **In an agent.** The agent persuades the human. In ASI09-01 a goal-hijacked banking assistant calls
 `transfer_funds` to the attacker while its message says it is "updating notification settings"; a reviewer who reads
 the explanation approves.
 
-**Sinew controls today.** Harness approvals (`PermissionPolicy::ask`) pause before the call, and
-`ApprovalRequest` carries the real tool name and arguments, not the model's description. Nothing checks that the
-explanation matches the call, marks the call as high impact, or asks for a stronger confirmation.
+**Sinew controls.** Harness approvals pause before the call, and every `ApprovalRequest` (also in
+`AgentEvent::ApprovalRequired`) carries what the reviewer needs to judge the call rather than the explanation
+([harness approvals](harness.md#approvals-that-resist-trust-exploitation)):
 
-**Follow-up.** [#189](https://github.com/roanbrasil/sinew/issues/189): risk levels on tools, an intent/call
-consistency warning, schema-rendered arguments and typed confirmation for high-impact calls.
+- a `RiskLevel` (`low`, `high`, `critical`) set with `ApprovalConfig::risk` or by a hook (`GovernHook::risk` in
+  `sinew-govern`); calls at or above `ask_at` (default `critical`) need approval even when the policy allows them,
+  and "always" approvals do not apply to high-impact calls;
+- warnings from intent checks run before asking: `IntentRules` (default, no model) flags a message that describes
+  another tool or says nothing about a high-impact call, `IntentJudge` asks a model through `LlmJudge`;
+- the arguments rendered from the tool's schema (`render_arguments`), with control and bidi characters escaped;
+- a `Confirmation` stronger than one click: retype values (`Confirmation::retype(["to", "amount"])`) or a second
+  approver, checked by `Agent::resume` (`HarnessError::Confirmation` otherwise, thread still paused);
+- `Hook::on_approval` receives every decision with the request as shown (`ApprovalRecord`), for an audit log
+  (#177).
 
-**Residual risk until then.** Show reviewers `ApprovalRequest::tool` and `arguments`, not the assistant's text, and
-keep high-impact tools out of agents that read untrusted input.
+```rust
+let agent = Agent::builder()
+    .model(model)
+    .tool(transfer_funds)
+    .approvals(
+        ApprovalConfig::new()
+            .risk("transfer_funds", RiskLevel::Critical)
+            .confirm("transfer_funds", Confirmation::retype(["to", "amount"])),
+    )
+    .build()?;
+```
+
+In the protected run of ASI09-01 the request shows `risk: critical` and the warning "the assistant's message
+describes `set_alerts` (notification, settings, change), but the call is `transfer_funds`"; the simulated reviewer
+reads the call and denies it.
+
+**Residual risk.** The reviewer still decides: the controls make a mismatch visible and slow down high-impact
+approvals, they do not stop a reviewer who approves anyway. `IntentRules` compares words, so a careful paraphrase
+passes; use `IntentJudge` where that matters. The harness counts approver names but does not authenticate them.
+Schema labels for MCP tools come from the server. `ReactAgent` interrupts (`approval_required`) do not carry these
+fields yet.
 
 ## ASI10 Rogue Agents
 

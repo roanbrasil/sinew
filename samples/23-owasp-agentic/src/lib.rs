@@ -21,8 +21,6 @@ use sinew::eval::security::SecuritySuite;
 pub const ISSUE_MEMORY_WRITES: &str = "https://github.com/roanbrasil/sinew/issues/187";
 /// Follow-up issue: authenticate messages between agents (ASI07).
 pub const ISSUE_AGENT_MESSAGES: &str = "https://github.com/roanbrasil/sinew/issues/188";
-/// Follow-up issue: approval requests that resist trust exploitation (ASI09).
-pub const ISSUE_APPROVALS: &str = "https://github.com/roanbrasil/sinew/issues/189";
 
 /// Every scenario, in OWASP list order.
 pub fn suite() -> SecuritySuite {

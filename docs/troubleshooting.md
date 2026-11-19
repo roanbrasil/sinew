@@ -448,6 +448,17 @@ that lost the paused state.
 **How to fix.** Use `run(thread_id, input)` and handle `AgentOutcome::ApprovalRequired` with `resume`, or allow the
 tools up front with `permissions(...)` / `auto_approve(...)`. See [Harness permissions](harness.md#permissions).
 
+<a id="harness-error-confirmation"></a>
+### ``approval of call `{call_id}` refused: {reason}`` (`HarnessError::Confirmation`)
+
+**Meaning.** `Agent::resume` got an approval for a call whose `ApprovalRequest::confirmation` asks for more than one
+click, and the decision did not satisfy it: a value to retype is missing or differs from the call's argument, or
+there are fewer distinct approvers than required. Nothing was applied; the thread is still paused.
+
+**How to fix.** Add the retyped values with `ApprovalDecision::retype(field, value)` and the approvers with
+`approver(name)`, then call `resume` again. Run `ApprovalRequest::check_confirmation(&decision)` in the UI first to
+let the reviewer correct a typo. See [Harness approvals](harness.md#approvals-that-resist-trust-exploitation).
+
 <a id="harness-error-hook"></a>
 ### `hook failed: {0}` (`HarnessError::Hook`)
 

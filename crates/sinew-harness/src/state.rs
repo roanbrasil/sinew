@@ -1,11 +1,13 @@
 //! The graph state of a harness thread and the types around it.
 
+use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinew_core::{Message, ToolCall, Usage};
 
+use crate::approval::{ApprovalWarning, ArgumentLine, CallReview, Confirmation, RiskLevel};
 use crate::budget::Pricing;
 
 pub(crate) fn now_ms() -> u64 {
@@ -91,6 +93,9 @@ pub enum CallDecision {
 pub struct PendingCall {
     pub call: ToolCall,
     pub decision: CallDecision,
+    /// Risk, warnings and rendering for a call that needs approval.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<CallReview>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,12 +153,20 @@ impl HarnessState {
         self.pending
             .iter()
             .filter_map(|p| match &p.decision {
-                CallDecision::Ask { reason } => Some(ApprovalRequest {
-                    call_id: p.call.id.clone(),
-                    tool: p.call.name.clone(),
-                    arguments: p.call.arguments.clone(),
-                    reason: reason.clone(),
-                }),
+                CallDecision::Ask { reason } => {
+                    let review = p.review.clone().unwrap_or_default();
+                    Some(ApprovalRequest {
+                        call_id: p.call.id.clone(),
+                        tool: p.call.name.clone(),
+                        arguments: p.call.arguments.clone(),
+                        reason: reason.clone(),
+                        risk: review.risk,
+                        warnings: review.warnings,
+                        rendered_arguments: review.rendered_arguments,
+                        confirmation: review.confirmation,
+                        explanation: review.explanation,
+                    })
+                }
                 _ => None,
             })
             .collect()
@@ -161,12 +174,55 @@ impl HarnessState {
 }
 
 /// A tool call that needs a human decision.
+///
+/// Show reviewers `tool`, `risk`, `rendered_arguments` and `warnings`
+/// before `explanation`: the explanation is the model's description of the
+/// call and can be wrong on purpose (see [`crate::approval`]).
+/// [`render`](Self::render) does that as plain text.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApprovalRequest {
     pub call_id: String,
     pub tool: String,
     pub arguments: Value,
     pub reason: String,
+    /// The call's risk level (developer config or hooks).
+    #[serde(default)]
+    pub risk: RiskLevel,
+    /// Warnings from intent checks: the assistant's message and the call
+    /// disagree.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<ApprovalWarning>,
+    /// The arguments in plain language, labelled from the tool's schema.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rendered_arguments: Vec<ArgumentLine>,
+    /// What the reviewer must do beyond approving.
+    #[serde(default, skip_serializing_if = "Confirmation::is_plain")]
+    pub confirmation: Confirmation,
+    /// Text of the assistant message that made the call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
+}
+
+impl ApprovalRequest {
+    /// A low-risk request with no warnings, rendering or confirmation.
+    pub fn new(call_id: impl Into<String>, tool: impl Into<String>, arguments: Value) -> Self {
+        Self {
+            call_id: call_id.into(),
+            tool: tool.into(),
+            arguments,
+            reason: String::new(),
+            risk: RiskLevel::Low,
+            warnings: Vec::new(),
+            rendered_arguments: Vec::new(),
+            confirmation: Confirmation::plain(),
+            explanation: None,
+        }
+    }
+
+    /// `true` when an intent check warned about this call.
+    pub fn has_warnings(&self) -> bool {
+        !self.warnings.is_empty()
+    }
 }
 
 /// A human decision for one [`ApprovalRequest`].
@@ -180,6 +236,14 @@ pub struct ApprovalDecision {
     /// Shown to the model when the call is denied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Values the reviewer retyped, by argument (see
+    /// [`Confirmation::retype`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub retyped: BTreeMap<String, String>,
+    /// Who approved (see [`Confirmation::approvers`]). The harness counts
+    /// distinct names; authenticating them is the application's job.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approvers: Vec<String>,
 }
 
 impl ApprovalDecision {
@@ -189,6 +253,8 @@ impl ApprovalDecision {
             approve: true,
             always: false,
             reason: None,
+            retyped: BTreeMap::new(),
+            approvers: Vec::new(),
         }
     }
 
@@ -205,7 +271,22 @@ impl ApprovalDecision {
             approve: false,
             always: false,
             reason: Some(reason.into()),
+            retyped: BTreeMap::new(),
+            approvers: Vec::new(),
         }
+    }
+
+    /// Adds the value the reviewer retyped for `field` (see
+    /// [`Confirmation::retype`]).
+    pub fn retype(mut self, field: impl Into<String>, value: impl Into<String>) -> Self {
+        self.retyped.insert(field.into(), value.into());
+        self
+    }
+
+    /// Adds an approver's name (see [`Confirmation::approvers`]).
+    pub fn approver(mut self, name: impl Into<String>) -> Self {
+        self.approvers.push(name.into());
+        self
     }
 
     /// Approves every request.
