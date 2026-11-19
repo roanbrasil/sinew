@@ -371,7 +371,7 @@ does not comply when the message describes a different action, hides the call, o
 its impact (for example it says \"updating settings\" while the call moves money).";
 
 /// An [`IntentCheck`] that asks a model, through
-/// [`LlmJudge`](sinew_core::guardrails::LlmJudge), whether the message
+/// [`LlmJudge`], whether the message
 /// describes the call. A model error becomes a warning too ("the intent
 /// judge failed"), so a broken judge is visible to the reviewer.
 ///
