@@ -208,6 +208,79 @@ allows everything but asks for `write_file`, `edit_file`, `shell` and
 `ApprovalDecision::approve_always` allows that tool for the rest of the
 thread.
 
+## Approvals that resist trust exploitation
+
+An approval is a control only if the reviewer sees what the call does. A
+goal-hijacked agent can call `transfer_funds` while its message says it is
+"updating notification settings" (OWASP ASI09, scenario `ASI09-01` in
+`samples/23-owasp-agentic`). Every `ApprovalRequest` (in
+`AgentOutcome::ApprovalRequired` and `AgentEvent::ApprovalRequired`)
+therefore carries, besides `tool`, `arguments` and `reason`:
+
+| Field | What it is |
+|---|---|
+| `risk` | `RiskLevel::{Low, High, Critical}` from `ApprovalConfig::risk` and hooks (`Hook::tool_risk`, e.g. `GovernHook::risk`); the highest wins |
+| `warnings` | `ApprovalWarning`s from intent checks: the assistant's message and the call disagree |
+| `rendered_arguments` | `ArgumentLine`s: label and description from the tool's JSON Schema, value escaped (control and bidi characters) and clipped; arguments the schema does not declare are flagged |
+| `confirmation` | what approving takes: values to retype and/or the number of distinct approvers |
+| `explanation` | the text of the assistant message that made the call |
+
+```rust
+use sinew_harness::{ApprovalConfig, Confirmation, IntentJudge, IntentRules, RiskLevel};
+
+let agent = Agent::builder()
+    .model(model)
+    .tool(transfer_funds)
+    .approvals(
+        ApprovalConfig::new()
+            .risk("transfer_*", RiskLevel::Critical)
+            .risk("send_email", RiskLevel::High)
+            .confirm("transfer_*", Confirmation::retype(["to", "amount"]))
+            .confirm("delete_account", Confirmation::second_approver())
+            .check(IntentJudge::new(judge_model)), // optional, after the default IntentRules
+    )
+    .build()?;
+```
+
+- **Risk levels.** `ApprovalConfig::ask_at(level)` (default `Critical`)
+  sends every call at or above `level` to approval, even when the
+  permission policy allows it or the tool was approved "always";
+  `ask_at(None)` leaves it to the policy. `auto_approve` still approves
+  them: use a deny rule for limits that must hold without a human.
+  "Always" is ignored for `high` and `critical` calls: they are approved
+  one by one.
+- **Intent checks** run before the run pauses, for every call that needs
+  approval and whose assistant message has text. `IntentRules` (on by
+  default, no model) warns when the message describes another tool of the
+  agent and not the called one, when a high-impact call is not mentioned
+  at all, or when an `expect(tool_pattern, words)` rule is not met.
+  `IntentJudge` asks a model through `LlmJudge`
+  (`INTENT_JUDGE_POLICY`); a judge error becomes a warning. Implement
+  `IntentCheck` for your own. `no_checks()` removes them all.
+- **Stronger confirmation.** With a `Confirmation`, `Agent::resume` checks
+  the decision: `ApprovalDecision::approve(id).retype("amount", "4900.00")`
+  for each field to retype (exact match after trimming; keys or JSON
+  pointers), `.approver("ana").approver("bruno")` for distinct approvers
+  (authenticating them is the application's job). A decision that does not
+  satisfy it fails with `HarnessError::Confirmation` and changes nothing;
+  the thread stays paused. `ApprovalRequest::check_confirmation` runs the
+  same check in a UI.
+- **Showing it.** `ApprovalRequest::render()` gives the request as plain
+  text: tool and risk first, rendered arguments, warnings, the confirmation
+  needed, and the assistant's explanation last. `sinew-agent` prints the
+  rendered arguments and warnings, prompts for retyped values, and denies
+  calls that need more than one approver.
+- **Recording decisions.** `Hook::on_approval(ctx, record)` is called for
+  every decision in `resume` with an `ApprovalRecord`: the request exactly
+  as shown, the decision (or none), the `ApprovalOutcome` (`Approved`,
+  `Denied`, or `Rejected` for a failed confirmation) and the time. It is
+  serializable, for an audit log.
+
+Labels come from the tool's schema, which you control for your own tools;
+an MCP server's schema is as trustworthy as the server. The intent rules
+compare words, not meaning: they catch a message about a different action,
+not a careful paraphrase.
+
 ## Context management
 
 `ContextConfig { max_context_tokens, keep_recent, offload_threshold,

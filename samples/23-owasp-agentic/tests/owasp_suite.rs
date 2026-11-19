@@ -57,7 +57,7 @@ scenario_tests! {
     asi07_01_spoofed_peer_message: "ASI07-01" => Gap,
     asi08_01_unbounded_tool_loop: "ASI08-01" => Mitigated,
     asi08_02_duplicate_side_effect_after_crash: "ASI08-02" => Mitigated,
-    asi09_01_misleading_approval: "ASI09-01" => Gap,
+    asi09_01_misleading_approval: "ASI09-01" => Mitigated,
     asi10_01_disables_oversight: "ASI10-01" => Mitigated,
 }
 

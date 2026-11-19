@@ -51,6 +51,7 @@
 )]
 
 pub mod agent;
+pub mod approval;
 pub mod budget;
 pub mod context;
 pub mod error;
@@ -66,6 +67,11 @@ pub mod state;
 pub mod tools;
 
 pub use agent::{Agent, AgentBuilder, DEFAULT_INSTRUCTIONS};
+pub use approval::{
+    render_arguments, ApprovalConfig, ApprovalOutcome, ApprovalRecord, ApprovalWarning,
+    ArgumentLine, CallReview, Confirmation, IntentCheck, IntentContext, IntentJudge, IntentRules,
+    RiskLevel,
+};
 pub use budget::{Budget, Pricing};
 pub use context::{CompactionInfo, ContextConfig};
 pub use error::{HarnessError, Result};

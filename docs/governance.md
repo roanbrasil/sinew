@@ -294,7 +294,7 @@ At a high level, against the OWASP Top 10 for Agentic Applications:
 | Agent goal hijack (prompt injection leading to actions) | the injected instruction still has to pass the policies; pair with `InjectionDetector` on tool output |
 | Rogue agents | suspend and quarantine at runtime, disabled tools, unregistered agents denied |
 | Cascading failures | budgets and rate limits per agent and tool, the kill switch for a whole tool family |
-| Human-agent trust exploitation | `Ask` decisions carry the arguments and the reason to the approver; redaction keeps secrets out of approval screens and traces |
+| Human-agent trust exploitation | `Ask` decisions carry the arguments and the reason to the approver; `GovernHook::risk` sets risk levels shown in harness approval requests (see [harness approvals](harness.md#approvals-that-resist-trust-exploitation)); redaction keeps secrets out of approval screens and traces |
 
 These controls reduce the impact of a compromised or confused agent; they do not detect the compromise itself.
 Combine them with guardrails, sandboxing and monitoring ([Production](production.md)).
@@ -304,8 +304,8 @@ Combine them with guardrails, sandboxing and monitoring ([Production](production
 - Usage counters, rate limits and the registry live in memory, per process. A shared store for several replicas
   is a follow-up.
 - On-behalf-of user tokens for tools that call external APIs are part of agent identity (#175).
-- The harness does not report the human's approval answer back to the control plane yet, so the audit trail
-  records the `Ask`, not the approval.
+- The harness reports every approval answer to `Hook::on_approval` (an `ApprovalRecord`), but `GovernHook` does
+  not forward it to the control plane yet, so the decision sinks record the `Ask`, not the approval (#177).
 - `ReactAgent` gates take one identity per compiled graph; build one gate per user (it is a cheap clone of the
   control plane) when the user changes per request.
 

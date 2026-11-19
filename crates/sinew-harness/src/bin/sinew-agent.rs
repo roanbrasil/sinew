@@ -340,13 +340,43 @@ async fn ask_approvals(
     for r in requests {
         let detail = match r.arguments.get("command").and_then(Value::as_str) {
             Some(cmd) => cmd.to_string(),
-            None => serde_json::to_string_pretty(&r.arguments).unwrap_or_default(),
+            None if r.rendered_arguments.is_empty() => {
+                serde_json::to_string_pretty(&r.arguments).unwrap_or_default()
+            }
+            None => r
+                .rendered_arguments
+                .iter()
+                .map(|l| format!("{}: {}", l.label, l.value))
+                .collect::<Vec<_>>()
+                .join("\n"),
         };
         let shown: String = detail.chars().take(1500).collect();
+        let risk = if r.risk.is_high_impact() {
+            format!(" [{} risk]", r.risk)
+        } else {
+            String::new()
+        };
         out(&format!(
-            "{}\n{}\n{} ",
-            ui.yellow(&format!("? allow {}", r.tool)),
+            "{}\n{}\n",
+            ui.yellow(&format!("? allow {}{risk}", r.tool)),
             ui.dim(&shown),
+        ));
+        for w in &r.warnings {
+            out(&ui.red(&format!("! {}\n", w.message)));
+        }
+        if r.confirmation.approvers > 1 {
+            out(&ui.yellow(&format!(
+                "[needs {} approvers; the terminal has one, so it is denied]\n",
+                r.confirmation.approvers
+            )));
+            decisions.push(ApprovalDecision::deny(
+                &r.call_id,
+                "needs more approvers than the terminal has",
+            ));
+            continue;
+        }
+        out(&format!(
+            "{} ",
             ui.yellow("[y]es / [n]o / [a]lways for this tool:")
         ));
         let answer = tokio::select! {
@@ -354,18 +384,41 @@ async fn ask_approvals(
             _ = tokio::signal::ctrl_c() => { out("\n"); return None }
         };
         let answer = answer?;
-        decisions.push(match answer.trim().to_ascii_lowercase().as_str() {
-            "y" | "yes" | "" => ApprovalDecision::approve(&r.call_id),
-            "a" | "always" => ApprovalDecision::approve_always(&r.call_id),
-            other => {
-                let reason = if other == "n" || other == "no" {
-                    "the user declined".to_string()
-                } else {
-                    format!("the user declined and said: {other}")
-                };
-                ApprovalDecision::deny(&r.call_id, reason)
+        let approve = |always: bool| {
+            if always {
+                ApprovalDecision::approve_always(&r.call_id)
+            } else {
+                ApprovalDecision::approve(&r.call_id)
             }
-        });
+        };
+        let decision = match answer.trim().to_ascii_lowercase().as_str() {
+            "y" | "yes" | "" => Some(approve(false)),
+            "a" | "always" => Some(approve(true)),
+            _ => None,
+        };
+        if let Some(mut d) = decision {
+            for field in &r.confirmation.retype {
+                out(&format!("{} ", ui.yellow(&format!("retype `{field}`:"))));
+                let typed = tokio::select! {
+                    l = rx.recv() => l.flatten(),
+                    _ = tokio::signal::ctrl_c() => { out("\n"); return None }
+                };
+                d = d.retype(field.clone(), typed?);
+            }
+            if let Err(e) = r.check_confirmation(&d) {
+                out(&ui.red(&format!("! {e}; denied\n")));
+                d = ApprovalDecision::deny(&r.call_id, format!("not confirmed: {e}"));
+            }
+            decisions.push(d);
+            continue;
+        }
+        let other = answer.trim().to_ascii_lowercase();
+        let reason = if other == "n" || other == "no" {
+            "the user declined".to_string()
+        } else {
+            format!("the user declined and said: {other}")
+        };
+        decisions.push(ApprovalDecision::deny(&r.call_id, reason));
     }
     Some(decisions)
 }
@@ -918,24 +971,47 @@ mod tests {
     #[tokio::test]
     async fn approval_details_and_model_errors() {
         let requests = vec![
-            ApprovalRequest {
-                call_id: "1".into(),
-                tool: "shell".into(),
-                arguments: serde_json::json!({"command": "ls"}),
-                reason: String::new(),
-            },
-            ApprovalRequest {
-                call_id: "2".into(),
-                tool: "http_fetch".into(),
-                arguments: serde_json::json!({"url": "https://example.com"}),
-                reason: String::new(),
-            },
+            ApprovalRequest::new("1", "shell", serde_json::json!({"command": "ls"})),
+            ApprovalRequest::new(
+                "2",
+                "http_fetch",
+                serde_json::json!({"url": "https://example.com"}),
+            ),
         ];
         let d = ask_approvals(&requests, &mut lines(&[Some(""), Some("NO")]), &UI)
             .await
             .unwrap();
         assert_eq!(d[0], ApprovalDecision::approve("1"));
         assert_eq!(d[1], ApprovalDecision::deny("2", "the user declined"));
+
+        // High-impact requests: warnings, retyped values, second approver.
+        let args = serde_json::json!({"to": "ACC-1", "amount": "10.00"});
+        let mut pay = ApprovalRequest::new("p", "pay", args.clone());
+        pay.risk = sinew_harness::RiskLevel::Critical;
+        pay.rendered_arguments = sinew_harness::render_arguments(None, &args);
+        pay.warnings.push(sinew_harness::ApprovalWarning {
+            check: "intent_rules".into(),
+            message: "mismatch".into(),
+        });
+        pay.confirmation = sinew_harness::Confirmation::retype(["amount"]);
+        let mut wrong = pay.clone();
+        wrong.call_id = "w".into();
+        let mut two = pay.clone();
+        two.call_id = "t".into();
+        two.confirmation = sinew_harness::Confirmation::second_approver();
+        let d = ask_approvals(
+            &[pay, wrong, two],
+            &mut lines(&[Some("y"), Some("10.00"), Some("a"), Some("100")]),
+            &UI,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            d[0],
+            ApprovalDecision::approve("p").retype("amount", "10.00")
+        );
+        assert!(!d[1].approve && d[1].reason.as_deref().unwrap().contains("does not match"));
+        assert!(!d[2].approve);
 
         // A model that fails: the error is returned, not printed as success.
         let agent = Agent::builder()

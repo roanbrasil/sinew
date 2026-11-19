@@ -18,6 +18,7 @@ use sinew_graph::{
 use sinew_trace::{traced_chat, traced_chat_stream, RunKind, Tracer};
 
 use crate::{
+    approval::{review_call, ApprovalConfig, ApprovalOutcome, ApprovalRecord, RiskLevel},
     budget::{Budget, Pricing},
     context::{
         compact, estimate_messages, estimate_tokens, offload_output, repair_tool_pairs,
@@ -58,6 +59,7 @@ pub(crate) struct Config {
     spec_tokens: usize,
     hooks: Vec<Arc<dyn Hook>>,
     policy: PermissionPolicy,
+    approvals: ApprovalConfig,
     auto_approve: bool,
     ask_as_deny: bool,
     context: ContextConfig,
@@ -82,6 +84,7 @@ pub(crate) struct SubagentContext {
     tools: Vec<Arc<dyn Tool>>,
     hooks: Vec<Arc<dyn Hook>>,
     policy: PermissionPolicy,
+    approvals: ApprovalConfig,
     auto_approve: bool,
     context: ContextConfig,
     offload: (PathBuf, String),
@@ -127,6 +130,7 @@ pub(crate) fn build_subagent(ctx: &SubagentContext, spec: &SubagentSpec) -> Resu
         tools,
         hooks: ctx.hooks.clone(),
         policy: ctx.policy.clone(),
+        approvals: ctx.approvals.clone(),
         auto_approve: ctx.auto_approve,
         ask_as_deny: true,
         context: ctx.context.clone(),
@@ -189,6 +193,7 @@ pub struct AgentBuilder {
     max_depth: usize,
     hooks: Vec<Arc<dyn Hook>>,
     policy: PermissionPolicy,
+    approvals: ApprovalConfig,
     auto_approve: bool,
     ask_as_deny: bool,
     context: ContextConfig,
@@ -234,6 +239,7 @@ impl AgentBuilder {
             max_depth: 1,
             hooks: Vec::new(),
             policy: PermissionPolicy::allow_all(),
+            approvals: ApprovalConfig::new(),
             auto_approve: false,
             ask_as_deny: false,
             context: ContextConfig::default(),
@@ -461,6 +467,14 @@ impl AgentBuilder {
         self
     }
 
+    /// How approval requests are built: tool risk levels, calls that always
+    /// need approval, stronger confirmations and intent checks (default
+    /// [`ApprovalConfig::new`]). See [`crate::approval`].
+    pub fn approvals(mut self, config: ApprovalConfig) -> Self {
+        self.approvals = config;
+        self
+    }
+
     /// Turns every "ask" into "allow" (the CLI's `--yes`).
     pub fn auto_approve(mut self, on: bool) -> Self {
         self.auto_approve = on;
@@ -654,6 +668,7 @@ impl AgentBuilder {
                 tools: tools.clone(),
                 hooks: self.hooks.clone(),
                 policy: self.policy.clone(),
+                approvals: self.approvals.clone(),
                 auto_approve: self.auto_approve,
                 context: self.context.clone(),
                 offload: offload.clone(),
@@ -715,6 +730,7 @@ impl AgentBuilder {
             spec_tokens,
             hooks: self.hooks.clone(),
             policy: self.policy.clone(),
+            approvals: self.approvals.clone(),
             auto_approve: self.auto_approve,
             ask_as_deny: self.ask_as_deny,
             context: self.context.clone(),
@@ -924,6 +940,43 @@ impl Agent {
         }
     }
 
+    /// Reports approval decisions to every hook's `on_approval`.
+    async fn record_approvals<'a>(
+        &self,
+        thread_id: &str,
+        state: &HarnessState,
+        records: impl IntoIterator<
+            Item = (
+                &'a crate::ApprovalRequest,
+                Option<&'a ApprovalDecision>,
+                ApprovalOutcome,
+            ),
+        >,
+    ) {
+        let cfg = &self.inner.cfg;
+        if cfg.hooks.is_empty() {
+            return;
+        }
+        let ctx = HookContext {
+            thread_id: thread_id.into(),
+            step: state.turn.steps,
+            depth: cfg.depth,
+            agent: cfg.name.clone(),
+        };
+        for (request, decision, outcome) in records {
+            let record = ApprovalRecord {
+                thread_id: thread_id.into(),
+                request: request.clone(),
+                decision: decision.cloned(),
+                outcome,
+                at_ms: now_ms(),
+            };
+            for h in &cfg.hooks {
+                h.on_approval(&ctx, &record).await;
+            }
+        }
+    }
+
     async fn apply_decisions(
         &self,
         thread_id: &str,
@@ -938,14 +991,40 @@ impl Agent {
             return Err(HarnessError::NoPendingApproval(thread_id.into()));
         }
         let mut state = snap.state;
+        let requests = state.approval_requests();
+        let find = |id: &str| decisions.iter().find(|d| d.call_id == id);
+        // Check every confirmation before changing anything.
+        for r in &requests {
+            let Some(d) = find(&r.call_id) else { continue };
+            if let Err(reason) = r.check_confirmation(d) {
+                self.record_approvals(
+                    thread_id,
+                    &state,
+                    [(
+                        r,
+                        Some(d),
+                        ApprovalOutcome::Rejected {
+                            reason: reason.clone(),
+                        },
+                    )],
+                )
+                .await;
+                return Err(HarnessError::Confirmation {
+                    call_id: r.call_id.clone(),
+                    reason,
+                });
+            }
+        }
         let mut always = Vec::new();
         for p in &mut state.pending {
             if !matches!(p.decision, CallDecision::Ask { .. }) {
                 continue;
             }
-            p.decision = match decisions.iter().find(|d| d.call_id == p.call.id) {
+            let high_impact = p.review.as_ref().is_some_and(|r| r.risk.is_high_impact());
+            p.decision = match find(&p.call.id) {
                 Some(d) if d.approve => {
-                    if d.always {
+                    // High-impact calls are approved one by one.
+                    if d.always && !high_impact {
                         always.push(p.call.name.clone());
                     }
                     CallDecision::Allow
@@ -967,7 +1046,20 @@ impl Agent {
             }
         }
         state.turn.deadline_ms = self.deadline_ms();
-        graph.update_state(thread_id, state).await?;
+        let records: Vec<_> = requests
+            .iter()
+            .map(|r| {
+                let d = find(&r.call_id);
+                let outcome = if d.is_some_and(|d| d.approve) {
+                    ApprovalOutcome::Approved
+                } else {
+                    ApprovalOutcome::Denied
+                };
+                (r, d, outcome)
+            })
+            .collect();
+        graph.update_state(thread_id, state.clone()).await?;
+        self.record_approvals(thread_id, &state, records).await;
         Ok(())
     }
 
@@ -1346,11 +1438,14 @@ async fn agent_node(cfg: &Config, mut s: HarnessState, ctx: NodeContext) -> Resu
     }
 
     let mut pending = Vec::with_capacity(msg.tool_calls.len());
+    let mut risks = Vec::with_capacity(msg.tool_calls.len());
     for call in &mut msg.tool_calls {
-        let decision = decide(cfg, &s, &hctx, call).await;
+        let (decision, risk) = decide(cfg, &s, &hctx, call).await;
+        risks.push(risk);
         pending.push(PendingCall {
             call: call.clone(),
             decision,
+            review: None,
         });
     }
     s.messages.push(msg);
@@ -1403,18 +1498,65 @@ async fn agent_node(cfg: &Config, mut s: HarnessState, ctx: NodeContext) -> Resu
             }
         }
     }
+    // Calls that need approval get their risk, warnings and rendering.
+    let explanation = s
+        .messages
+        .last()
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+    for (p, risk) in pending.iter_mut().zip(risks) {
+        if matches!(p.decision, CallDecision::Ask { .. }) {
+            p.review =
+                Some(review_call(&cfg.approvals, &cfg.specs, &p.call, risk, &explanation).await);
+        }
+    }
     s.pending = pending;
     Ok(s)
 }
 
 /// Hooks first (they may rewrite the call), then the policy on the final
-/// call; the most restrictive verdict wins.
+/// call, then the risk threshold; the most restrictive verdict wins.
+/// Returns the call's risk level too.
 async fn decide(
     cfg: &Config,
     s: &HarnessState,
     hctx: &HookContext,
     call: &mut sinew_core::ToolCall,
-) -> CallDecision {
+) -> (CallDecision, RiskLevel) {
+    let decision = permission(cfg, s, hctx, call).await;
+    let mut risk = cfg.approvals.risk_for(&call.name);
+    for h in &cfg.hooks {
+        if let Some(r) = h.tool_risk(hctx, call).await {
+            risk = risk.max(r);
+        }
+    }
+    let (mut perm, mut reason) = decision;
+    if perm == Permission::Allow && cfg.approvals.ask_threshold().is_some_and(|t| risk >= t) {
+        perm = Permission::Ask;
+        reason = format!("`{}` is a {risk}-risk call", call.name);
+    }
+    if perm == Permission::Ask && cfg.auto_approve {
+        perm = Permission::Allow;
+    }
+    if perm == Permission::Ask && cfg.ask_as_deny {
+        perm = Permission::Deny;
+        reason = format!("{reason} (approval is not available inside a subagent)");
+    }
+    let decision = match perm {
+        Permission::Allow => CallDecision::Allow,
+        Permission::Ask => CallDecision::Ask { reason },
+        Permission::Deny => CallDecision::Deny { reason },
+    };
+    (decision, risk)
+}
+
+/// Hooks and the permission policy, before risk and auto-approval.
+async fn permission(
+    cfg: &Config,
+    s: &HarnessState,
+    hctx: &HookContext,
+    call: &mut sinew_core::ToolCall,
+) -> (Permission, String) {
     let mut perm = Permission::Allow;
     let mut reason = String::new();
     for h in &cfg.hooks {
@@ -1441,18 +1583,7 @@ async fn decide(
             };
         }
     }
-    if perm == Permission::Ask && cfg.auto_approve {
-        perm = Permission::Allow;
-    }
-    if perm == Permission::Ask && cfg.ask_as_deny {
-        perm = Permission::Deny;
-        reason = format!("{reason} (approval is not available inside a subagent)");
-    }
-    match perm {
-        Permission::Allow => CallDecision::Allow,
-        Permission::Ask => CallDecision::Ask { reason },
-        Permission::Deny => CallDecision::Deny { reason },
-    }
+    (perm, reason)
 }
 
 async fn tools_node(cfg: &Config, mut s: HarnessState, ctx: NodeContext) -> Result<HarnessState> {

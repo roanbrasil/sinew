@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use sinew_core::{ChatRequest, ChatResponse, ToolCall};
 
+use crate::approval::{ApprovalRecord, RiskLevel};
 use crate::Result;
 
 /// Where a hook is running.
@@ -72,4 +73,22 @@ pub trait Hook: Send + Sync {
     async fn should_stop(&self, _ctx: &HookContext, _phase: StepPhase) -> Option<String> {
         None
     }
+
+    /// The risk level of this call, if the hook knows it (a policy engine,
+    /// for example). The harness uses the highest of every hook's answer
+    /// and the [`ApprovalConfig`](crate::ApprovalConfig) level; it is
+    /// carried in the [`ApprovalRequest`](crate::ApprovalRequest), and
+    /// calls at or above [`ApprovalConfig::ask_at`](crate::ApprovalConfig::ask_at)
+    /// need approval. Asked for every call after
+    /// [`before_tool`](Self::before_tool).
+    async fn tool_risk(&self, _ctx: &HookContext, _call: &ToolCall) -> Option<RiskLevel> {
+        None
+    }
+
+    /// Called for every approval decision, in
+    /// [`Agent::resume`](crate::Agent::resume), with the request exactly as
+    /// it was shown. Wire an audit log here. Also called for approvals
+    /// refused because they did not satisfy the
+    /// [`Confirmation`](crate::Confirmation) (`ApprovalOutcome::Rejected`).
+    async fn on_approval(&self, _ctx: &HookContext, _record: &ApprovalRecord) {}
 }

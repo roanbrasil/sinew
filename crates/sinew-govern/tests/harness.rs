@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use sinew_core::{mock::ScriptedModel, FnTool, Message, Role, ToolCall};
 use sinew_govern::{AgentProfile, ControlPlane, MemoryDecisionSink, Rule, POLICY_KILL_SWITCH};
-use sinew_harness::{Agent, AgentOutcome, ApprovalDecision, StopReason};
+use sinew_harness::{Agent, AgentOutcome, ApprovalDecision, RiskLevel, StopReason};
 
 fn call(id: &str, name: &str, args: Value) -> ToolCall {
     ToolCall {
@@ -188,4 +188,34 @@ async fn model_calls_are_checked_when_the_model_is_named() {
         ))
     );
     assert!(model.requests().is_empty());
+}
+
+#[tokio::test]
+async fn hook_risk_levels_reach_harness_approval_requests() {
+    let audit = Arc::new(MemoryDecisionSink::new());
+    let cp = control_plane(audit);
+    let model = Arc::new(ScriptedModel::new([
+        Message::assistant_with_tools(
+            "Sending the e-mail.",
+            vec![call("e1", "send_email", json!({"to_count": 1}))],
+        ),
+        Message::assistant("finished"),
+    ]));
+    let agent = Agent::builder()
+        .model_arc(model)
+        .name("mailer")
+        .tool(FnTool::new("send_email", "send", json!({}), Ok))
+        .hook(
+            cp.hook("mailer")
+                .risk("send_*", RiskLevel::High)
+                .risk("send_email", RiskLevel::Critical),
+        )
+        .build()
+        .unwrap();
+    let AgentOutcome::ApprovalRequired { requests, .. } = agent.run("t", "mail it").await.unwrap()
+    else {
+        panic!("expected an approval request")
+    };
+    assert_eq!(requests[0].risk, RiskLevel::Critical);
+    assert_eq!(requests[0].reason, "emails need approval");
 }
