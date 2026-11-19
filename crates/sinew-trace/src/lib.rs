@@ -463,7 +463,9 @@ pub fn guardrail_observer(
     Arc::new(move |event| record_guard_event(&tracer, parent.as_ref(), event))
 }
 
-/// Runs a tool call, recording a `tool` run when a tracer is present.
+/// Runs a tool call, recording a `tool` run when a tracer is present. A
+/// tool with a [`source`](sinew_core::Tool::source) (an MCP server) adds it
+/// as `tool_source` metadata (`{"server": ..., "version": ...}`).
 pub async fn traced_tool(
     tools: &ToolBox,
     call: &ToolCall,
@@ -473,12 +475,15 @@ pub async fn traced_tool(
     let Some(tracer) = tracer else {
         return tools.run(call).await;
     };
-    let run = tracer.start(
+    let mut run = tracer.start(
         call.name.clone(),
         RunKind::Tool,
         parent,
         call.arguments.clone(),
     );
+    if let Some(source) = tools.get(&call.name).and_then(|t| t.source()) {
+        run.set_metadata("tool_source", json!(source));
+    }
     let msg = tools.run(call).await;
     if msg.content.starts_with("error: ") {
         run.fail(&msg.content["error: ".len()..]);

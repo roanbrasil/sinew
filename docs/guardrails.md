@@ -18,8 +18,9 @@ let model = OpenAiCompat::openai("gpt-4.1-mini")?.with_guardrails(
 
 ## Concepts
 
-- **Stage** (`GuardrailStage`): `Input` (a user message), `ToolOutput` (a tool result) or `Output` (the model's
-  answer).
+- **Stage** (`GuardrailStage`): `Input` (a user message), `ToolOutput` (a tool result), `Output` (the model's
+  answer) or `ToolDescription` (a tool's description or parameter description, checked once at registration by a
+  [`ToolVetter`](#tool-descriptions)).
 - **Guardrail**: something that looks at a text at a stage and returns a `GuardrailVerdict`: `Pass`,
   `Modify(new_text)` or `Block(reason)`. Synchronous guardrails implement `Guardrail`; guardrails that do I/O (the
   LLM judge) implement `AsyncGuardrail`. Every `Guardrail` is an `AsyncGuardrail`.
@@ -39,7 +40,7 @@ retry) stops it; later rules do not run.
 |---|---|---|---|
 | `PiiRedactor` | e-mail addresses, phone numbers (10–15 digits), card numbers (Luhn-checked, first digit 2–6) | `Modify` with `[REDACTED_EMAIL]`, `[REDACTED_PHONE]`, `[REDACTED_CARD]` | all; `.at(...)` to restrict |
 | `SecretRedactor` | API keys and tokens with a known shape (`sk-`, `sk-ant-`, `xai-`, `gsk_`, `AIza`, GitHub, AWS `AKIA`/`ASIA`, Slack, JWT, PEM private keys, `Bearer ...`) | `Modify` with `[REDACTED_SECRET]` (`Bearer [REDACTED_SECRET]`) | all |
-| `InjectionDetector` | "ignore previous instructions" and variants, requests to reveal the system prompt, "you are now a ...", chat-template tokens | `Modify` with a warning prefix (`INJECTION_WARNING`), or `Block` with `InjectionDetector::blocking()` | `ToolOutput`; `.at(...)` to change |
+| `InjectionDetector` | "ignore previous instructions" and variants, requests to reveal the system prompt, "you are now a ...", chat-template tokens | `Modify` with a warning prefix (`INJECTION_WARNING`), or `Block` with `InjectionDetector::blocking()` | `ToolOutput`; `.at(...)` to change; `InjectionDetector::tool_descriptions()` blocks at `ToolDescription`, where the tool-poisoning patterns are added |
 | `DenyList` | keywords and phrases (case-insensitive, whole words), topics (a label with keywords), regular expressions | `Block("matched denied topic `<label>`")`, or `Modify` with `.redacting("[DENIED]")` | all |
 | `JsonSchemaGuard` | text that is not JSON matching a schema (`type`, `required`, `properties`, `items`, `enum`, `additionalProperties: false`) | `Block` naming the first violation | all |
 | `MaxLength` | text longer than `n` characters (Unicode scalar values) | `Block`, or `Modify` with `.truncate()` | all |
@@ -227,6 +228,32 @@ let agent = Agent::builder()
 ```
 
 See [Harness](harness.md#guardrails).
+
+### Tool descriptions
+
+Tool descriptions are prompt text too, and for MCP tools a third party writes them. `sinew_core::tool_vetting`
+checks them when tools are registered (OWASP ASI04, MCP tool poisoning):
+
+```rust
+use sinew_core::tool_vetting::{ToolVetter, VetAction};
+
+let vetter = ToolVetter::recommended()        // InjectionDetector::tool_descriptions()
+    .guardrail(DenyList::new().keyword("internal notes"))
+    .on_suspicious(VetAction::Drop)           // default; Fail or Flag
+    .allow_server("crm-notes")
+    .lock_file("tools.lock.json");            // pins: a changed definition is refused
+
+let report = vetter.vet_toolbox(&mcp.toolbox().await?)?;
+let tools = report.toolbox();                 // what the model may see
+for f in report.alerts() { eprintln!("{f}"); }
+```
+
+Every guardrail runs at `GuardrailStage::ToolDescription` on the description and on each `description` and
+`title` in the parameter schema. A `Modify` verdict replaces the text the model sees (calls still go to the tool);
+a `Block` applies `on_suspicious`. Tools with a `Tool::source` (MCP tools) are pinned by `fingerprint` (SHA-256
+of name, description and schema) per server; a later change is refused unless `approve_changes` accepts it.
+`AgentBuilder::vet_tools`, `ReactAgent::vet_tools` and `McpClient::vetted_toolbox` run the vetter for you. See
+[OWASP ASI04](security-owasp.md#asi04-agentic-supply-chain-vulnerabilities).
 
 ## Writing a guardrail
 

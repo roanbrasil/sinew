@@ -16,6 +16,10 @@ pub enum McpError {
     Closed,
     #[error("request `{0}` timed out")]
     Timeout(String),
+    /// A tool vetting check set to `VetAction::Fail` refused a server tool
+    /// (see [`McpClient::vetted_toolbox`](crate::McpClient::vetted_toolbox)).
+    #[error("tool vetting: {0}")]
+    Vetting(sinew_core::Error),
     #[cfg(feature = "http")]
     #[error("http error: {0}")]
     Http(#[from] reqwest::Error),

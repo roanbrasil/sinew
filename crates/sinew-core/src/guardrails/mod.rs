@@ -114,6 +114,12 @@ pub enum GuardrailStage {
     Output,
     /// A tool's output, before the model sees it.
     ToolOutput,
+    /// A tool's description or one of its parameter descriptions, checked
+    /// when the tool is registered (see [`crate::tool_vetting`]). Tool
+    /// descriptions come from the tool's author, which for an MCP server is
+    /// a third party: a poisoned description is a prompt injection the
+    /// model reads on every turn.
+    ToolDescription,
 }
 
 impl fmt::Display for GuardrailStage {
@@ -122,6 +128,7 @@ impl fmt::Display for GuardrailStage {
             GuardrailStage::Input => "input",
             GuardrailStage::Output => "output",
             GuardrailStage::ToolOutput => "tool_output",
+            GuardrailStage::ToolDescription => "tool_description",
         })
     }
 }

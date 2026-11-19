@@ -51,6 +51,26 @@ pub const INJECTION_PATTERNS: &[&str] = &[
     r"(?i)<\|(?:im_start|im_end|system|endoftext)\|>|\[/?INST\]|<<SYS>>",
 ];
 
+/// Tool-poisoning heuristics, checked by
+/// [`InjectionDetector`](super::InjectionDetector) on tool descriptions
+/// ([`GuardrailStage::ToolDescription`](super::GuardrailStage::ToolDescription))
+/// in addition to [`INJECTION_PATTERNS`]: markup that hides instructions
+/// from the user (`<IMPORTANT>`, `<system>`), requests to keep something
+/// from the user, instructions to read key or credential files, steps to
+/// run "before using this tool", requests to copy whole records or
+/// conversations into an argument, claims to override other tools or
+/// rules, and invisible characters (zero-width, bidirectional overrides,
+/// Unicode tag characters) that hide text from a reviewer.
+pub const TOOL_POISONING_PATTERNS: &[&str] = &[
+    r"(?i)<\s*/?\s*(?:important|system|instructions?|secret|hidden|admin|critical|sudo)\s*>",
+    r"(?i)\b(?:do\s+not|don'?t|never|without)\s+(?:mention(?:ing)?|tell(?:ing)?|reveal(?:ing)?|inform(?:ing)?|disclos(?:e|ing)|show(?:ing)?|notify(?:ing)?|alert(?:ing)?)\b[^.]{0,60}\b(?:the\s+)?(?:user|human|operator)s?\b",
+    r"(?i)\b(?:read|cat|open|load|include|send|upload|attach)\b[^.]{0,60}(?:~/\.ssh|id_rsa|id_ed25519|/etc/passwd|/etc/shadow|\.aws/credentials|mcp\.json|\.env\b)",
+    r"(?i)\b(?:before|prior\s+to)\s+(?:using|calling|invoking|running)\s+(?:this|the|any)\s+tool\b[^.]{0,80}\b(?:read|send|include|pass|copy|fetch|call)\b",
+    r#"(?i)\b(?:copy|include|pass|send|append|put|paste)\s+(?:the\s+|a\s+)?(?:full|entire|whole|complete|all(?:\s+of)?(?:\s+the)?)\s+[^.]{0,40}\b(?:record|conversation|history|chat|context|messages?|notes|data|prompt)\b[^.]{0,80}\b(?:into|in|as|to)\s+(?:the\s+|a\s+)?[`'"]?\w+[`'"]?\s+(?:argument|parameter|param|field)"#,
+    r"(?i)\b(?:this|these)\s+(?:instructions?|rules?|descriptions?)\s+(?:override|supersede|take\s+precedence)",
+    r"[\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2060}-\x{2064}\x{FEFF}\x{E0000}-\x{E007F}]",
+];
+
 /// Whether `digits` (ASCII digits only) passes the Luhn checksum.
 /// Returns `false` for an empty string or any non-digit character.
 pub fn luhn_valid(digits: &str) -> bool {

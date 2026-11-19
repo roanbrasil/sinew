@@ -32,6 +32,7 @@ pub mod runnable;
 pub mod stream;
 pub mod structured;
 pub mod tool;
+pub mod tool_vetting;
 pub mod vcr;
 
 pub use cache::{CachedModel, InMemoryCache, ResponseCache};
@@ -51,7 +52,7 @@ pub use stream::{
 pub use structured::{structured, StructuredMode, StructuredOutput};
 #[cfg(feature = "schemars")]
 pub use tool::TypedTool;
-pub use tool::{AsyncFnTool, FnTool, Tool, ToolBox, ToolSpec};
+pub use tool::{AsyncFnTool, FnTool, Tool, ToolBox, ToolSource, ToolSpec};
 
 /// Turns a function into a [`Tool`] (feature `macros`).
 ///

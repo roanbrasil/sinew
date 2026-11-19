@@ -40,6 +40,28 @@ Lower-level calls: `server_info()`, `list_tools()` (follows pagination), `call_t
 default timeout is 60 s. A request that times out is cancelled on the server with
 `notifications/cancelled`.
 
+### Vetting server tools (tool poisoning, rug pulls)
+
+A server's tool descriptions go to the model as instructions. Vet them before registering
+(`sinew_core::tool_vetting`, OWASP ASI04):
+
+```rust
+use sinew_core::tool_vetting::ToolVetter;
+
+let vetter = ToolVetter::recommended()        // description guardrails + pins
+    .allow_server("crm-notes")                // tools from other servers are dropped
+    .lock_file("tools.lock.json");            // fingerprints per server, kept across runs
+let report = client.vetted_toolbox(&vetter).await?;
+let agent = react_agent(model, report.toolbox())?;
+```
+
+`McpTool::source()` reports the server's name and version from the `initialize` handshake; pins are keyed
+by that name, and traced tool runs carry it as `metadata.tool_source`. A tool whose description (or a
+parameter description) fails a guardrail is dropped, and a tool whose name, description or schema changed
+since it was pinned is refused unless `approve_changes` accepts it. With `VetAction::Fail`,
+`vetted_toolbox` returns `McpError::Vetting`. The harness does the same with `AgentBuilder::vet_tools`.
+See [guardrails](guardrails.md#tool-descriptions).
+
 ### How results are mapped
 
 | MCP result | Sinew value |

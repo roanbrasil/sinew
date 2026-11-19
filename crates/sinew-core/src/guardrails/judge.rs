@@ -126,6 +126,9 @@ impl LlmJudge {
             GuardrailStage::Input => "a user message sent to an AI assistant",
             GuardrailStage::Output => "an AI assistant's answer",
             GuardrailStage::ToolOutput => "the output of a tool called by an AI assistant",
+            GuardrailStage::ToolDescription => {
+                "the description of a tool offered to an AI assistant"
+            }
         };
         ChatRequest::new(vec![
             Message::system(format!(
