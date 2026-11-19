@@ -292,12 +292,21 @@ impl ControlPlane {
 
     /// Adds a policy at the end of the list.
     pub fn add_policy(&self, policy: Arc<dyn Policy>) {
+        let id = policy.id().to_string();
         write(&self.inner.policies).push(policy);
+        self.control(ControlAction::UpdatePolicies, &id, Some("added".into()));
     }
 
     /// Replaces every policy and the defaults.
     pub fn set_policies(&self, policies: PolicySet) {
+        let ids: Vec<&str> = policies.policies().iter().map(|p| p.id()).collect();
+        let target = ids.join(",");
         *write(&self.inner.policies) = policies;
+        self.control(
+            ControlAction::UpdatePolicies,
+            &target,
+            Some("replaced".into()),
+        );
     }
 
     /// Replaces the policies, defaults and disabled tools with a policy

@@ -56,6 +56,7 @@ jobs:
           cargo test -p sinew-harness --test live_ollama -- --ignored
           cargo test -p sinew-rag --all-features --test live_ollama --test stores -- --ignored
           cargo test -p sinew-checkpoint --features postgres --test postgres
+          cargo test -p sinew-govern --features audit-postgres --test audit_postgres
       - name: Open an issue on failure
         if: failure() && github.event_name == 'schedule'
         env:

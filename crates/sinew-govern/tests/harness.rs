@@ -219,3 +219,74 @@ async fn hook_risk_levels_reach_harness_approval_requests() {
     assert_eq!(requests[0].risk, RiskLevel::Critical);
     assert_eq!(requests[0].reason, "emails need approval");
 }
+
+#[cfg(feature = "audit")]
+#[tokio::test]
+async fn approval_answers_go_to_the_audit_log() {
+    use sinew_govern::audit::{AuditKind, AuditLog, MemoryAuditStore, VerifyOptions};
+
+    let cp = control_plane(Arc::new(MemoryDecisionSink::new()));
+    let store = Arc::new(MemoryAuditStore::new());
+    let log = AuditLog::new(store.clone());
+    let model = Arc::new(ScriptedModel::new([
+        Message::assistant_with_tools(
+            "",
+            vec![call(
+                "e1",
+                "send_email",
+                json!({"to_count": 1, "to": "ana@example.com"}),
+            )],
+        ),
+        Message::assistant_with_tools("", vec![call("e2", "send_email", json!({"to_count": 2}))]),
+        Message::assistant("finished"),
+    ]));
+    let agent = Agent::builder()
+        .model_arc(model)
+        .name("mailer")
+        .tool(FnTool::new("send_email", "send", json!({}), |_| {
+            Ok(json!("sent"))
+        }))
+        .hook(cp.hook("mailer").audit(log.clone()))
+        .build()
+        .unwrap();
+
+    assert!(agent
+        .run("t", "mail it")
+        .await
+        .unwrap()
+        .is_approval_required());
+    let next = agent
+        .resume(
+            "t",
+            vec![ApprovalDecision::approve("e1")
+                .approver("ana")
+                .approver("bo")],
+        )
+        .await
+        .unwrap();
+    assert!(next.is_approval_required());
+    agent
+        .resume("t", vec![ApprovalDecision::deny("e2", "wrong list")])
+        .await
+        .unwrap();
+
+    let entries = store.snapshot();
+    assert_eq!(entries.len(), 2);
+    assert!(entries.iter().all(|e| e.kind == AuditKind::Approval));
+    let (a, d) = (&entries[0].payload, &entries[1].payload);
+    assert_eq!(a["agent"], "mailer");
+    assert_eq!(a["target"], "send_email");
+    assert_eq!(a["approver"], "ana, bo");
+    assert_eq!(a["approved"], true);
+    assert_eq!(a["details"]["harness"]["thread_id"], "t");
+    // The harness record passed through the redactor.
+    assert_eq!(
+        a["details"]["harness"]["request"]["arguments"]["to"],
+        "[REDACTED:email]"
+    );
+    assert_eq!(d["approved"], false);
+    assert_eq!(d["approver"], "unknown");
+    assert_eq!(d["reason"], "wrong list");
+    assert!(log.verify(&VerifyOptions::new()).await.unwrap().is_ok());
+    assert_eq!(log.failures(), 0);
+}

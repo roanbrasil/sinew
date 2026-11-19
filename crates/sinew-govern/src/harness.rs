@@ -42,6 +42,8 @@ impl ControlPlane {
             identity: identity.into(),
             model: None,
             risks: Vec::new(),
+            #[cfg(feature = "audit")]
+            audit: None,
         }
     }
 }
@@ -75,9 +77,25 @@ pub struct GovernHook {
     identity: Identity,
     model: Option<String>,
     risks: Vec<(String, RiskLevel)>,
+    #[cfg(feature = "audit")]
+    audit: Option<crate::audit::AuditLog>,
 }
 
 impl GovernHook {
+    /// Writes every approval answer the harness reports
+    /// ([`Hook::on_approval`]) to `log` as an
+    /// [`AuditKind::Approval`](crate::audit::AuditKind::Approval) entry:
+    /// agent, tool, approvers (`unknown` when none were named), whether the
+    /// call was approved, the reason, and the harness
+    /// [`ApprovalRecord`](sinew_harness::ApprovalRecord) (the request as the
+    /// reviewer saw it) in `details`. Feature `audit`. Write failures are
+    /// counted in [`AuditLog::failures`](crate::audit::AuditLog::failures).
+    #[cfg(feature = "audit")]
+    pub fn audit(mut self, log: crate::audit::AuditLog) -> Self {
+        self.audit = Some(log);
+        self
+    }
+
     /// Risk level of the tools matching `tool_pattern` (glob), reported to
     /// the harness through [`Hook::tool_risk`]. It is carried in the
     /// harness `ApprovalRequest`, and calls at or above the agent's
@@ -118,6 +136,42 @@ impl GovernHook {
         self
     }
 
+    #[cfg(feature = "audit")]
+    fn approval(
+        &self,
+        ctx: &HookContext,
+        record: &sinew_harness::ApprovalRecord,
+    ) -> crate::audit::ApprovalRecord {
+        use sinew_harness::ApprovalOutcome;
+        let approvers = record
+            .decision
+            .as_ref()
+            .map(|d| d.approvers.join(", "))
+            .unwrap_or_default();
+        let reason = match &record.outcome {
+            ApprovalOutcome::Rejected { reason } => Some(reason.clone()),
+            _ => record.decision.as_ref().and_then(|d| d.reason.clone()),
+        };
+        crate::audit::ApprovalRecord {
+            decision_id: None,
+            agent: self.identity.agent.clone(),
+            target: record.request.tool.clone(),
+            approver: if approvers.is_empty() {
+                "unknown".into()
+            } else {
+                approvers
+            },
+            approved: matches!(record.outcome, ApprovalOutcome::Approved),
+            reason,
+            details: json!({
+                "user": self.identity.user,
+                "tenant": self.identity.tenant,
+                "subagent": (ctx.depth > 0).then(|| ctx.agent.clone()),
+                "harness": record,
+            }),
+        }
+    }
+
     fn request(&self, ctx: &HookContext, req: Request) -> Request {
         let mut req = req
             .identity(&self.identity)
@@ -148,6 +202,16 @@ impl Hook for GovernHook {
 
     async fn tool_risk(&self, _ctx: &HookContext, call: &ToolCall) -> Option<RiskLevel> {
         self.risk_for(&call.name)
+    }
+
+    #[cfg(feature = "audit")]
+    async fn on_approval(&self, ctx: &HookContext, record: &sinew_harness::ApprovalRecord) {
+        let Some(log) = &self.audit else {
+            return;
+        };
+        if let Err(e) = log.record_approval(&self.approval(ctx, record)).await {
+            log.fail(format!("approval: {e}"));
+        }
     }
 
     async fn should_stop(&self, ctx: &HookContext, phase: StepPhase) -> Option<String> {
