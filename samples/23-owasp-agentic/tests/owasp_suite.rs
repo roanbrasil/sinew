@@ -53,7 +53,7 @@ scenario_tests! {
     asi04_01_mcp_tool_poisoning: "ASI04-01" => Mitigated,
     asi05_01_shell_from_readme: "ASI05-01" => Mitigated,
     asi06_01_thread_state_poisoning: "ASI06-01" => Mitigated,
-    asi06_02_long_term_memory_poisoning: "ASI06-02" => Gap,
+    asi06_02_long_term_memory_poisoning: "ASI06-02" => Mitigated,
     asi07_01_spoofed_peer_message: "ASI07-01" => Gap,
     asi08_01_unbounded_tool_loop: "ASI08-01" => Mitigated,
     asi08_02_duplicate_side_effect_after_crash: "ASI08-02" => Mitigated,

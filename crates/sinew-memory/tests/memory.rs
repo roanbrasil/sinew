@@ -313,7 +313,7 @@ async fn keyword_recall_without_embeddings() {
 
     assert!(memory.recall("ana", "volcano", 5).await.unwrap().is_empty());
     let block = memory.context("ana", "peanut", 3).await.unwrap().unwrap();
-    assert!(block.ends_with("\n- The user is allergic to peanuts."));
+    assert!(block.ends_with("\n- The user is allergic to peanuts.\n</memories>"));
     assert!(memory.context("ana", "volcano", 3).await.unwrap().is_none());
 }
 

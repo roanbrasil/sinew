@@ -19,8 +19,10 @@ let model = OpenAiCompat::openai("gpt-4.1-mini")?.with_guardrails(
 ## Concepts
 
 - **Stage** (`GuardrailStage`): `Input` (a user message), `ToolOutput` (a tool result), `Output` (the model's
-  answer) or `ToolDescription` (a tool's description or parameter description, checked once at registration by a
-  [`ToolVetter`](#tool-descriptions)).
+  answer), `ToolDescription` (a tool's description or parameter description, checked once at registration by a
+  [`ToolVetter`](#tool-descriptions)), `MemoryWrite` (a long-term memory before it is stored) or `MemoryRecall` (a
+  recalled memory before it enters the system prompt); the memory stages are used by `sinew-memory`
+  ([memory.md](memory.md#validating-memory-writes)).
 - **Guardrail**: something that looks at a text at a stage and returns a `GuardrailVerdict`: `Pass`,
   `Modify(new_text)` or `Block(reason)`. Synchronous guardrails implement `Guardrail`; guardrails that do I/O (the
   LLM judge) implement `AsyncGuardrail`. Every `Guardrail` is an `AsyncGuardrail`.
@@ -40,7 +42,7 @@ retry) stops it; later rules do not run.
 |---|---|---|---|
 | `PiiRedactor` | e-mail addresses, phone numbers (10–15 digits), card numbers (Luhn-checked, first digit 2–6) | `Modify` with `[REDACTED_EMAIL]`, `[REDACTED_PHONE]`, `[REDACTED_CARD]` | all; `.at(...)` to restrict |
 | `SecretRedactor` | API keys and tokens with a known shape (`sk-`, `sk-ant-`, `xai-`, `gsk_`, `AIza`, GitHub, AWS `AKIA`/`ASIA`, Slack, JWT, PEM private keys, `Bearer ...`) | `Modify` with `[REDACTED_SECRET]` (`Bearer [REDACTED_SECRET]`) | all |
-| `InjectionDetector` | "ignore previous instructions" and variants, requests to reveal the system prompt, "you are now a ...", chat-template tokens | `Modify` with a warning prefix (`INJECTION_WARNING`), or `Block` with `InjectionDetector::blocking()` | `ToolOutput`; `.at(...)` to change; `InjectionDetector::tool_descriptions()` blocks at `ToolDescription`, where the tool-poisoning patterns are added |
+| `InjectionDetector` | "ignore previous instructions" and variants, requests to reveal the system prompt, "you are now a ...", chat-template tokens | `Modify` with a warning prefix (`INJECTION_WARNING`), or `Block` with `InjectionDetector::blocking()` | `ToolOutput`, `MemoryWrite`, `MemoryRecall`; `.at(...)` to change; `InjectionDetector::tool_descriptions()` blocks at `ToolDescription`, where the tool-poisoning patterns are added |
 | `DenyList` | keywords and phrases (case-insensitive, whole words), topics (a label with keywords), regular expressions | `Block("matched denied topic `<label>`")`, or `Modify` with `.redacting("[DENIED]")` | all |
 | `JsonSchemaGuard` | text that is not JSON matching a schema (`type`, `required`, `properties`, `items`, `enum`, `additionalProperties: false`) | `Block` naming the first violation | all |
 | `MaxLength` | text longer than `n` characters (Unicode scalar values) | `Block`, or `Modify` with `.truncate()` | all |

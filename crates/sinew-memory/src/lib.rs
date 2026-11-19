@@ -16,6 +16,16 @@
 //!   each turn and remembers after it, in the background by default.
 //! - `MemoryHook` (feature `harness`) does the same for the
 //!   `sinew-harness` agent.
+//! - Write validation (OWASP ASI06): every memory has a [`Provenance`]
+//!   (who stated it, whether it may derive from tool output);
+//!   [`with_tool_derived`](MemoryManager::with_tool_derived),
+//!   [`with_validator`](MemoryManager::with_validator) and
+//!   [`with_write_guardrails`](MemoryManager::with_write_guardrails) accept,
+//!   rewrite, quarantine or reject memories before they are stored,
+//!   [`with_recall_guardrails`](MemoryManager::with_recall_guardrails)
+//!   checks them when recalled, and [`audit`](MemoryManager::audit),
+//!   [`confirm`](MemoryManager::confirm) and
+//!   [`expire_unconfirmed`](MemoryManager::expire_unconfirmed) review them.
 //!
 //! Each [`Memory`] is stored as a JSON item keyed by its id, so any backend
 //! works: `InMemoryStore`, `SqliteStore` (`sinew-checkpoint`), or your own.
@@ -60,6 +70,7 @@ mod agent;
 mod hook;
 mod manager;
 mod memory;
+mod validate;
 
 pub use agent::{MemoryAgent, MemoryOptions, RememberScope};
 #[cfg(feature = "harness")]
@@ -68,4 +79,11 @@ pub use manager::{
     format_memories, last_turn, last_user_text, transcript, MemoryManager, DEFAULT_CONTEXT_HEADER,
     DEFAULT_EXTRACTION_PROMPT, DEFAULT_NAMESPACE, DEFAULT_UPDATE_PROMPT,
 };
-pub use memory::{Memory, MemoryError, MemoryKind, RememberReport, Result, ScoredMemory};
+pub use memory::{
+    Memory, MemoryError, MemoryKind, MemorySource, MemoryStatus, Provenance, RejectedMemory,
+    RememberReport, Result, ScoredMemory,
+};
+pub use validate::{
+    validator_fn, FnValidator, GuardrailValidator, MemoryValidator, MemoryWrite, ToolDerivedPolicy,
+    WriteAction, WriteVerdict, MEMORY_JUDGE_POLICY,
+};

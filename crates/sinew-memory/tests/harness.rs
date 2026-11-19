@@ -73,7 +73,7 @@ async fn hook_recalls_once_per_turn_and_saves_when_the_turn_ends() {
         assert_eq!(r.messages[0].role, Role::System);
         assert!(r.messages[0]
             .content
-            .ends_with("- The user is vegetarian and cooks dinner."));
+            .ends_with("- The user is vegetarian and cooks dinner.\n</memories>"));
     }
     // The extraction saw the user message and the final answer, not the tool output.
     let transcript = &reqs[2].messages.last().unwrap().content;
